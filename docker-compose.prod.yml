@@ -1,0 +1,32 @@
+services:
+  paro-web:
+    build:
+      context: .
+    image: paro-web:local
+    container_name: paro-web
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PARO_ENV: production
+      PARO_COOKIE_SECURE: "true"
+      PARO_DATABASE_PATH: /data/paro_web.sqlite3
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 512m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

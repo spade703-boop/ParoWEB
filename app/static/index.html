@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f1e9">
+  <meta name="description" content="随机抽取彰人和冬弥的派生组合。">
+  <title>抽派生</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <header class="site-header">
+    <a class="brand" href="#draw" aria-label="抽派生首页">
+      <span class="brand-mark" aria-hidden="true">抽</span>
+      <span><strong>抽派生</strong><small>PARO DRAW</small></span>
+    </a>
+    <p class="header-note">非官方粉丝项目 · 记录仅保存在当前浏览器</p>
+  </header>
+
+  <main id="main" class="shell">
+    <section id="draw-panel" class="page-panel" data-panel="draw">
+      <div class="hero">
+        <p class="eyebrow">TODAY'S PAIRING</p>
+        <h1>今天会遇见怎样的他们？</h1>
+        <p>选好方式，交给一点随机和好运气。</p>
+      </div>
+
+      <form id="draw-form" class="control-card">
+        <fieldset>
+          <legend>抽取方式</legend>
+          <div class="segmented segmented-mode">
+            <label><input type="radio" name="fixed_side" value="none" checked><span>双方随机</span></label>
+            <label><input type="radio" name="fixed_side" value="akito"><span>固定彰人</span></label>
+            <label><input type="radio" name="fixed_side" value="toya"><span>固定冬弥</span></label>
+          </div>
+        </fieldset>
+
+        <div id="fixed-picker" class="field hidden">
+          <label id="fixed-label" for="fixed-name">选择派生</label>
+          <select id="fixed-name" name="fixed_name"></select>
+        </div>
+
+        <fieldset>
+          <legend>抽取数量</legend>
+          <div class="segmented segmented-count">
+            <label><input type="radio" name="count" value="1" checked><span>1 抽</span></label>
+            <label><input type="radio" name="count" value="2"><span>2 抽</span></label>
+            <label><input type="radio" name="count" value="3"><span>3 抽</span></label>
+          </div>
+        </fieldset>
+
+        <button id="draw-button" class="primary-button" type="submit">
+          <span>抽取派生</span><span aria-hidden="true">✦</span>
+        </button>
+        <p id="draw-status" class="status" role="status" aria-live="polite"></p>
+      </form>
+
+      <section class="result-section" aria-labelledby="result-title">
+        <div class="section-heading">
+          <div><p class="eyebrow">RESULT</p><h2 id="result-title">本次结果</h2></div>
+          <span id="total-chip" class="chip">累计 0 抽</span>
+        </div>
+        <div id="results" class="results empty-state">
+          <div class="empty-symbol" aria-hidden="true">✦</div>
+          <p>还没有结果，来抽一次吧。</p>
+        </div>
+      </section>
+    </section>
+
+    <section id="catalog-panel" class="page-panel hidden" data-panel="catalog">
+      <div class="page-title">
+        <p class="eyebrow">PARO CATALOG</p>
+        <h1>派生池</h1>
+        <p>当前内容随版本更新，缺少头像时会使用文字占位。</p>
+      </div>
+      <div class="catalog-toolbar">
+        <div class="segmented compact" role="group" aria-label="选择角色">
+          <button type="button" class="catalog-side active" data-side="akito">彰人</button>
+          <button type="button" class="catalog-side" data-side="toya">冬弥</button>
+        </div>
+        <label class="search-field"><span class="sr-only">搜索派生名称</span><input id="catalog-search" type="search" placeholder="搜索派生名称"></label>
+      </div>
+      <p id="catalog-count" class="catalog-count"></p>
+      <div id="catalog-grid" class="catalog-grid"></div>
+    </section>
+
+    <section id="profile-panel" class="page-panel hidden" data-panel="profile">
+      <div class="page-title profile-title">
+        <div><p class="eyebrow">MY RECORD</p><h1>我的记录</h1></div>
+        <button id="clear-button" class="danger-link" type="button">清除记录</button>
+      </div>
+      <p class="privacy-note">记录与当前浏览器 Cookie 绑定。清除浏览器数据、更换设备或使用无痕模式后无法恢复。</p>
+      <div class="metric-grid">
+        <article><span>累计抽取</span><strong id="metric-draws">0</strong><small>个结果</small></article>
+        <article><span>做饭次数</span><strong id="metric-cooking">0</strong><small>含计入做饭的特殊结果</small></article>
+      </div>
+      <div id="special-stats" class="special-stats"></div>
+      <div class="rank-grid">
+        <section class="rank-card"><h2>彰人 TOP 3</h2><ol id="akito-top"></ol></section>
+        <section class="rank-card"><h2>冬弥 TOP 3</h2><ol id="toya-top"></ol></section>
+        <section class="rank-card pair-rank"><h2>组合 TOP 3</h2><ol id="pair-top"></ol></section>
+      </div>
+      <section class="history-card">
+        <div class="section-heading"><div><p class="eyebrow">RECENT</p><h2>最近记录</h2></div><span>最多 50 条</span></div>
+        <div id="history-list" class="history-list"></div>
+      </section>
+    </section>
+  </main>
+
+  <nav class="bottom-nav" aria-label="主导航">
+    <button type="button" class="nav-button active" data-target="draw" aria-current="page"><span aria-hidden="true">✦</span><span>抽派生</span></button>
+    <button type="button" class="nav-button" data-target="catalog"><span aria-hidden="true">▦</span><span>派生池</span></button>
+    <button type="button" class="nav-button" data-target="profile"><span aria-hidden="true">◉</span><span>我的记录</span></button>
+  </nav>
+
+  <dialog id="clear-dialog">
+    <form method="dialog" class="dialog-card">
+      <p class="eyebrow">PLEASE CONFIRM</p>
+      <h2>清除全部记录？</h2>
+      <p>累计数据和最近记录都会永久删除，无法恢复。</p>
+      <div class="dialog-actions">
+        <button value="cancel" class="secondary-button">取消</button>
+        <button id="confirm-clear" value="confirm" class="danger-button">确认清除</button>
+      </div>
+    </form>
+  </dialog>
+
+  <template id="avatar-template">
+    <div class="avatar"><img alt="" loading="lazy"><span></span></div>
+  </template>
+</body>
+</html>
+

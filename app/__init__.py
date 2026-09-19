@@ -1,0 +1,2 @@
+"""Paro web application."""
+

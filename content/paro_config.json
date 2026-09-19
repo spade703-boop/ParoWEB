@@ -1,0 +1,46 @@
+{
+  "cooking_rate": 0.03,
+  "special_rate": 0.08,
+  "special_outcomes": [
+    {
+      "id": "fox",
+      "label": "狐狸",
+      "weight": 1,
+      "tags": ["fox"],
+      "assets": ["狐"],
+      "message": "一只得意的狐狸赶走了这里的派生。",
+      "counts_as_cooking": false,
+      "legacy_stat": "fox_total"
+    },
+    {
+      "id": "rabbit",
+      "label": "兔子",
+      "weight": 1,
+      "tags": ["rabbit"],
+      "assets": ["兔"],
+      "message": "一只圆圆的兔子挡住了这里的派生。",
+      "counts_as_cooking": false,
+      "legacy_stat": "rabbit_total"
+    },
+    {
+      "id": "foxrabbit",
+      "label": "狐兔",
+      "weight": 1,
+      "tags": ["fox", "rabbit"],
+      "assets": ["狐", "兔"],
+      "message": "一对眼熟的狐兔出现在了这里……",
+      "counts_as_cooking": false,
+      "legacy_stat": "foxrabbit_total"
+    },
+    {
+      "id": "foxbun",
+      "label": "狐兔饭",
+      "weight": 1,
+      "tags": ["fox", "rabbit"],
+      "assets": ["狐&兔"],
+      "message": "发现了一对正在贴贴的狐兔！",
+      "counts_as_cooking": true,
+      "legacy_stat": "foxbun_total"
+    }
+  ]
+}
