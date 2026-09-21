@@ -881,6 +881,22 @@ function recordRow(entry) {
   return article;
 }
 
+function recordBatchHeader(entry, visibleCount) {
+  const header = div("record-batch__head");
+  const leftLine = div("record-batch__line");
+  const rightLine = div("record-batch__line");
+  const requestedCount = Number(entry.requested_count) || visibleCount;
+  const title = span("record-batch__title", `本次抽取 · ${requestedCount} 抽`);
+  const mode = MODE_LABEL[entry.fixed_side] || MODE_LABEL.none;
+  const fixedName = entry.fixed_side !== "none" && entry.fixed_name ? ` · ${entry.fixed_name}` : "";
+  const meta = span("record-batch__meta", `${clockText(entry.created_at)} · ${mode}${fixedName}`);
+  if (requestedCount !== visibleCount) {
+    meta.textContent += ` · 显示 ${visibleCount} 条`;
+  }
+  header.append(leftLine, title, meta, rightLine);
+  return header;
+}
+
 function renderRecords() {
   const profile = state.profile;
   if (!profile) return;
@@ -901,12 +917,16 @@ function renderRecords() {
   const groups = new Map();
   filtered.forEach((entry) => {
     const key = dayKey(entry.created_at);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(entry);
+    if (!groups.has(key)) groups.set(key, new Map());
+    const batches = groups.get(key);
+    const batchKey = entry.batch_id || `${entry.created_at}:${entry.requested_count || 1}`;
+    if (!batches.has(batchKey)) batches.set(batchKey, []);
+    batches.get(batchKey).push(entry);
   });
 
   el.recordsList.replaceChildren(
-    ...Array.from(groups.entries()).map(([key, entries]) => {
+    ...Array.from(groups.entries()).map(([key, batches]) => {
+      const entries = Array.from(batches.values()).flat();
       const group = div("day-group");
       const head = div("day-head");
       const left = document.createElement("strong");
@@ -919,7 +939,13 @@ function renderRecords() {
       const right = document.createElement("small");
       right.textContent = parts.join(" · ");
       head.append(left, right);
-      group.append(head, ...entries.map(recordRow));
+      const batchBlocks = Array.from(batches.values()).map((batchEntries) => {
+        const batch = div("record-batch");
+        batch.append(recordBatchHeader(batchEntries[0], batchEntries.length));
+        batch.append(...batchEntries.map(recordRow));
+        return batch;
+      });
+      group.append(head, ...batchBlocks);
       return group;
     }),
   );

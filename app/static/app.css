@@ -576,6 +576,11 @@ html.no-js .picker__panel { display: none; }
 }
 .day-head strong { color: var(--ink); font-size: 13.5px; }
 .day-head small { color: var(--faint); }
+.record-batch { display: flex; flex-direction: column; gap: 10px; }
+.record-batch__head { display: flex; align-items: center; gap: 10px; padding: 8px 4px 2px; color: var(--faint); }
+.record-batch__line { flex: 1 1 0; height: 1px; background: var(--line-soft); }
+.record-batch__title { flex: none; color: var(--muted); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.record-batch__meta { min-width: 0; max-width: 42%; overflow: hidden; color: var(--faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 
 .record-row {
   display: flex; align-items: center; gap: 14px;
@@ -724,6 +729,9 @@ dialog::backdrop { background: rgba(30, 28, 25, .48); backdrop-filter: blur(3px)
   .stat-card__value { font-size: 22px; }
 
   .records-toolbar { gap: 10px; }
+  .record-batch__head { gap: 7px; padding-top: 6px; }
+  .record-batch__title { font-size: 11px; }
+  .record-batch__meta { max-width: 38%; font-size: 10px; }
   .record-row { padding: 10px 12px; gap: 10px; border-radius: 13px; }
   .record-row__time { width: 38px; font-size: 11px; }
   .record-row__body img, .record-row__body .fallback { width: 30px; height: 30px; border-radius: 9px; font-size: 12px; }
