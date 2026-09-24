@@ -631,6 +631,9 @@ html.no-js .picker__panel { display: none; }
 .footer-brand { display: flex; align-items: center; gap: 8px; }
 .footer-mark { flex: none; display: block; width: 22px; height: 22px; }
 .footer-mark svg { display: block; width: 22px; height: 22px; }
+.footer-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.footer-meta a { color: inherit; text-underline-offset: 3px; }
+.footer-meta a:hover { color: var(--ink); }
 
 .bottom-nav {
   display: none;
@@ -746,6 +749,7 @@ dialog::backdrop { background: rgba(30, 28, 25, .48); backdrop-filter: blur(3px)
   .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .segmented__opt { font-size: 12.5px; padding: 10px 4px; }
   .site-footer { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .footer-meta { align-items: flex-start; flex-direction: column; gap: 5px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
