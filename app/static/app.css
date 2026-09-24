@@ -748,6 +748,15 @@ dialog::backdrop { background: rgba(30, 28, 25, .48); backdrop-filter: blur(3px)
 @media (max-width: 560px) {
   .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .segmented__opt { font-size: 12.5px; padding: 10px 4px; }
+  .row--cook { position: relative; overflow: hidden; }
+  .row--cook .row__slot { position: absolute; z-index: 1; top: 0; right: 0; width: auto; }
+  .row--cook .badge-cook {
+    height: 28px; padding: 0 10px; border-radius: 0 17px 0 12px;
+    font-size: 10px; box-shadow: 0 3px 10px rgba(66, 48, 32, .12);
+  }
+  .row--cook .badge-cook svg { width: 11px; height: 11px; }
+  .row--cook .badge-cook > span:last-child { font-size: 0; }
+  .row--cook .badge-cook > span:last-child::after { content: "做饭"; font-size: 10px; }
   .site-footer { flex-direction: column; align-items: flex-start; gap: 6px; }
   .footer-meta { align-items: flex-start; flex-direction: column; gap: 5px; }
 }
