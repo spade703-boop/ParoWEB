@@ -17,6 +17,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/data
+      - ./content:/app/content:ro
       - ${PARO_BOT_DATA_DIR:-/akito_bot/data}:/bot-data:ro
     read_only: true
     tmpfs:
