@@ -63,7 +63,6 @@ class CatalogService:
                 snapshot = self._load_validated()
             except Exception:
                 logger.exception("Content reload failed; keeping the previous valid snapshot")
-                self._signature = signature
                 return False
             self._snapshot = snapshot
             self._signature = signature
@@ -175,4 +174,3 @@ class CatalogService:
                 return "/content/" + "/".join(relative.parts)
         logger.warning("Missing content image: %s/%s", folder, stem)
         return None
-

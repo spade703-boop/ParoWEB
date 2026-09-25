@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+import logging
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -13,6 +14,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.config import Settings
 from app.domain.models import DomainError
 from app.repositories.sqlite import SQLiteRepository
+from app.services.announcements import AnnouncementService
 from app.services.catalog import CatalogService
 from app.services.draw_service import DrawService
 from app.web.api import router
@@ -27,8 +29,12 @@ from app.web.rate_limit import SlidingWindowLimiter
 from app.web.sessions import SessionManager
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass(slots=True)
 class Services:
+    announcements: AnnouncementService
     catalog: CatalogService
     repository: SQLiteRepository
     sessions: SessionManager
@@ -39,9 +45,11 @@ class Services:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
+    announcements = AnnouncementService(settings.announcements_path)
     catalog = CatalogService(settings.content_dir)
     repository = SQLiteRepository(settings.database_path)
     services = Services(
+        announcements=announcements,
         catalog=catalog,
         repository=repository,
         sessions=SessionManager(repository, secure=settings.cookie_secure),
@@ -52,6 +60,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        if announcements.path.exists():
+            try:
+                announcements.load()
+            except Exception:
+                logger.exception("Announcement file could not be loaded; starting without announcements")
         catalog.load()
         await repository.initialize()
         yield
@@ -84,7 +97,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'"
         return response
 
     application.include_router(router)

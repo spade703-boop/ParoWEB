@@ -1,6 +1,6 @@
 # 抽派生网站
 
-独立的响应式网站实现，不依赖 NoneBot，也不读写机器人统计文件。内容已从参考 Bot 复制到本项目并独立管理。
+独立的响应式网站实现，不依赖 NoneBot 进程，也不读写机器人统计文件。生产环境通过只读挂载直接读取 Bot 的 `data` 目录，因此派生池、头像和特殊结果配置只维护一份；网页会在请求时检测内容变化并热重载。更新公告单独保存在网站的 `content/announcements.json`。
 
 ## 本地运行
 
@@ -28,8 +28,11 @@ python -m pytest
 - 正确的 `PARO_ALLOWED_HOSTS`
 - HTTPS 站点对应的 `PARO_ALLOWED_ORIGINS`
 - 持久化路径 `PARO_DATABASE_PATH`
+- Bot 数据源路径 `PARO_CONTENT_DIR`（生产 Compose 默认是容器内的 `/bot-data`）
 
-网站数据默认保存在 `data/paro_web.sqlite3`，与 Bot 数据物理隔离。正式公开前仍需确认素材使用权并完成备案、域名和 HTTPS 配置。
+生产 Compose 会将宿主机 `${PARO_BOT_DATA_DIR:-/akito_bot/data}` 以只读方式挂载到 `/bot-data`。如果 Bot 数据目录不同，在服务器的 `.env` 中设置 `PARO_BOT_DATA_DIR=/实际路径/data`，再重建网页容器即可。之后 Bot 更新 `paro_pools.json`、`paro_config.json` 或头像文件时，网页不需要复制文件或重新构建镜像；下一次访问目录、抽取或打开页面时会自动读取新内容。
+
+网站数据默认保存在 `data/paro_web.sqlite3`，与 Bot 统计数据物理隔离。正式公开前仍需确认素材使用权并完成备案、域名和 HTTPS 配置。
 
 ## 素材说明
 

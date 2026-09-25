@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.web.errors import error_response
@@ -85,6 +85,10 @@ def _serialize_profile(profile: dict, snapshot) -> dict:
             for item in profile["pair_top"]
         ],
         "recent": recent,
+        "recent_total": profile["recent_total"],
+        "recent_offset": profile["recent_offset"],
+        "recent_limit": profile["recent_limit"],
+        "recent_has_more": profile["recent_has_more"],
     }
 
 
@@ -99,6 +103,7 @@ async def create_session(request: Request, response: Response) -> dict:
 @router.get("/catalog")
 async def get_catalog(request: Request, response: Response) -> dict:
     services = _services(request)
+    response.headers["Cache-Control"] = "no-store"
     _visitor, token, _is_new = await services.sessions.resolve(request)
     services.sessions.set_cookie(response, token)
     snapshot = services.catalog.snapshot
@@ -124,6 +129,12 @@ async def get_catalog(request: Request, response: Response) -> dict:
             for outcome in snapshot.special_outcomes
         ],
     }
+
+
+@router.get("/announcements")
+async def get_announcements(request: Request, response: Response) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    return _services(request).announcements.payload()
 
 
 @router.post("/draw")
@@ -152,10 +163,17 @@ async def create_draw(payload: DrawRequest, request: Request, response: Response
 
 
 @router.get("/me")
-async def get_profile(request: Request, response: Response) -> dict:
+async def get_profile(
+    request: Request,
+    response: Response,
+    recent_offset: int = Query(default=0, ge=0),
+    recent_limit: int = Query(default=50, ge=1, le=100),
+) -> dict:
     services = _services(request)
     visitor, token, _is_new = await services.sessions.resolve(request)
-    profile = await services.repository.profile(visitor["id"])
+    profile = await services.repository.profile(
+        visitor["id"], recent_limit=recent_limit, recent_offset=recent_offset
+    )
     services.sessions.set_cookie(response, token)
     return _serialize_profile(profile, services.catalog.snapshot)
 

@@ -156,7 +156,7 @@ class SQLiteRepository:
                 raise
         return batch_id, created_at
 
-    async def profile(self, visitor_id: str, *, recent_limit: int = 50) -> dict:
+    async def profile(self, visitor_id: str, *, recent_limit: int = 50, recent_offset: int = 0) -> dict:
         async with self.connect() as connection:
             rows = await (
                 await connection.execute(
@@ -209,7 +209,11 @@ class SQLiteRepository:
                 {"akito_name": pair[0], "toya_name": pair[1], "count": count}
                 for pair, count in pair_values[:3]
             ],
-            "recent": [dict(row) for row in rows[:recent_limit]],
+            "recent": [dict(row) for row in rows[recent_offset : recent_offset + recent_limit]],
+            "recent_total": len(rows),
+            "recent_offset": recent_offset,
+            "recent_limit": recent_limit,
+            "recent_has_more": recent_offset + recent_limit < len(rows),
         }
 
     async def clear_history(self, visitor_id: str) -> None:

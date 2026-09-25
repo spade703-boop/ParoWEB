@@ -11,10 +11,13 @@ services:
       PARO_ENV: production
       PARO_COOKIE_SECURE: "true"
       PARO_DATABASE_PATH: /data/paro_web.sqlite3
+      PARO_CONTENT_DIR: /bot-data
+      PARO_ANNOUNCEMENTS_PATH: /app/content/announcements.json
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/data
+      - ${PARO_BOT_DATA_DIR:-/akito_bot/data}:/bot-data:ro
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m

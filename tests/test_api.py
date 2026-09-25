@@ -91,6 +91,27 @@ async def test_health_and_database_does_not_store_raw_cookie(client: httpx.Async
     assert (await client.get("/healthz")).status_code == 200
 
 
+async def test_homepage_exposes_image_export_and_blob_csp(client: httpx.AsyncClient) -> None:
+    homepage = await client.get("/")
+    assert homepage.status_code == 200
+    assert "/static/export-image.js" in homepage.text
+    assert "img-src 'self' data: blob:" in homepage.headers["content-security-policy"]
+
+    exporter = await client.get("/static/export-image.js")
+    assert exporter.status_code == 200
+    assert "ParoImageExporter" in exporter.text
+
+
+async def test_announcements_are_available(client: httpx.AsyncClient) -> None:
+    response = await client.get("/api/v1/announcements")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    payload = response.json()
+    assert payload["version"]
+    assert payload["items"]
+    assert {"id", "published_at", "title", "summary", "details", "tags", "highlight"} <= set(payload["items"][0])
+
+
 async def test_concurrent_draws_are_all_persisted(client: httpx.AsyncClient) -> None:
     await client.post("/api/v1/session", json={}, headers={"Origin": "http://testserver"})
     responses = await asyncio.gather(
@@ -106,6 +127,15 @@ async def test_concurrent_draws_are_all_persisted(client: httpx.AsyncClient) -> 
     assert all(response.status_code == 200 for response in responses)
     profile = await client.get("/api/v1/me")
     assert profile.json()["draw_count"] == 15
+    first_page = await client.get("/api/v1/me?recent_limit=5")
+    second_page = await client.get("/api/v1/me?recent_offset=5&recent_limit=5")
+    assert first_page.json()["recent_total"] == 15
+    assert first_page.json()["recent_has_more"] is True
+    assert len(first_page.json()["recent"]) == 5
+    assert len(second_page.json()["recent"]) == 5
+    assert {item["id"] for item in first_page.json()["recent"]}.isdisjoint(
+        item["id"] for item in second_page.json()["recent"]
+    )
 
 
 async def test_mutations_require_allowed_origin(client: httpx.AsyncClient) -> None:

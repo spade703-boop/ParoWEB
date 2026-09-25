@@ -45,6 +45,8 @@ const MODE_LABEL = { none: "双方随机", akito: "固定彰人", toya: "固定�
 const SIDE_LABEL = { akito: "彰人", toya: "冬弥" };
 const POOL_PAGE_SIZE = 9;
 const POOL_SECTION_LIMIT = 8;
+const RECORD_EXPORT_LIMIT = 12;
+const RECORD_PAGE_SIZE = 50;
 
 const state = {
   ready: false,
@@ -56,11 +58,17 @@ const state = {
   activeIndex: 0,
   lastMode: "none",
   lastBatchAt: null,
+  lastDraw: null,
   poolFilter: "all",
   poolSearch: "",
   poolPage: 1,
   poolExpanded: { akito: false, toya: false },
   recordFilter: "all",
+  announcements: null,
+  recentLoading: false,
+  recordSelectionMode: false,
+  selectedRecordIds: new Set(),
+  exportResult: null,
 };
 
 const el = {
@@ -72,6 +80,7 @@ const el = {
   drawStatus: $("#draw-status"),
   results: $("#results"),
   resultTime: $("#result-time"),
+  exportCurrentButton: $("#export-current-button"),
   metricDraws: $("#metric-draws"),
   metricCooking: $("#metric-cooking"),
   metricSpecial: $("#metric-special"),
@@ -93,15 +102,39 @@ const el = {
   poolSections: $("#pool-sections"),
   poolNote: $("#pool-note"),
   poolPager: $("#pool-pager"),
+  updatesList: $("#updates-list"),
   statDraws: $("#stat-draws"),
   statCooking: $("#stat-cooking"),
   statSpecial: $("#stat-special"),
   statNormal: $("#stat-normal"),
   recordFilters: $("#record-filters"),
   recordsList: $("#records-list"),
+  recordsPager: $("#records-pager"),
+  recordsPageStatus: $("#records-page-status"),
+  recordsLoadMore: $("#records-load-more"),
+  recordSelectButton: $("#record-select-button"),
+  recordSelectLabel: $("#record-select-label"),
+  recordExportBar: $("#record-export-bar"),
+  recordExportCount: $("#record-export-count"),
+  recordExportStatus: $("#record-export-status"),
+  recordExportCancel: $("#record-export-cancel"),
+  recordExportGenerate: $("#record-export-generate"),
   clearButton: $("#clear-button"),
   clearDialog: $("#clear-dialog"),
   confirmClear: $("#confirm-clear"),
+  exportDialog: $("#export-dialog"),
+  exportDialogClose: $("#export-dialog-close"),
+  exportPreview: $("#export-preview"),
+  exportDialogStatus: $("#export-dialog-status"),
+  exportDownloadButton: $("#export-download-button"),
+  exportShareButton: $("#export-share-button"),
+  updateDialog: $("#update-dialog"),
+  updateDialogClose: $("#update-dialog-close"),
+  updateDialogTitle: $("#update-dialog-title"),
+  updateDialogDate: $("#update-dialog-date"),
+  updateDialogSummary: $("#update-dialog-summary"),
+  updateDialogDetails: $("#update-dialog-details"),
+  updateDialogTags: $("#update-dialog-tags"),
 };
 
 const mqMobilePool = window.matchMedia("(max-width: 899px)");
@@ -182,11 +215,15 @@ function dayLabel(key) {
   return key;
 }
 
+function recordBatchKey(entry) {
+  return entry.batch_id || `${entry.created_at}:${entry.requested_count || 1}`;
+}
+
 /* ---------- 视图路由 ---------- */
 
 function currentView() {
   const hash = window.location.hash.replace("#", "");
-  return ["draw", "pool", "records"].includes(hash) ? hash : "draw";
+  return ["draw", "pool", "records", "updates"].includes(hash) ? hash : "draw";
 }
 
 function route() {
@@ -206,6 +243,16 @@ function route() {
       });
     } else {
       renderRecords();
+    }
+  }
+  if (view === "updates" && state.ready) {
+    if (state.announcements === null) {
+      loadAnnouncements().catch(() => {
+        state.announcements = [];
+        renderAnnouncements("更新公告暂时无法加载，请稍后刷新重试。");
+      });
+    } else {
+      renderAnnouncements();
     }
   }
   window.scrollTo({ top: 0, behavior: "auto" });
@@ -520,8 +567,17 @@ async function submitDraw(event) {
     });
     state.lastMode = fixedSide;
     state.lastBatchAt = data.created_at;
+    state.lastDraw = {
+      batchId: data.batch_id,
+      createdAt: data.created_at,
+      requestedCount: payload.count,
+      fixedSide,
+      fixedName: payload.fixed_name,
+      items: data.results,
+    };
     renderResults(data.results);
     el.resultTime.textContent = stampText(data.created_at);
+    el.exportCurrentButton.classList.remove("hidden");
     updateSummary(data.summary);
     state.profileStale = true;
     el.drawStatus.textContent = "";
@@ -824,6 +880,73 @@ function errorBlock(message) {
   return box;
 }
 
+/* ---------- 更新公告 ---------- */
+
+function announcementCard(item) {
+  const article = document.createElement("article");
+  article.className = `update-card${item.highlight ? " is-highlight" : ""}`;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "update-card__button";
+
+  const head = div("update-card__head");
+  const date = span("update-card__date", item.published_at);
+  if (item.highlight) head.append(span("update-card__latest", "最新"));
+  head.append(date);
+
+  const title = document.createElement("h2");
+  title.textContent = item.title;
+  const summary = document.createElement("p");
+  summary.textContent = item.summary;
+  const footer = div("update-card__footer");
+  const tags = div("update-card__tags");
+  (item.tags || []).forEach((tag) => tags.append(span("update-tag", tag)));
+  const arrow = span("update-card__arrow");
+  arrow.innerHTML = SVG.chevron;
+  footer.append(tags, arrow);
+  button.append(head, title, summary, footer);
+  button.addEventListener("click", () => openAnnouncement(item));
+  article.append(button);
+  return article;
+}
+
+function renderAnnouncements(message = null) {
+  if (!el.updatesList) return;
+  if (message) {
+    el.updatesList.replaceChildren(errorBlock(message));
+    return;
+  }
+  const items = state.announcements || [];
+  if (!items.length) {
+    el.updatesList.replaceChildren(emptyBlock("暂时还没有更新公告。"));
+    return;
+  }
+  el.updatesList.replaceChildren(...items.map(announcementCard));
+}
+
+function openAnnouncement(item) {
+  el.updateDialogTitle.textContent = item.title;
+  el.updateDialogDate.textContent = item.published_at;
+  el.updateDialogSummary.textContent = item.summary;
+  el.updateDialogDetails.replaceChildren(
+    ...(item.details || []).map((detail) => {
+      const node = document.createElement("li");
+      node.textContent = detail;
+      return node;
+    }),
+  );
+  el.updateDialogTags.replaceChildren(
+    ...(item.tags || []).map((tag) => span("update-tag", tag)),
+  );
+  el.updateDialog.showModal();
+}
+
+async function loadAnnouncements() {
+  const payload = await api("/api/v1/announcements");
+  state.announcements = Array.isArray(payload.items) ? payload.items : [];
+  renderAnnouncements();
+}
+
 /* ---------- 我的记录 ---------- */
 
 function buildRecordFilters() {
@@ -848,11 +971,77 @@ function buildRecordFilters() {
   );
 }
 
+function setRecordExportStatus(message = "可单独勾选，也可整批选择。") {
+  el.recordExportStatus.textContent = message;
+}
+
+function updateRecordExportControls() {
+  const count = state.selectedRecordIds.size;
+  el.recordExportCount.textContent = count;
+  el.recordExportGenerate.disabled = count === 0;
+  el.recordExportBar.classList.toggle("hidden", !state.recordSelectionMode);
+  el.recordSelectLabel.textContent = state.recordSelectionMode ? "退出选择" : "选择导出";
+  el.clearButton.classList.toggle("hidden", state.recordSelectionMode);
+}
+
+function setRecordSelectionMode(enabled) {
+  state.recordSelectionMode = enabled;
+  if (!enabled) state.selectedRecordIds.clear();
+  setRecordExportStatus();
+  updateRecordExportControls();
+  renderRecords();
+}
+
+function updateSelectedRecords(entries, checked) {
+  const ids = entries.map((entry) => entry.id).filter(Boolean);
+  if (checked) {
+    const additions = ids.filter((id) => !state.selectedRecordIds.has(id));
+    if (state.selectedRecordIds.size + additions.length > RECORD_EXPORT_LIMIT) {
+      setRecordExportStatus(`一张图片最多选择 ${RECORD_EXPORT_LIMIT} 条，请先取消部分记录。`);
+      renderRecords();
+      return false;
+    }
+    additions.forEach((id) => state.selectedRecordIds.add(id));
+  } else {
+    ids.forEach((id) => state.selectedRecordIds.delete(id));
+  }
+  setRecordExportStatus();
+  renderRecords();
+  return true;
+}
+
+function recordSelectionControl({ checked, indeterminate = false, label, onChange }) {
+  const wrapper = document.createElement("label");
+  wrapper.className = "record-select";
+  wrapper.title = label;
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = checked;
+  input.indeterminate = indeterminate;
+  input.setAttribute("aria-label", label);
+  input.addEventListener("change", () => {
+    const accepted = onChange(input.checked);
+    if (accepted === false) input.checked = false;
+  });
+  wrapper.append(input, span("record-select__mark"));
+  return wrapper;
+}
+
 function recordRow(entry) {
   const isSpecial = Boolean(entry.special_type);
   const isCook = Boolean(entry.is_cooking || entry.counts_as_cooking);
   const article = document.createElement("article");
-  article.className = `record-row${isSpecial ? " record-row--special" : isCook ? " record-row--cook" : ""}`;
+  const selected = state.selectedRecordIds.has(entry.id);
+  article.className = `record-row${isSpecial ? " record-row--special" : isCook ? " record-row--cook" : ""}${selected ? " is-selected" : ""}`;
+  if (state.recordSelectionMode) {
+    article.append(
+      recordSelectionControl({
+        checked: selected,
+        label: `选择 ${clockText(entry.created_at)} 的记录`,
+        onChange: (checked) => updateSelectedRecords([entry], checked),
+      }),
+    );
+  }
   article.append(span("record-row__time", clockText(entry.created_at)));
 
   const body = div("record-row__body");
@@ -881,10 +1070,11 @@ function recordRow(entry) {
   return article;
 }
 
-function recordBatchHeader(entry, visibleCount) {
+function recordBatchHeader(entry, visibleEntries, allEntries) {
   const header = div("record-batch__head");
   const leftLine = div("record-batch__line");
   const rightLine = div("record-batch__line");
+  const visibleCount = visibleEntries.length;
   const requestedCount = Number(entry.requested_count) || visibleCount;
   const title = span("record-batch__title", `本次抽取 · ${requestedCount} 抽`);
   const mode = MODE_LABEL[entry.fixed_side] || MODE_LABEL.none;
@@ -892,6 +1082,17 @@ function recordBatchHeader(entry, visibleCount) {
   const meta = span("record-batch__meta", `${clockText(entry.created_at)} · ${mode}${fixedName}`);
   if (requestedCount !== visibleCount) {
     meta.textContent += ` · 显示 ${visibleCount} 条`;
+  }
+  if (state.recordSelectionMode) {
+    const selectedCount = allEntries.filter((item) => state.selectedRecordIds.has(item.id)).length;
+    header.append(
+      recordSelectionControl({
+        checked: selectedCount === allEntries.length && allEntries.length > 0,
+        indeterminate: selectedCount > 0 && selectedCount < allEntries.length,
+        label: "选择本次抽取",
+        onChange: (checked) => updateSelectedRecords(allEntries, checked),
+      }),
+    );
   }
   header.append(leftLine, title, meta, rightLine);
   return header;
@@ -906,11 +1107,19 @@ function renderRecords() {
     if (state.recordFilter === "special") return Boolean(entry.special_type);
     return true;
   });
+  const allBatches = new Map();
+  recent.forEach((entry) => {
+    const key = recordBatchKey(entry);
+    if (!allBatches.has(key)) allBatches.set(key, []);
+    allBatches.get(key).push(entry);
+  });
 
   if (!filtered.length) {
     el.recordsList.replaceChildren(
       emptyBlock(recent.length ? "这个筛选下还没有记录。" : "还没有抽取记录，去抽一次吧。"),
     );
+    updateRecordExportControls();
+    updateRecordsPager();
     return;
   }
 
@@ -919,7 +1128,7 @@ function renderRecords() {
     const key = dayKey(entry.created_at);
     if (!groups.has(key)) groups.set(key, new Map());
     const batches = groups.get(key);
-    const batchKey = entry.batch_id || `${entry.created_at}:${entry.requested_count || 1}`;
+    const batchKey = recordBatchKey(entry);
     if (!batches.has(batchKey)) batches.set(batchKey, []);
     batches.get(batchKey).push(entry);
   });
@@ -941,7 +1150,8 @@ function renderRecords() {
       head.append(left, right);
       const batchBlocks = Array.from(batches.values()).map((batchEntries) => {
         const batch = div("record-batch");
-        batch.append(recordBatchHeader(batchEntries[0], batchEntries.length));
+        const batchKey = recordBatchKey(batchEntries[0]);
+        batch.append(recordBatchHeader(batchEntries[0], batchEntries, allBatches.get(batchKey) || batchEntries));
         batch.append(...batchEntries.map(recordRow));
         return batch;
       });
@@ -949,15 +1159,182 @@ function renderRecords() {
       return group;
     }),
   );
+  updateRecordExportControls();
+  updateRecordsPager();
 }
 
-async function loadProfile() {
-  const profile = await api("/api/v1/me");
-  state.profile = profile;
-  state.profileStale = false;
-  updateSummary(profile);
-  buildRecordFilters();
-  renderRecords();
+function exportBatch(entries) {
+  const first = entries[0];
+  return {
+    batchId: recordBatchKey(first),
+    createdAt: first.created_at,
+    requestedCount: Number(first.requested_count) || entries.length,
+    fixedSide: first.fixed_side || "none",
+    fixedName: first.fixed_name || null,
+    items: entries,
+  };
+}
+
+function currentExportPayload() {
+  if (!state.lastDraw) return null;
+  return {
+    kind: "current",
+    title: "本次抽取",
+    subtitle: `${state.lastDraw.items.length} 条结果 · ${formatExportSummary(state.lastDraw)}`,
+    generatedAt: new Date().toISOString(),
+    batches: [state.lastDraw],
+  };
+}
+
+function historyExportPayload() {
+  const selected = (state.profile?.recent || []).filter((entry) => state.selectedRecordIds.has(entry.id));
+  if (!selected.length) return null;
+  const batches = new Map();
+  selected.forEach((entry) => {
+    const key = recordBatchKey(entry);
+    if (!batches.has(key)) batches.set(key, []);
+    batches.get(key).push(entry);
+  });
+  return {
+    kind: "history",
+    title: "我的抽取记录",
+    subtitle: `${selected.length} 条记录 · ${batches.size} 次抽取`,
+    generatedAt: new Date().toISOString(),
+    batches: Array.from(batches.values(), exportBatch),
+  };
+}
+
+function updateRecordsPager() {
+  if (!el.recordsPager) return;
+  const total = Number(state.profile?.recent_total) || 0;
+  const loaded = state.profile?.recent?.length || 0;
+  const hasMore = Boolean(state.profile?.recent_has_more);
+  el.recordsPager.classList.toggle("hidden", total === 0);
+  el.recordsPageStatus.textContent = total ? `已显示 ${loaded} / ${total} 条记录` : "";
+  el.recordsLoadMore.classList.toggle("hidden", !hasMore);
+  el.recordsLoadMore.disabled = state.recentLoading;
+  el.recordsLoadMore.textContent = state.recentLoading ? "正在加载…" : "加载更早记录";
+}
+
+function formatExportSummary(batch) {
+  const mode = MODE_LABEL[batch.fixedSide] || MODE_LABEL.none;
+  const fixedName = batch.fixedSide !== "none" && batch.fixedName ? ` · ${batch.fixedName}` : "";
+  return `${stampText(batch.createdAt)} · ${mode}${fixedName}`;
+}
+
+function clearExportResult() {
+  if (state.exportResult?.previewUrl) URL.revokeObjectURL(state.exportResult.previewUrl);
+  state.exportResult = null;
+  el.exportPreview.replaceChildren();
+  el.exportDialogStatus.textContent = "";
+}
+
+function shareFileForResult(result) {
+  if (typeof File !== "function") return null;
+  return new File([result.blob], result.filename, { type: "image/png" });
+}
+
+function canShareResult(result) {
+  const file = shareFileForResult(result);
+  if (!file || typeof navigator.share !== "function" || typeof navigator.canShare !== "function") return false;
+  return navigator.canShare({ files: [file] });
+}
+
+function showExportResult(result) {
+  clearExportResult();
+  result.previewUrl = URL.createObjectURL(result.blob);
+  state.exportResult = result;
+  const image = document.createElement("img");
+  image.src = result.previewUrl;
+  image.alt = "导出的抽派生结果预览";
+  el.exportPreview.append(image);
+  result.canvas.width = 1;
+  result.canvas.height = 1;
+  el.exportShareButton.classList.toggle("hidden", !canShareResult(result));
+  el.exportDialogStatus.textContent = "图片只在当前浏览器中生成，不会上传到服务器。";
+  el.exportDialog.showModal();
+}
+
+async function generateExport(payload, trigger, statusTarget) {
+  if (!payload) return;
+  if (!window.ParoImageExporter) {
+    statusTarget.textContent = "图片模块加载失败，请刷新页面后重试。";
+    return;
+  }
+  trigger.disabled = true;
+  trigger.setAttribute("aria-busy", "true");
+  statusTarget.textContent = "正在生成图片，请稍候…";
+  try {
+    const result = await window.ParoImageExporter.render(payload);
+    showExportResult(result);
+    statusTarget.textContent = "";
+  } catch (error) {
+    statusTarget.textContent = error.message || "图片生成失败，请重试。";
+  } finally {
+    trigger.disabled = false;
+    trigger.removeAttribute("aria-busy");
+  }
+}
+
+function downloadExportResult() {
+  const result = state.exportResult;
+  if (!result) return;
+  const url = URL.createObjectURL(result.blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = result.filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  el.exportDialogStatus.textContent = "已请求保存图片；如果浏览器没有直接下载，可长按预览图保存。";
+}
+
+async function shareExportResult() {
+  const result = state.exportResult;
+  const file = result ? shareFileForResult(result) : null;
+  if (!result || !file || !canShareResult(result)) return;
+  el.exportShareButton.disabled = true;
+  try {
+    await navigator.share({
+      files: [file],
+      title: "抽派生结果",
+      text: "来自 akitoya.top 的抽派生结果",
+    });
+    el.exportDialogStatus.textContent = "分享面板已打开。";
+  } catch (error) {
+    if (error.name !== "AbortError") {
+      el.exportDialogStatus.textContent = "分享失败，可以改用“保存 PNG”。";
+    }
+  } finally {
+    el.exportShareButton.disabled = false;
+  }
+}
+
+async function loadProfile({ append = false } = {}) {
+  if (state.recentLoading) return;
+  state.recentLoading = true;
+  updateRecordsPager();
+  try {
+    const offset = append ? state.profile?.recent?.length || 0 : 0;
+    const profile = await api(`/api/v1/me?recent_offset=${offset}&recent_limit=${RECORD_PAGE_SIZE}`);
+    if (append && state.profile) {
+      const knownIds = new Set((state.profile.recent || []).map((entry) => entry.id));
+      profile.recent = [
+        ...(state.profile.recent || []),
+        ...(profile.recent || []).filter((entry) => !knownIds.has(entry.id)),
+      ];
+    }
+    state.profile = profile;
+    state.profileStale = false;
+    el.recordSelectButton.disabled = !profile.recent?.length;
+    updateSummary(profile);
+    buildRecordFilters();
+    renderRecords();
+  } finally {
+    state.recentLoading = false;
+    updateRecordsPager();
+  }
 }
 
 async function clearHistory(event) {
@@ -967,6 +1344,10 @@ async function clearHistory(event) {
     emptyResults("记录已清除，随时可以重新开始。");
     el.resultTime.textContent = "还没有抽取";
     state.lastBatchAt = null;
+    state.lastDraw = null;
+    el.exportCurrentButton.classList.add("hidden");
+    state.recordSelectionMode = false;
+    state.selectedRecordIds.clear();
     state.profileStale = true;
     await loadProfile();
   } catch (error) {
@@ -981,6 +1362,9 @@ function bindEvents() {
     if (event.target.name === "fixed_side") syncFixedSide(event.target.value);
   });
   el.form.addEventListener("submit", submitDraw);
+  el.exportCurrentButton.addEventListener("click", () => {
+    generateExport(currentExportPayload(), el.exportCurrentButton, el.drawStatus);
+  });
 
   el.pickerTrigger.addEventListener("click", () => {
     if (isPickerOpen()) closePicker();
@@ -1051,14 +1435,33 @@ function bindEvents() {
     renderPool();
   });
 
+  el.recordSelectButton.addEventListener("click", () => {
+    setRecordSelectionMode(!state.recordSelectionMode);
+  });
+  el.recordExportCancel.addEventListener("click", () => setRecordSelectionMode(false));
+  el.recordExportGenerate.addEventListener("click", () => {
+    generateExport(historyExportPayload(), el.recordExportGenerate, el.recordExportStatus);
+  });
+  el.recordsLoadMore.addEventListener("click", () => {
+    loadProfile({ append: true }).catch((error) => {
+      el.recordsPageStatus.textContent = error.message;
+    });
+  });
   el.clearButton.addEventListener("click", () => el.clearDialog.showModal());
   el.confirmClear.addEventListener("click", clearHistory);
+  el.exportDialogClose.addEventListener("click", () => el.exportDialog.close());
+  el.exportDownloadButton.addEventListener("click", downloadExportResult);
+  el.exportShareButton.addEventListener("click", shareExportResult);
+  el.exportDialog.addEventListener("close", clearExportResult);
+  el.updateDialogClose.addEventListener("click", () => el.updateDialog.close());
 }
 
 /* ---------- 启动 ---------- */
 
 async function initialize() {
   document.documentElement.classList.remove("no-js");
+  el.recordSelectButton.disabled = true;
+  updateRecordsPager();
   el.fixedSelect.setAttribute("tabindex", "-1");
   el.fixedSelect.setAttribute("aria-hidden", "true");
   el.pickerCaret.innerHTML = SVG.caretDown;
@@ -1072,6 +1475,7 @@ async function initialize() {
       body: "{}",
     });
     state.catalog = await api("/api/v1/catalog");
+    await loadAnnouncements();
   } catch (error) {
     el.drawStatus.textContent = `加载失败：${error.message}`;
     return;
