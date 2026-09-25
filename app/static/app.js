@@ -102,6 +102,9 @@ const el = {
   poolSections: $("#pool-sections"),
   poolNote: $("#pool-note"),
   poolPager: $("#pool-pager"),
+  homeUpdate: $("#home-update"),
+  homeUpdateDate: $("#home-update-date"),
+  homeUpdateTitle: $("#home-update-title"),
   updatesList: $("#updates-list"),
   statDraws: $("#stat-draws"),
   statCooking: $("#stat-cooking"),
@@ -910,8 +913,22 @@ function announcementCard(item) {
   return article;
 }
 
+function renderHomeAnnouncement() {
+  if (!el.homeUpdate) return;
+  const latest = state.announcements?.[0];
+  if (!latest) {
+    el.homeUpdate.classList.add("hidden");
+    return;
+  }
+  el.homeUpdateDate.textContent = latest.published_at;
+  el.homeUpdateDate.dateTime = latest.published_at;
+  el.homeUpdateTitle.textContent = latest.title;
+  el.homeUpdate.classList.remove("hidden");
+}
+
 function renderAnnouncements(message = null) {
   if (!el.updatesList) return;
+  renderHomeAnnouncement();
   if (message) {
     el.updatesList.replaceChildren(errorBlock(message));
     return;
