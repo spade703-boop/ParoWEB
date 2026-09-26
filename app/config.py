@@ -19,6 +19,19 @@ def _bool_env(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value.strip())
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if parsed < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return parsed
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     environment: str
@@ -29,6 +42,7 @@ class Settings:
     cookie_secure: bool
     allowed_hosts: tuple[str, ...]
     allowed_origins: tuple[str, ...]
+    draw_cooldown_seconds: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -50,4 +64,5 @@ class Settings:
                 "PARO_ALLOWED_ORIGINS",
                 "http://localhost:8000,http://127.0.0.1:8000,http://testserver",
             ),
+            draw_cooldown_seconds=_int_env("PARO_DRAW_COOLDOWN_SECONDS", 20),
         )

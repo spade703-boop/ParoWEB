@@ -7,9 +7,16 @@ from app.services.catalog import CatalogService
 
 
 class DrawService:
-    def __init__(self, catalog: CatalogService, repository: SQLiteRepository) -> None:
+    def __init__(
+        self,
+        catalog: CatalogService,
+        repository: SQLiteRepository,
+        *,
+        cooldown_seconds: int = 20,
+    ) -> None:
         self.catalog = catalog
         self.repository = repository
+        self.cooldown_seconds = cooldown_seconds
 
     async def draw(
         self,
@@ -34,6 +41,7 @@ class DrawService:
             fixed_side=fixed_side,
             fixed_name=resolved_fixed_name,
             results=results,
+            cooldown_seconds=self.cooldown_seconds,
         )
         outcome_map = snapshot.outcome_map()
         return {

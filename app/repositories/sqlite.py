@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from collections import Counter
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
+import math
 from pathlib import Path
 import uuid
 
 import aiosqlite
 
-from app.domain.models import DrawResult, FixedSide
+from app.domain.models import DrawLimitError, DrawResult, FixedSide
 
 
 SCHEMA = """
@@ -41,6 +42,13 @@ CREATE TABLE IF NOT EXISTS draw_results (
     UNIQUE(batch_id, position)
 );
 
+CREATE TABLE IF NOT EXISTS draw_limits (
+    visitor_id TEXT PRIMARY KEY REFERENCES visitors(id) ON DELETE CASCADE,
+    last_draw_at TEXT,
+    quota_day TEXT NOT NULL,
+    daily_results INTEGER NOT NULL DEFAULT 0 CHECK (daily_results >= 0)
+);
+
 CREATE INDEX IF NOT EXISTS idx_batches_visitor_created
     ON draw_batches(visitor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_results_batch_position
@@ -50,6 +58,25 @@ CREATE INDEX IF NOT EXISTS idx_results_batch_position
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+CHINA_TZ = timezone(timedelta(hours=8))
+
+
+def cooldown_for_daily_results(daily_results: int, base_seconds: int = 20) -> int:
+    if base_seconds <= 0:
+        return 0
+    if daily_results < 100:
+        return base_seconds
+    if daily_results < 200:
+        return 60
+    if daily_results < 300:
+        return 600
+    if daily_results < 400:
+        return 1800
+    if daily_results < 500:
+        return 3600
+    return 7200
 
 
 class SQLiteRepository:
@@ -115,12 +142,55 @@ class SQLiteRepository:
         fixed_side: FixedSide,
         fixed_name: str | None,
         results: list[DrawResult],
+        cooldown_seconds: int = 20,
     ) -> tuple[str, str]:
         batch_id = str(uuid.uuid4())
-        created_at = utc_now()
+        now = datetime.now(UTC)
+        created_at = now.isoformat().replace("+00:00", "Z")
+        quota_day = now.astimezone(CHINA_TZ).date().isoformat()
+        result_count = len(results)
         async with self.connect() as connection:
             await connection.execute("BEGIN IMMEDIATE")
             try:
+                await connection.execute(
+                    """
+                    INSERT INTO draw_limits(visitor_id, quota_day, daily_results)
+                    VALUES (?, ?, 0)
+                    ON CONFLICT(visitor_id) DO NOTHING
+                    """,
+                    (visitor_id, quota_day),
+                )
+                limit_row = await (
+                    await connection.execute(
+                        "SELECT last_draw_at, quota_day, daily_results FROM draw_limits WHERE visitor_id = ?",
+                        (visitor_id,),
+                    )
+                ).fetchone()
+                daily_results = int(limit_row["daily_results"])
+                last_draw_at = limit_row["last_draw_at"]
+                if limit_row["quota_day"] != quota_day:
+                    daily_results = 0
+                    last_draw_at = None
+                    await connection.execute(
+                        "UPDATE draw_limits SET quota_day = ?, last_draw_at = NULL, daily_results = 0 WHERE visitor_id = ?",
+                        (quota_day, visitor_id),
+                    )
+                required_cooldown = cooldown_for_daily_results(daily_results, cooldown_seconds)
+                if required_cooldown and last_draw_at:
+                    last_draw_datetime = datetime.fromisoformat(last_draw_at.replace("Z", "+00:00"))
+                    elapsed = (now - last_draw_datetime).total_seconds()
+                    if elapsed < required_cooldown:
+                        retry_after = max(1, math.ceil(required_cooldown - elapsed))
+                        raise DrawLimitError(
+                            "抽取间隔太短，请稍后再试",
+                            retry_after=retry_after,
+                            details={
+                                "reason": "cooldown",
+                                "retry_after": retry_after,
+                                "daily_results": daily_results,
+                                "cooldown_seconds": required_cooldown,
+                            },
+                        )
                 await connection.execute(
                     """
                     INSERT INTO draw_batches(id, visitor_id, requested_count, fixed_side, fixed_name, created_at)
@@ -149,6 +219,10 @@ class SQLiteRepository:
                         )
                         for position, result in enumerate(results, 1)
                     ],
+                )
+                await connection.execute(
+                    "UPDATE draw_limits SET last_draw_at = ?, quota_day = ?, daily_results = ? WHERE visitor_id = ?",
+                    (created_at, quota_day, daily_results + result_count, visitor_id),
                 )
                 await connection.commit()
             except Exception:
@@ -181,6 +255,7 @@ class SQLiteRepository:
             ).fetchall()
 
         draw_count = len(rows)
+        random_draw_count = sum(1 for row in rows if row["fixed_side"] == "none")
         cooking_count = sum(int(row["counts_as_cooking"]) for row in rows)
         specials = Counter(row["special_type"] for row in rows if row["special_type"])
         normal_rows = [row for row in rows if not row["special_type"]]
@@ -208,6 +283,7 @@ class SQLiteRepository:
         pair_values = sorted(pair_hits.items(), key=lambda item: (-item[1], rank_order.get(item[0], 10**9), item[0]))
         return {
             "draw_count": draw_count,
+            "random_draw_count": random_draw_count,
             "cooking_count": cooking_count,
             "special_counts": dict(sorted(specials.items())),
             "akito_top": top_names(akito_hits, akito_order, ranking_limit),
@@ -228,13 +304,25 @@ class SQLiteRepository:
             total_row = await (
                 await connection.execute("SELECT COUNT(*) AS total_draws FROM draw_results")
             ).fetchone()
+            random_total_row = await (
+                await connection.execute(
+                    """
+                    SELECT COUNT(*) AS random_draws
+                    FROM draw_results r
+                    JOIN draw_batches b ON b.id = r.batch_id
+                    WHERE b.fixed_side = 'none'
+                    """
+                )
+            ).fetchone()
             akito_rows = await (
                 await connection.execute(
                     """
-                    SELECT akito_name AS name, COUNT(*) AS count
-                    FROM draw_results
-                    WHERE special_type IS NULL AND akito_name IS NOT NULL
-                    GROUP BY akito_name
+                    SELECT r.akito_name AS name, COUNT(*) AS count
+                    FROM draw_results r
+                    JOIN draw_batches b ON b.id = r.batch_id
+                    WHERE b.fixed_side = 'none'
+                      AND r.special_type IS NULL AND r.akito_name IS NOT NULL
+                    GROUP BY r.akito_name
                     ORDER BY count DESC, name COLLATE NOCASE ASC
                     LIMIT ?
                     """,
@@ -244,10 +332,12 @@ class SQLiteRepository:
             toya_rows = await (
                 await connection.execute(
                     """
-                    SELECT toya_name AS name, COUNT(*) AS count
-                    FROM draw_results
-                    WHERE special_type IS NULL AND toya_name IS NOT NULL
-                    GROUP BY toya_name
+                    SELECT r.toya_name AS name, COUNT(*) AS count
+                    FROM draw_results r
+                    JOIN draw_batches b ON b.id = r.batch_id
+                    WHERE b.fixed_side = 'none'
+                      AND r.special_type IS NULL AND r.toya_name IS NOT NULL
+                    GROUP BY r.toya_name
                     ORDER BY count DESC, name COLLATE NOCASE ASC
                     LIMIT ?
                     """,
@@ -257,12 +347,14 @@ class SQLiteRepository:
             pair_rows = await (
                 await connection.execute(
                     """
-                    SELECT akito_name, toya_name, COUNT(*) AS count
-                    FROM draw_results
-                    WHERE special_type IS NULL
-                      AND akito_name IS NOT NULL
-                      AND toya_name IS NOT NULL
-                    GROUP BY akito_name, toya_name
+                    SELECT r.akito_name, r.toya_name, COUNT(*) AS count
+                    FROM draw_results r
+                    JOIN draw_batches b ON b.id = r.batch_id
+                    WHERE b.fixed_side = 'none'
+                      AND r.special_type IS NULL
+                      AND r.akito_name IS NOT NULL
+                      AND r.toya_name IS NOT NULL
+                    GROUP BY r.akito_name, r.toya_name
                     ORDER BY count DESC, akito_name COLLATE NOCASE ASC, toya_name COLLATE NOCASE ASC
                     LIMIT ?
                     """,
@@ -272,6 +364,7 @@ class SQLiteRepository:
 
         return {
             "total_draws": int(total_row["total_draws"] if total_row else 0),
+            "random_draws": int(random_total_row["random_draws"] if random_total_row else 0),
             "akito_top": [dict(row) for row in akito_rows],
             "toya_top": [dict(row) for row in toya_rows],
             "pair_top": [dict(row) for row in pair_rows],
@@ -281,7 +374,7 @@ class SQLiteRepository:
         async with self.connect() as connection:
             await connection.execute("BEGIN IMMEDIATE")
             try:
-                await connection.execute("DELETE FROM visitors WHERE id = ?", (visitor_id,))
+                await connection.execute("DELETE FROM draw_batches WHERE visitor_id = ?", (visitor_id,))
                 await connection.commit()
             except Exception:
                 await connection.rollback()

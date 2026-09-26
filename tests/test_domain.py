@@ -6,6 +6,7 @@ import pytest
 
 from app.domain.draw import draw_results, fuzzy_match
 from app.domain.models import CatalogSnapshot, DomainError, SpecialOutcome
+from app.repositories.sqlite import cooldown_for_daily_results
 
 
 class FakeRandom:
@@ -71,3 +72,11 @@ def test_special_tags_do_not_repeat_in_batch(snapshot: CatalogSnapshot) -> None:
 def test_invalid_count(snapshot: CatalogSnapshot, count: int) -> None:
     with pytest.raises(DomainError):
         draw_results(snapshot, count)
+
+
+@pytest.mark.parametrize(
+    ("daily_results", "expected_seconds"),
+    [(0, 20), (99, 20), (100, 60), (200, 600), (300, 1800), (400, 3600), (500, 7200)],
+)
+def test_adaptive_cooldown_tiers(daily_results: int, expected_seconds: int) -> None:
+    assert cooldown_for_daily_results(daily_results) == expected_seconds

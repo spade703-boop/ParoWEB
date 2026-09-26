@@ -216,9 +216,16 @@
       </div>
 
       <div class="community-total" aria-label="全站总抽取数">
-        <span class="community-total__label" id="community-total-label">全站总抽取数</span>
-        <strong id="community-total-draws">—</strong>
+        <div class="community-total__item">
+          <span class="community-total__label" id="community-total-label">全站总抽取数</span>
+          <strong id="community-total-draws">—</strong>
+        </div>
+        <div class="community-total__item">
+          <span class="community-total__label" id="community-random-label">双方随机抽取数</span>
+          <strong id="community-random-draws">—</strong>
+        </div>
       </div>
+      <p class="community-stats-note" id="community-stats-note">全站排行榜仅统计双方随机抽取；固定模式记录仍会计入总数。</p>
 
       <div class="stats-switch" role="tablist" aria-label="数据范围">
         <button type="button" class="stats-switch__button is-active" data-stats-scope="community" role="tab" aria-selected="true">全站汇总</button>

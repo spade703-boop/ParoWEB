@@ -53,7 +53,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         catalog=catalog,
         repository=repository,
         sessions=SessionManager(repository, secure=settings.cookie_secure),
-        draws=DrawService(catalog, repository),
+        draws=DrawService(
+            catalog,
+            repository,
+            cooldown_seconds=settings.draw_cooldown_seconds,
+        ),
         visitor_limiter=SlidingWindowLimiter(limit=30),
         ip_limiter=SlidingWindowLimiter(limit=60),
     )

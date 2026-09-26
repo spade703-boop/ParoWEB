@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -19,6 +20,7 @@ def settings(tmp_path) -> Settings:
         cookie_secure=False,
         allowed_hosts=("testserver",),
         allowed_origins=("http://testserver",),
+        draw_cooldown_seconds=0,
     )
 
 
@@ -116,7 +118,13 @@ async def test_community_stats_are_aggregated(client: httpx.AsyncClient) -> None
     empty = await client.get("/api/v1/community-stats")
     assert empty.status_code == 200
     assert empty.headers["cache-control"] == "no-store"
-    assert empty.json() == {"total_draws": 0, "akito_top": [], "toya_top": [], "pair_top": []}
+    assert empty.json() == {
+        "total_draws": 0,
+        "random_draws": 0,
+        "akito_top": [],
+        "toya_top": [],
+        "pair_top": [],
+    }
 
     catalog = (await client.get("/api/v1/catalog")).json()
     fixed_name = catalog["akito"][0]["name"]
@@ -129,15 +137,86 @@ async def test_community_stats_are_aggregated(client: httpx.AsyncClient) -> None
 
     stats = (await client.get("/api/v1/community-stats")).json()
     assert stats["total_draws"] == 3
-    normal_count = sum(1 for item in draw.json()["results"] if item["akito_name"])
-    if normal_count:
-        assert stats["akito_top"][0]["name"] == fixed_name
-        assert stats["akito_top"][0]["count"] == normal_count
+    assert stats["random_draws"] == 0
+    assert stats["akito_top"] == []
+    assert stats["toya_top"] == []
+
+    random_draw = await client.post(
+        "/api/v1/draw",
+        json={"count": 3, "fixed_side": "none", "fixed_name": None},
+        headers={"Origin": "http://testserver"},
+    )
+    assert random_draw.status_code == 200
+    stats = (await client.get("/api/v1/community-stats")).json()
+    assert stats["total_draws"] == 6
+    assert stats["random_draws"] == 3
     assert len(stats["pair_top"]) <= 10
 
     personal = await client.get("/api/v1/me/stats")
     assert personal.status_code == 200
-    assert personal.json()["total_draws"] == 3
+    assert personal.json()["total_draws"] == 6
+    assert personal.json()["random_draws"] == 3
+
+
+async def test_adaptive_draw_cooldown_uses_daily_tiers(settings: Settings) -> None:
+    limited_settings = replace(settings, draw_cooldown_seconds=20)
+    app = create_app(limited_settings)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api_client:
+            headers = {"Origin": "http://testserver"}
+            first = await api_client.post(
+                "/api/v1/draw",
+                json={"count": 1, "fixed_side": "none", "fixed_name": None},
+                headers=headers,
+            )
+            assert first.status_code == 200
+            blocked = await api_client.post(
+                "/api/v1/draw",
+                json={"count": 1, "fixed_side": "none", "fixed_name": None},
+                headers=headers,
+            )
+            assert blocked.status_code == 429
+            assert blocked.json()["error"]["code"] == "draw_limited"
+            assert 1 <= int(blocked.headers["retry-after"]) <= 20
+
+            cleared = await api_client.delete("/api/v1/me/history", headers=headers)
+            assert cleared.status_code == 200
+            still_blocked = await api_client.post(
+                "/api/v1/draw",
+                json={"count": 1, "fixed_side": "none", "fixed_name": None},
+                headers=headers,
+            )
+            assert still_blocked.status_code == 429
+
+            repository = app.state.services.repository
+            async with repository.connect() as connection:
+                visitor = await (await connection.execute("SELECT id FROM visitors LIMIT 1")).fetchone()
+                await connection.execute(
+                    "UPDATE draw_limits SET last_draw_at = ?, daily_results = 200 WHERE visitor_id = ?",
+                    (datetime.now(UTC).isoformat().replace("+00:00", "Z"), visitor["id"]),
+                )
+                await connection.commit()
+            tier_blocked = await api_client.post(
+                "/api/v1/draw",
+                json={"count": 1, "fixed_side": "none", "fixed_name": None},
+                headers=headers,
+            )
+            assert tier_blocked.status_code == 429
+            assert 598 <= int(tier_blocked.headers["retry-after"]) <= 600
+
+            async with repository.connect() as connection:
+                await connection.execute(
+                    "UPDATE draw_limits SET quota_day = ?, last_draw_at = ?, daily_results = 499 WHERE visitor_id = ?",
+                    ("2000-01-01", datetime.now(UTC).isoformat().replace("+00:00", "Z"), visitor["id"]),
+                )
+                await connection.commit()
+            reset_draw = await api_client.post(
+                "/api/v1/draw",
+                json={"count": 1, "fixed_side": "none", "fixed_name": None},
+                headers=headers,
+            )
+            assert reset_draw.status_code == 200
 
 
 async def test_concurrent_draws_are_all_persisted(client: httpx.AsyncClient) -> None:

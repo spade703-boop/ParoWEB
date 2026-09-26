@@ -111,6 +111,9 @@ const el = {
   updatesList: $("#updates-list"),
   communityTotal: $("#community-total-draws"),
   communityTotalLabel: $("#community-total-label"),
+  communityRandomTotal: $("#community-random-draws"),
+  communityRandomLabel: $("#community-random-label"),
+  communityStatsNote: $("#community-stats-note"),
   statsScopeButtons: $$('[data-stats-scope]'),
   communityAkitoList: $("#community-akito-list"),
   communityToyaList: $("#community-toya-list"),
@@ -1021,9 +1024,14 @@ function renderCommunityStats(message = null) {
   if (!el.communityTotal) return;
   const personal = state.communityStatsScope === "personal";
   el.communityTotalLabel.textContent = personal ? "我的总抽取数" : "全站总抽取数";
+  el.communityRandomLabel.textContent = personal ? "我的双方随机数" : "全站双方随机数";
+  el.communityStatsNote.textContent = personal
+    ? "我的 TOP 10 包含固定模式记录；双方随机数仅作为口径对照。"
+    : "全站排行榜仅统计双方随机抽取；固定模式记录仍会计入总数。";
   el.communityTotal.parentElement?.setAttribute("aria-label", personal ? "我的总抽取数" : "全站总抽取数");
   if (message || !state.communityStats) {
     el.communityTotal.textContent = "—";
+    el.communityRandomTotal.textContent = "—";
     const error = errorBlock(message || "正在读取数据…");
     el.communityAkitoList.replaceChildren(error.cloneNode(true));
     el.communityToyaList.replaceChildren(error.cloneNode(true));
@@ -1031,6 +1039,7 @@ function renderCommunityStats(message = null) {
     return;
   }
   el.communityTotal.textContent = Number(state.communityStats.total_draws || 0).toLocaleString("zh-CN");
+  el.communityRandomTotal.textContent = Number(state.communityStats.random_draws || 0).toLocaleString("zh-CN");
   renderCommunityRankList(el.communityAkitoList, state.communityStats.akito_top, "akito");
   renderCommunityRankList(el.communityToyaList, state.communityStats.toya_top, "toya");
   renderCommunityRankList(el.communityPairList, state.communityStats.pair_top, "pair");

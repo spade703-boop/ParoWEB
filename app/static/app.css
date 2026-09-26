@@ -634,13 +634,16 @@ html.no-js .picker__panel { display: none; }
 
 .stats-hero { padding-bottom: 8px; }
 .community-total {
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0;
   margin-top: 28px; padding: 22px 24px;
   border: 1px solid var(--line); border-radius: var(--radius-card);
   background: var(--card); box-shadow: var(--shadow-card);
 }
+.community-total__item { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; }
+.community-total__item + .community-total__item { margin-left: 24px; padding-left: 24px; border-left: 1px solid var(--line); }
 .community-total__label { color: var(--muted); font-size: 14px; font-weight: 700; }
 .community-total strong { color: var(--ink); font: 700 38px/1 var(--font-num); }
+.community-stats-note { margin: 12px 2px 0; color: var(--muted); font-size: 12px; }
 .stats-switch {
   display: inline-flex; gap: 4px; margin-top: 18px; padding: 4px;
   border-radius: 13px; background: var(--paper-deep);
@@ -951,6 +954,8 @@ dialog::backdrop { background: rgba(30, 28, 25, .48); backdrop-filter: blur(3px)
   .updates-list { grid-template-columns: minmax(0, 1fr); padding-top: 22px; }
 
   .community-total { margin-top: 20px; padding: 17px 16px; }
+  .community-total__item { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; }
+  .community-total__item + .community-total__item { margin-left: 14px; padding-left: 14px; }
   .community-total__label { font-size: 12px; }
   .community-total strong { font-size: 30px; }
   .stats-switch { margin-top: 14px; }

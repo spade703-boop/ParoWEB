@@ -29,10 +29,13 @@ python -m pytest
 - HTTPS 站点对应的 `PARO_ALLOWED_ORIGINS`
 - 持久化路径 `PARO_DATABASE_PATH`
 - Bot 数据源路径 `PARO_CONTENT_DIR`（生产 Compose 默认是容器内的 `/bot-data`）
+- `PARO_DRAW_COOLDOWN_SECONDS`（默认 `20`；每日抽取达到 100、200、300、400、500 条后，冷却依次为 1 分钟、10 分钟、30 分钟、1 小时、2 小时）
 
 生产 Compose 会将宿主机 `${PARO_BOT_DATA_DIR:-/akito_bot/data}` 以只读方式挂载到 `/bot-data`，并将网站仓库的 `content/` 以只读方式挂载到 `/app/content`。如果 Bot 数据目录不同，在服务器的 `.env` 中设置 `PARO_BOT_DATA_DIR=/实际路径/data`，再重建网页容器即可。之后 Bot 更新 `paro_pools.json`、`paro_config.json` 或头像文件时，网页不需要复制文件或重新构建镜像；下一次访问目录、抽取或打开页面时会自动读取新内容。更新 `content/announcements.json` 后也无需重新构建镜像，服务器执行 `git pull` 后公告服务会在下一次请求时自动热加载；只有修改 Python、HTML、CSS 或 JavaScript 等镜像内文件时才需要 `docker compose up -d --build`。
 
 网站数据默认保存在 `data/paro_web.sqlite3`，与 Bot 统计数据物理隔离。正式公开前仍需确认素材使用权并完成备案、域名和 HTTPS 配置。
+
+公共排行榜只统计“双方随机”抽取；固定模式记录仍会保留在个人记录和全站总数中。抽取冷却计数按中国标准时间每日零点重置，数据保存在 SQLite 中，容器重启不会绕过限制。
 
 ## 素材说明
 

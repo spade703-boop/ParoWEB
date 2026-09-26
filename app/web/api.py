@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import secrets
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.domain.models import DrawLimitError
 from app.web.errors import error_response
-from app.web.sessions import token_hash
 
 
 router = APIRouter(prefix="/api/v1")
@@ -145,6 +144,7 @@ async def get_community_stats(request: Request, response: Response) -> dict:
     snapshot = services.catalog.snapshot
     return {
         "total_draws": stats["total_draws"],
+        "random_draws": stats["random_draws"],
         "akito_top": [
             {**item, "avatar_url": snapshot.avatars["akito"].get(item["name"])}
             for item in stats["akito_top"]
@@ -179,12 +179,21 @@ async def create_draw(payload: DrawRequest, request: Request, response: Response
             {"retry_after": retry_after},
             {"Retry-After": str(retry_after)},
         )
-    result = await services.draws.draw(
-        visitor_id=visitor["id"],
-        count=payload.count,
-        fixed_side=payload.fixed_side,
-        fixed_name=payload.fixed_name.strip() if payload.fixed_name else None,
-    )
+    try:
+        result = await services.draws.draw(
+            visitor_id=visitor["id"],
+            count=payload.count,
+            fixed_side=payload.fixed_side,
+            fixed_name=payload.fixed_name.strip() if payload.fixed_name else None,
+        )
+    except DrawLimitError as exc:
+        return error_response(
+            429,
+            "draw_limited",
+            exc.message,
+            exc.details,
+            {"Retry-After": str(exc.retry_after)},
+        )
     services.sessions.set_cookie(response, token)
     return result
 
@@ -217,6 +226,7 @@ async def get_personal_stats(request: Request, response: Response) -> dict:
     services.sessions.set_cookie(response, token)
     return {
         "total_draws": profile["draw_count"],
+        "random_draws": profile["random_draw_count"],
         "akito_top": [
             {**item, "avatar_url": snapshot.avatars["akito"].get(item["name"])}
             for item in profile["akito_top"]
@@ -239,9 +249,7 @@ async def get_personal_stats(request: Request, response: Response) -> dict:
 @router.delete("/me/history")
 async def delete_history(request: Request, response: Response) -> dict:
     services = _services(request)
-    visitor, _old_token, _is_new = await services.sessions.resolve(request)
+    visitor, token, _is_new = await services.sessions.resolve(request)
     await services.repository.clear_history(visitor["id"])
-    new_request_token = secrets.token_urlsafe(32)
-    new_visitor = await services.repository.get_or_create_visitor(token_hash(new_request_token))
-    services.sessions.set_cookie(response, new_request_token)
-    return {"cleared": True, "visitor": {"created_at": new_visitor["created_at"]}}
+    services.sessions.set_cookie(response, token)
+    return {"cleared": True, "visitor": {"created_at": visitor["created_at"]}}
