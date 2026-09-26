@@ -137,6 +137,33 @@ async def get_announcements(request: Request, response: Response) -> dict:
     return _services(request).announcements.payload()
 
 
+@router.get("/community-stats")
+async def get_community_stats(request: Request, response: Response) -> dict:
+    services = _services(request)
+    response.headers["Cache-Control"] = "no-store"
+    stats = await services.repository.community_stats(limit=10)
+    snapshot = services.catalog.snapshot
+    return {
+        "total_draws": stats["total_draws"],
+        "akito_top": [
+            {**item, "avatar_url": snapshot.avatars["akito"].get(item["name"])}
+            for item in stats["akito_top"]
+        ],
+        "toya_top": [
+            {**item, "avatar_url": snapshot.avatars["toya"].get(item["name"])}
+            for item in stats["toya_top"]
+        ],
+        "pair_top": [
+            {
+                **item,
+                "akito_avatar_url": snapshot.avatars["akito"].get(item["akito_name"]),
+                "toya_avatar_url": snapshot.avatars["toya"].get(item["toya_name"]),
+            }
+            for item in stats["pair_top"]
+        ],
+    }
+
+
 @router.post("/draw")
 async def create_draw(payload: DrawRequest, request: Request, response: Response):
     services = _services(request)
@@ -176,6 +203,37 @@ async def get_profile(
     )
     services.sessions.set_cookie(response, token)
     return _serialize_profile(profile, services.catalog.snapshot)
+
+
+@router.get("/me/stats")
+async def get_personal_stats(request: Request, response: Response) -> dict:
+    services = _services(request)
+    response.headers["Cache-Control"] = "no-store"
+    visitor, token, _is_new = await services.sessions.resolve(request)
+    profile = await services.repository.profile(
+        visitor["id"], recent_limit=0, ranking_limit=10
+    )
+    snapshot = services.catalog.snapshot
+    services.sessions.set_cookie(response, token)
+    return {
+        "total_draws": profile["draw_count"],
+        "akito_top": [
+            {**item, "avatar_url": snapshot.avatars["akito"].get(item["name"])}
+            for item in profile["akito_top"]
+        ],
+        "toya_top": [
+            {**item, "avatar_url": snapshot.avatars["toya"].get(item["name"])}
+            for item in profile["toya_top"]
+        ],
+        "pair_top": [
+            {
+                **item,
+                "akito_avatar_url": snapshot.avatars["akito"].get(item["akito_name"]),
+                "toya_avatar_url": snapshot.avatars["toya"].get(item["toya_name"]),
+            }
+            for item in profile["pair_top"]
+        ],
+    }
 
 
 @router.delete("/me/history")

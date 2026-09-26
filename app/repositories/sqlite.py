@@ -156,7 +156,14 @@ class SQLiteRepository:
                 raise
         return batch_id, created_at
 
-    async def profile(self, visitor_id: str, *, recent_limit: int = 50, recent_offset: int = 0) -> dict:
+    async def profile(
+        self,
+        visitor_id: str,
+        *,
+        recent_limit: int = 50,
+        recent_offset: int = 0,
+        ranking_limit: int = 3,
+    ) -> dict:
         async with self.connect() as connection:
             rows = await (
                 await connection.execute(
@@ -203,17 +210,71 @@ class SQLiteRepository:
             "draw_count": draw_count,
             "cooking_count": cooking_count,
             "special_counts": dict(sorted(specials.items())),
-            "akito_top": top_names(akito_hits, akito_order),
-            "toya_top": top_names(toya_hits, toya_order),
+            "akito_top": top_names(akito_hits, akito_order, ranking_limit),
+            "toya_top": top_names(toya_hits, toya_order, ranking_limit),
             "pair_top": [
                 {"akito_name": pair[0], "toya_name": pair[1], "count": count}
-                for pair, count in pair_values[:3]
+                for pair, count in pair_values[:ranking_limit]
             ],
             "recent": [dict(row) for row in rows[recent_offset : recent_offset + recent_limit]],
             "recent_total": len(rows),
             "recent_offset": recent_offset,
             "recent_limit": recent_limit,
             "recent_has_more": recent_offset + recent_limit < len(rows),
+        }
+
+    async def community_stats(self, *, limit: int = 10) -> dict:
+        async with self.connect() as connection:
+            total_row = await (
+                await connection.execute("SELECT COUNT(*) AS total_draws FROM draw_results")
+            ).fetchone()
+            akito_rows = await (
+                await connection.execute(
+                    """
+                    SELECT akito_name AS name, COUNT(*) AS count
+                    FROM draw_results
+                    WHERE special_type IS NULL AND akito_name IS NOT NULL
+                    GROUP BY akito_name
+                    ORDER BY count DESC, name COLLATE NOCASE ASC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            ).fetchall()
+            toya_rows = await (
+                await connection.execute(
+                    """
+                    SELECT toya_name AS name, COUNT(*) AS count
+                    FROM draw_results
+                    WHERE special_type IS NULL AND toya_name IS NOT NULL
+                    GROUP BY toya_name
+                    ORDER BY count DESC, name COLLATE NOCASE ASC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            ).fetchall()
+            pair_rows = await (
+                await connection.execute(
+                    """
+                    SELECT akito_name, toya_name, COUNT(*) AS count
+                    FROM draw_results
+                    WHERE special_type IS NULL
+                      AND akito_name IS NOT NULL
+                      AND toya_name IS NOT NULL
+                    GROUP BY akito_name, toya_name
+                    ORDER BY count DESC, akito_name COLLATE NOCASE ASC, toya_name COLLATE NOCASE ASC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            ).fetchall()
+
+        return {
+            "total_draws": int(total_row["total_draws"] if total_row else 0),
+            "akito_top": [dict(row) for row in akito_rows],
+            "toya_top": [dict(row) for row in toya_rows],
+            "pair_top": [dict(row) for row in pair_rows],
         }
 
     async def clear_history(self, visitor_id: str) -> None:

@@ -65,6 +65,9 @@ const state = {
   poolExpanded: { akito: false, toya: false },
   recordFilter: "all",
   announcements: null,
+  communityStats: null,
+  communityStatsScope: "community",
+  communityStatsLoading: false,
   recentLoading: false,
   recordSelectionMode: false,
   selectedRecordIds: new Set(),
@@ -106,6 +109,12 @@ const el = {
   homeUpdateDate: $("#home-update-date"),
   homeUpdateTitle: $("#home-update-title"),
   updatesList: $("#updates-list"),
+  communityTotal: $("#community-total-draws"),
+  communityTotalLabel: $("#community-total-label"),
+  statsScopeButtons: $$('[data-stats-scope]'),
+  communityAkitoList: $("#community-akito-list"),
+  communityToyaList: $("#community-toya-list"),
+  communityPairList: $("#community-pair-list"),
   statDraws: $("#stat-draws"),
   statCooking: $("#stat-cooking"),
   statSpecial: $("#stat-special"),
@@ -226,7 +235,7 @@ function recordBatchKey(entry) {
 
 function currentView() {
   const hash = window.location.hash.replace("#", "");
-  return ["draw", "pool", "records", "updates"].includes(hash) ? hash : "draw";
+  return ["draw", "pool", "stats", "records", "updates"].includes(hash) ? hash : "draw";
 }
 
 function route() {
@@ -239,6 +248,10 @@ function route() {
     else node.removeAttribute("aria-current");
   });
   if (view === "pool" && state.ready) renderPool();
+  if (view === "stats" && state.ready) {
+    if (state.communityStats) renderCommunityStats();
+    else loadCommunityStats();
+  }
   if (view === "records" && state.ready) {
     if (state.profileStale || !state.profile) {
       loadProfile().catch((error) => {
@@ -583,6 +596,7 @@ async function submitDraw(event) {
     el.exportCurrentButton.classList.remove("hidden");
     updateSummary(data.summary);
     state.profileStale = true;
+    state.communityStats = null;
     el.drawStatus.textContent = "";
   } catch (error) {
     el.drawStatus.textContent = error.retryAfter
@@ -962,6 +976,80 @@ async function loadAnnouncements() {
   const payload = await api("/api/v1/announcements");
   state.announcements = Array.isArray(payload.items) ? payload.items : [];
   renderAnnouncements();
+}
+
+function communityRankRow(item, position, kind) {
+  const row = document.createElement("li");
+  row.className = `community-rank-row community-rank-row--${kind}`;
+  row.append(span("community-rank-row__position", String(position).padStart(2, "0")));
+
+  const body = div("community-rank-row__body");
+  if (kind === "pair") {
+    const avatars = div("community-rank-row__avatars");
+    avatars.append(
+      avatarBox(item.akito_avatar_url, item.akito_name, "community-rank-row__avatar community-rank-row__avatar--akito"),
+      avatarBox(item.toya_avatar_url, item.toya_name, "community-rank-row__avatar community-rank-row__avatar--toya"),
+    );
+    const names = div("community-rank-row__names");
+    names.append(
+      span("community-rank-row__name community-rank-row__name--akito", item.akito_name),
+      span("community-rank-row__cross", "×"),
+      span("community-rank-row__name community-rank-row__name--toya", item.toya_name),
+    );
+    body.append(avatars, names);
+  } else {
+    body.append(
+      avatarBox(item.avatar_url, item.name, `community-rank-row__avatar community-rank-row__avatar--${kind}`),
+      span("community-rank-row__name", item.name),
+    );
+  }
+  body.append(span("community-rank-row__count", `${item.count} 次`));
+  row.append(body);
+  return row;
+}
+
+function renderCommunityRankList(list, items, kind) {
+  if (!list) return;
+  if (!items?.length) {
+    list.replaceChildren(emptyBlock("暂时还没有抽取数据。"));
+    return;
+  }
+  list.replaceChildren(...items.map((item, index) => communityRankRow(item, index + 1, kind)));
+}
+
+function renderCommunityStats(message = null) {
+  if (!el.communityTotal) return;
+  const personal = state.communityStatsScope === "personal";
+  el.communityTotalLabel.textContent = personal ? "我的总抽取数" : "全站总抽取数";
+  el.communityTotal.parentElement?.setAttribute("aria-label", personal ? "我的总抽取数" : "全站总抽取数");
+  if (message || !state.communityStats) {
+    el.communityTotal.textContent = "—";
+    const error = errorBlock(message || "正在读取数据…");
+    el.communityAkitoList.replaceChildren(error.cloneNode(true));
+    el.communityToyaList.replaceChildren(error.cloneNode(true));
+    el.communityPairList.replaceChildren(error);
+    return;
+  }
+  el.communityTotal.textContent = Number(state.communityStats.total_draws || 0).toLocaleString("zh-CN");
+  renderCommunityRankList(el.communityAkitoList, state.communityStats.akito_top, "akito");
+  renderCommunityRankList(el.communityToyaList, state.communityStats.toya_top, "toya");
+  renderCommunityRankList(el.communityPairList, state.communityStats.pair_top, "pair");
+}
+
+async function loadCommunityStats() {
+  if (state.communityStatsLoading) return;
+  state.communityStatsLoading = true;
+  renderCommunityStats();
+  const path = state.communityStatsScope === "personal" ? "/api/v1/me/stats" : "/api/v1/community-stats";
+  try {
+    state.communityStats = await api(path);
+    renderCommunityStats();
+  } catch (error) {
+    state.communityStats = null;
+    renderCommunityStats(error.message || "数据暂时无法加载，请稍后重试。");
+  } finally {
+    state.communityStatsLoading = false;
+  }
 }
 
 /* ---------- 我的记录 ---------- */
@@ -1366,6 +1454,7 @@ async function clearHistory(event) {
     state.recordSelectionMode = false;
     state.selectedRecordIds.clear();
     state.profileStale = true;
+    state.communityStats = null;
     await loadProfile();
   } catch (error) {
     el.drawStatus.textContent = error.message;
@@ -1444,6 +1533,20 @@ function bindEvents() {
       const view = node.dataset.nav;
       if (window.location.hash === `#${view}`) route();
       else window.location.hash = view;
+    });
+  });
+  el.statsScopeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const scope = button.dataset.statsScope;
+      if (!scope || scope === state.communityStatsScope) return;
+      state.communityStatsScope = scope;
+      state.communityStats = null;
+      el.statsScopeButtons.forEach((item) => {
+        const active = item.dataset.statsScope === scope;
+        item.classList.toggle("is-active", active);
+        item.setAttribute("aria-selected", String(active));
+      });
+      loadCommunityStats();
     });
   });
   window.addEventListener("hashchange", route);

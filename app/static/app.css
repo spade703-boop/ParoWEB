@@ -630,6 +630,74 @@ html.no-js .picker__panel { display: none; }
 .update-dialog__details li::marker { color: var(--akito); }
 .update-dialog__tags { margin-top: 22px; }
 
+/* ---------- 趣味派生数据 ---------- */
+
+.stats-hero { padding-bottom: 8px; }
+.community-total {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin-top: 28px; padding: 22px 24px;
+  border: 1px solid var(--line); border-radius: var(--radius-card);
+  background: var(--card); box-shadow: var(--shadow-card);
+}
+.community-total__label { color: var(--muted); font-size: 14px; font-weight: 700; }
+.community-total strong { color: var(--ink); font: 700 38px/1 var(--font-num); }
+.stats-switch {
+  display: inline-flex; gap: 4px; margin-top: 18px; padding: 4px;
+  border-radius: 13px; background: var(--paper-deep);
+}
+.stats-switch__button {
+  padding: 8px 16px; border: 0; border-radius: 9px;
+  background: transparent; color: var(--muted); font-size: 12.5px;
+}
+.stats-switch__button.is-active {
+  background: var(--card); color: var(--ink); font-weight: 700;
+  box-shadow: 0 2px 8px rgba(66, 48, 32, .1);
+}
+.community-rank-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px;
+  padding: 22px 0 96px;
+}
+.community-rank-card {
+  min-width: 0; padding: 22px;
+  border: 1px solid var(--line); border-radius: var(--radius-card);
+  background: var(--card); box-shadow: var(--shadow-card);
+}
+.community-rank-card--akito { border-top: 3px solid var(--akito); }
+.community-rank-card--toya { border-top: 3px solid var(--toya); }
+.community-rank-card--pair { grid-column: 1 / -1; border-top: 3px solid var(--ink); }
+.community-rank-card__head .eyebrow { margin-bottom: 6px; }
+.community-rank-card__head h2 { margin: 0; font-family: var(--font-serif); font-size: 22px; }
+.community-rank-card__head h2 .k { color: var(--akito); }
+.community-rank-card__head h2 .t { color: var(--toya); }
+.community-rank-list {
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 18px 0 0; padding: 0; list-style: none;
+}
+.community-rank-list > .records-empty { padding: 28px 12px; }
+.community-rank-row { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.community-rank-row__position {
+  flex: none; width: 23px; color: var(--faint); font: 700 11px/1 var(--font-num); text-align: right;
+}
+.community-rank-row__body {
+  display: flex; align-items: center; gap: 10px; min-width: 0; width: 100%;
+  padding: 8px 10px; border-radius: 12px; background: var(--card-deep);
+}
+.community-rank-row__avatar {
+  flex: none; width: 34px; height: 34px; display: grid; place-items: center;
+  overflow: hidden; border-radius: 10px; background: var(--paper-deep); color: var(--faint); font-size: 13px; font-weight: 700;
+}
+.community-rank-row__avatar img { width: 100%; height: 100%; object-fit: cover; }
+.community-rank-row__avatar--akito { background: var(--akito-soft); color: var(--akito-ink); }
+.community-rank-row__avatar--toya { background: var(--toya-soft); color: var(--toya); }
+.community-rank-row__name { min-width: 0; overflow: hidden; color: var(--ink); font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.community-rank-row__count { margin-left: auto; flex: none; color: var(--muted); font: 700 12px/1 var(--font-num); }
+.community-rank-row__avatars { display: flex; flex: none; }
+.community-rank-row__avatars .community-rank-row__avatar + .community-rank-row__avatar { margin-left: -7px; border: 2px solid var(--card-deep); }
+.community-rank-row__names { display: flex; align-items: center; min-width: 0; gap: 5px; }
+.community-rank-row__name--akito { color: var(--akito-ink); }
+.community-rank-row__name--toya { color: var(--toya); }
+.community-rank-row__cross { color: var(--faint); font-size: 12px; }
+
 /* 分页控件（桌面/移动共用） */
 .pager__btn {
   min-width: 34px; height: 34px; padding: 0 9px;
@@ -770,7 +838,7 @@ html.no-js .picker__panel { display: none; }
   background: rgba(255, 253, 249, .96);
   backdrop-filter: blur(14px);
 }
-.bottom-nav__inner { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.bottom-nav__inner { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
 .bottom-nav__item {
   display: flex; flex-direction: column; align-items: center; gap: 5px;
   padding: 8px 4px; border: 0; border-radius: 12px;
@@ -881,6 +949,18 @@ dialog::backdrop { background: rgba(30, 28, 25, .48); backdrop-filter: blur(3px)
   .pool-sections { gap: 22px; }
 
   .updates-list { grid-template-columns: minmax(0, 1fr); padding-top: 22px; }
+
+  .community-total { margin-top: 20px; padding: 17px 16px; }
+  .community-total__label { font-size: 12px; }
+  .community-total strong { font-size: 30px; }
+  .stats-switch { margin-top: 14px; }
+  .stats-switch__button { padding: 8px 13px; }
+  .community-rank-grid { grid-template-columns: minmax(0, 1fr); gap: 11px; padding-top: 16px; }
+  .community-rank-card { padding: 17px 14px; border-radius: 18px; }
+  .community-rank-card--pair { grid-column: auto; }
+  .community-rank-card__head h2 { font-size: 19px; }
+  .community-rank-row__body { padding: 7px 8px; }
+  .community-rank-row__name { font-size: 12px; }
 
   .records-main { padding: 24px 0 110px; }
   .stats-row { gap: 10px; margin: 20px 0; }

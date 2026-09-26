@@ -112,6 +112,34 @@ async def test_announcements_are_available(client: httpx.AsyncClient) -> None:
     assert {"id", "published_at", "title", "summary", "details", "tags", "highlight"} <= set(payload["items"][0])
 
 
+async def test_community_stats_are_aggregated(client: httpx.AsyncClient) -> None:
+    empty = await client.get("/api/v1/community-stats")
+    assert empty.status_code == 200
+    assert empty.headers["cache-control"] == "no-store"
+    assert empty.json() == {"total_draws": 0, "akito_top": [], "toya_top": [], "pair_top": []}
+
+    catalog = (await client.get("/api/v1/catalog")).json()
+    fixed_name = catalog["akito"][0]["name"]
+    draw = await client.post(
+        "/api/v1/draw",
+        json={"count": 3, "fixed_side": "akito", "fixed_name": fixed_name},
+        headers={"Origin": "http://testserver"},
+    )
+    assert draw.status_code == 200
+
+    stats = (await client.get("/api/v1/community-stats")).json()
+    assert stats["total_draws"] == 3
+    normal_count = sum(1 for item in draw.json()["results"] if item["akito_name"])
+    if normal_count:
+        assert stats["akito_top"][0]["name"] == fixed_name
+        assert stats["akito_top"][0]["count"] == normal_count
+    assert len(stats["pair_top"]) <= 10
+
+    personal = await client.get("/api/v1/me/stats")
+    assert personal.status_code == 200
+    assert personal.json()["total_draws"] == 3
+
+
 async def test_concurrent_draws_are_all_persisted(client: httpx.AsyncClient) -> None:
     await client.post("/api/v1/session", json={}, headers={"Origin": "http://testserver"})
     responses = await asyncio.gather(

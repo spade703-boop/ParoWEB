@@ -23,6 +23,7 @@
       <nav class="top-nav" aria-label="主导航">
         <a class="top-nav__item is-active" href="#draw" data-nav="draw" aria-current="page">抽派生</a>
         <a class="top-nav__item" href="#pool" data-nav="pool">派生池</a>
+        <a class="top-nav__item" href="#stats" data-nav="stats">趣味数据</a>
         <a class="top-nav__item" href="#records" data-nav="records">我的记录</a>
         <a class="top-nav__item top-nav__item--updates" href="#updates" data-nav="updates">
           更新公告<span class="nav-new">NEW</span>
@@ -206,6 +207,49 @@
       <nav class="pool-pager hidden" id="pool-pager" aria-label="派生池分页"></nav>
     </section>
 
+    <!-- ============================ 趣味数据 ============================ -->
+    <section class="view hidden" data-view="stats">
+      <div class="hero stats-hero">
+        <p class="eyebrow">COMMUNITY SNAPSHOT</p>
+        <h1 class="hero__title">趣味派生数据</h1>
+        <p class="hero__sub">来自全站匿名抽取记录的实时汇总。</p>
+      </div>
+
+      <div class="community-total" aria-label="全站总抽取数">
+        <span class="community-total__label" id="community-total-label">全站总抽取数</span>
+        <strong id="community-total-draws">—</strong>
+      </div>
+
+      <div class="stats-switch" role="tablist" aria-label="数据范围">
+        <button type="button" class="stats-switch__button is-active" data-stats-scope="community" role="tab" aria-selected="true">全站汇总</button>
+        <button type="button" class="stats-switch__button" data-stats-scope="personal" role="tab" aria-selected="false">我的数据</button>
+      </div>
+
+      <div class="community-rank-grid">
+        <section class="community-rank-card community-rank-card--akito" aria-labelledby="community-akito-title">
+          <div class="community-rank-card__head">
+            <p class="eyebrow">AKITO TOP 10</p>
+            <h2 id="community-akito-title"><span class="k">彰人</span>派生</h2>
+          </div>
+          <ol class="community-rank-list" id="community-akito-list"></ol>
+        </section>
+        <section class="community-rank-card community-rank-card--toya" aria-labelledby="community-toya-title">
+          <div class="community-rank-card__head">
+            <p class="eyebrow">TOYA TOP 10</p>
+            <h2 id="community-toya-title"><span class="t">冬弥</span>派生</h2>
+          </div>
+          <ol class="community-rank-list" id="community-toya-list"></ol>
+        </section>
+        <section class="community-rank-card community-rank-card--pair" aria-labelledby="community-pair-title">
+          <div class="community-rank-card__head">
+            <p class="eyebrow">PAIR TOP 10</p>
+            <h2 id="community-pair-title">最常出现的组合</h2>
+          </div>
+          <ol class="community-rank-list" id="community-pair-list"></ol>
+        </section>
+      </div>
+    </section>
+
     <!-- ============================ 更新公告 ============================ -->
     <section class="view hidden" data-view="updates">
       <div class="hero updates-hero">
@@ -313,6 +357,12 @@
           <rect x="10.1" y="10.1" width="6.4" height="6.4" rx="1.8" stroke="currentColor" stroke-width="1.5"/>
         </svg>
         <span>派生池</span>
+      </button>
+      <button type="button" class="bottom-nav__item" data-nav="stats">
+        <svg viewBox="0 0 18 18" fill="none" aria-hidden="true">
+          <path d="M3 14.5V9.8M9 14.5V5.6M15 14.5V2.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+        <span>数据</span>
       </button>
       <button type="button" class="bottom-nav__item" data-nav="records">
         <svg viewBox="0 0 18 18" fill="none" aria-hidden="true">
