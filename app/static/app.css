@@ -387,7 +387,7 @@ html.no-js .picker__panel { display: none; }
 .session-card__label { color: var(--muted); font-size: 12.5px; }
 .session-card__value { font-family: var(--font-num); font-size: 20px; font-weight: 700; }
 .session-card__value.is-draw { color: var(--ink); }
-.session-card__value.is-cook { color: var(--cook-ink); }
+.session-card__value.is-cook { color: var(--akito); }
 .session-card__value.is-special { color: var(--toya); }
 
 /* ---------- 结果区 ---------- */
@@ -728,7 +728,7 @@ html.no-js .picker__panel { display: none; }
 .stat-card__label { color: var(--faint); font-size: 12px; }
 .stat-card__value { font-family: var(--font-num); font-size: 30px; font-weight: 700; line-height: 1; }
 .stat-card__value.is-draw { color: var(--ink); }
-.stat-card__value.is-cook { color: var(--cook-ink); }
+.stat-card__value.is-cook { color: var(--akito); }
 .stat-card__value.is-special { color: var(--toya); }
 .stat-card__value.is-plain { color: var(--muted); }
 

@@ -8,6 +8,8 @@
   <title>抽派生</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/profile-export.css">
+  <script src="/static/profile-export.js" defer></script>
   <script src="/static/export-image.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
@@ -277,7 +279,7 @@
             <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M8 2v8M4.8 7.2L8 10.4l3.2-3.2M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
-            整页导出
+            个人总览导出
           </button>
         </div>
         <p class="record-report-status" id="record-report-status" role="status" aria-live="polite"></p>
@@ -352,7 +354,6 @@
       <p>Design by 寒星 / 非盈利粉丝向娱乐功能</p>
     </div>
     <div class="footer-meta">
-      <p>派生数据来自 /api/v1/catalog</p>
       <div class="footer-registrations">
         <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026145915号</a>
         <a class="footer-beian" href="https://beian.mps.gov.cn/#/query/webSearch?code=44010602017402" rel="noopener noreferrer" target="_blank">

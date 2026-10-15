@@ -102,7 +102,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'sha256-UP0QZg7irvSMvOBz9mH2PIIE28+57UiavRfeVea0l3g='; script-src 'self'; connect-src 'self'; frame-ancestors 'none'"
         if request.url.path.startswith("/static/") and request.url.path.endswith((".html", ".css", ".js")):
             response.headers["Cache-Control"] = "no-cache"
         return response
@@ -129,7 +129,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def index() -> HTMLResponse:
         static_dir = settings.project_root / "app" / "static"
         page = (static_dir / "index.html").read_text(encoding="utf-8")
-        for filename in ("app.css", "export-image.js", "app.js"):
+        for filename in ("app.css", "profile-export.css", "profile-export.js", "export-image.js", "app.js"):
             version = hashlib.sha256((static_dir / filename).read_bytes()).hexdigest()[:16]
             page = page.replace(f'/static/{filename}"', f'/static/{filename}?v={version}"')
         return HTMLResponse(page, headers={"Cache-Control": "no-cache"})

@@ -118,8 +118,9 @@ async def test_homepage_exposes_image_export_and_blob_csp(client: httpx.AsyncCli
     assert homepage.headers["cache-control"] == "no-cache"
     assert "/static/export-image.js" in homepage.text
     assert "img-src 'self' data: blob:" in homepage.headers["content-security-policy"]
+    assert "'unsafe-inline'" not in homepage.headers["content-security-policy"]
     asset_urls = re.findall(r'/static/[^"?]+\.(?:css|js)\?v=[0-9a-f]{16}', homepage.text)
-    assert len(asset_urls) == 3
+    assert len(asset_urls) == 5
     for asset_url in asset_urls:
         asset = await client.get(asset_url)
         assert asset.status_code == 200
@@ -131,12 +132,12 @@ async def test_homepage_exposes_image_export_and_blob_csp(client: httpx.AsyncCli
     assert "ParoImageExporter" in exporter.text
 
 
-@pytest.mark.parametrize("filename", ["app.css", "app.js", "export-image.js"])
+@pytest.mark.parametrize("filename", ["app.css", "app.js", "export-image.js", "profile-export.css", "profile-export.js"])
 async def test_changed_frontend_asset_gets_a_new_url(settings: Settings, tmp_path, filename: str) -> None:
     project_root = tmp_path / "site"
     static_dir = project_root / "app" / "static"
     static_dir.mkdir(parents=True)
-    for asset_name in ("index.html", "app.css", "app.js", "export-image.js"):
+    for asset_name in ("index.html", "app.css", "app.js", "export-image.js", "profile-export.css", "profile-export.js"):
         source = settings.project_root / "app" / "static" / asset_name
         (static_dir / asset_name).write_bytes(source.read_bytes())
     application = create_app(replace(settings, project_root=project_root))
