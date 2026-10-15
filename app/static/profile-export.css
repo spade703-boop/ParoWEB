@@ -44,8 +44,8 @@
   display: flex;
   height: 6px;
 }
-.profile-export .topbar span { width: 50%; background: var(--report-akito); }
-.profile-export .topbar span:last-child { background: var(--report-toya); }
+.profile-export .topbar span { width: 50%; background: #ff7722; }
+.profile-export .topbar span:last-child { background: #0077dd; }
 .profile-export .head { padding: 30px 38px 6px; }
 .profile-export .title { font-size: 31px; font-weight: 900; letter-spacing: 2px; }
 .profile-export .stats { display: flex; gap: 14px; margin: 20px 38px 0; }
