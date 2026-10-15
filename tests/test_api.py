@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
 import json
+import re
 
 import httpx
 import pytest
@@ -114,12 +115,42 @@ async def test_health_and_database_does_not_store_raw_cookie(client: httpx.Async
 async def test_homepage_exposes_image_export_and_blob_csp(client: httpx.AsyncClient) -> None:
     homepage = await client.get("/")
     assert homepage.status_code == 200
+    assert homepage.headers["cache-control"] == "no-cache"
     assert "/static/export-image.js" in homepage.text
     assert "img-src 'self' data: blob:" in homepage.headers["content-security-policy"]
+    asset_urls = re.findall(r'/static/[^"?]+\.(?:css|js)\?v=[0-9a-f]{16}', homepage.text)
+    assert len(asset_urls) == 3
+    for asset_url in asset_urls:
+        asset = await client.get(asset_url)
+        assert asset.status_code == 200
+        assert asset.headers["cache-control"] == "no-cache"
 
     exporter = await client.get("/static/export-image.js")
     assert exporter.status_code == 200
+    assert exporter.headers["cache-control"] == "no-cache"
     assert "ParoImageExporter" in exporter.text
+
+
+@pytest.mark.parametrize("filename", ["app.css", "app.js", "export-image.js"])
+async def test_changed_frontend_asset_gets_a_new_url(settings: Settings, tmp_path, filename: str) -> None:
+    project_root = tmp_path / "site"
+    static_dir = project_root / "app" / "static"
+    static_dir.mkdir(parents=True)
+    for asset_name in ("index.html", "app.css", "app.js", "export-image.js"):
+        source = settings.project_root / "app" / "static" / asset_name
+        (static_dir / asset_name).write_bytes(source.read_bytes())
+    application = create_app(replace(settings, project_root=project_root))
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api_client:
+        previous = await api_client.get("/")
+        previous_url = re.search(rf'/static/{re.escape(filename)}\?v=[0-9a-f]{{16}}', previous.text).group()
+        asset_path = static_dir / filename
+        updated_bytes = asset_path.read_bytes() + b"\n"
+        asset_path.write_bytes(updated_bytes)
+        current = await api_client.get("/")
+        current_url = re.search(rf'/static/{re.escape(filename)}\?v=[0-9a-f]{{16}}', current.text).group()
+        assert current_url != previous_url
+        assert (await api_client.get(current_url)).content == updated_bytes
 
 
 async def test_announcements_are_available(client: httpx.AsyncClient) -> None:

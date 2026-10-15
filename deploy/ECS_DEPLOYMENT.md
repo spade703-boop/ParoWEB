@@ -17,6 +17,44 @@ sudo chmod 644 data/announcements.json
 
 新安装没有公告文件时会显示空公告列表；可参考 `content/announcements.example.json` 创建自己的公告文件。将最新公告放在数组第一项，每条新公告使用新的唯一 `id`。完整发布和校验方法见 [README](../README.md#公告发布与已读提醒)。
 
+如果已经更新网站，却仍把新公告编辑在旧的 `content/announcements.json`，先校验旧文件内容：
+
+```bash
+cd /opt/paro-web
+sudo docker compose -f docker-compose.prod.yml exec -T paro-web python -c "from pathlib import Path; from app.services.announcements import AnnouncementService; items = AnnouncementService(Path('/app/content/announcements.json')).load(); print('OK:', len(items)); print('Latest:', items[0].id if items else 'empty')"
+```
+
+只有输出 `OK` 且最新 ID 正确时，备份当前公告并将新内容复制到实际读取的位置：
+
+```bash
+sudo cp -a data/announcements.json "data/announcements.backup-$(date +%Y%m%d-%H%M%S).json"
+sudo cp content/announcements.json data/announcements.json
+sudo chmod 644 data/announcements.json
+curl -fsS https://akitoya.top/api/v1/announcements
+```
+
+之后只编辑 `/opt/paro-web/data/announcements.json`。复制公告不需要重启容器。备份文件也由 Git 忽略。
+
+页面的 CSS 和 JavaScript 链接会根据文件内容自动携带版本号；更新并重建容器后，刷新页面即可取得对应版本。首页和前端资源要求浏览器重新校验缓存，避免新 HTML 混用旧脚本或旧配色。若浏览器仍打开升级前的旧页面，首次可用 `Ctrl+F5` 强制刷新，无需清除 Cookie 或浏览器数据。
+
+## 日常编辑公告与数据权限
+
+容器以 UID/GID `10001:10001` 运行。不要为了编辑公告把数据库也改为登录用户所有，否则会出现 `attempt to write a readonly database`，导致页面初始化、抽取和导出失败。
+
+如果使用 `akitoya` 账号通过 FinalShell 编辑公告，可按下面的权限分工：目录由 `akitoya` 拥有并允许容器组写入，数据库归容器，公告归 `akitoya`。目录的 setgid 位让新建文件继承容器组。
+
+```bash
+cd /opt/paro-web
+sudo chown akitoya:10001 data
+sudo chmod 2770 data
+sudo chown 10001:10001 data/paro_web.sqlite3*
+sudo chmod 660 data/paro_web.sqlite3*
+sudo chown akitoya:10001 data/announcements.json
+sudo chmod 640 data/announcements.json
+```
+
+这些命令也可用于修复误执行 `chown -R akitoya /opt/paro-web` 后的数据库权限，不修改记录内容。之后直接编辑 `data/announcements.json`；用临时文件替换公告时，保留组 `10001` 的读取权限。
+
 ## 1. 上传项目
 
 使用 FinalShell 文件管理器将整个项目目录上传到服务器临时目录，例如 `/home/akitoya/paro-web-upload`。不要上传 `.env`、`data/`、`.pytest_cache` 或任何密钥文件，以免覆盖服务器的数据库和公告。

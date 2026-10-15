@@ -72,6 +72,7 @@ const state = {
   communityStatsScope: "community",
   communityStatsLoading: false,
   recentLoading: false,
+  sessionPromise: null,
   recordSelectionMode: false,
   selectedRecordIds: new Set(),
   exportResult: null,
@@ -1355,6 +1356,7 @@ function historyExportPayload() {
 }
 
 async function profileExportPayload() {
+  await ensureSession();
   const profile = await api("/api/v1/me/report");
   return {
     kind: "profile",
@@ -1489,7 +1491,6 @@ async function loadProfile({ append = false } = {}) {
     state.profile = profile;
     state.profileStale = false;
     el.recordSelectButton.disabled = !profile.recent?.length;
-    el.recordReportButton.disabled = false;
     updateSummary(profile);
     buildRecordFilters();
     renderRecords();
@@ -1652,6 +1653,20 @@ function bindEvents() {
 
 /* ---------- 启动 ---------- */
 
+function ensureSession() {
+  if (!state.sessionPromise) {
+    state.sessionPromise = api("/api/v1/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }).catch((error) => {
+      state.sessionPromise = null;
+      throw error;
+    });
+  }
+  return state.sessionPromise;
+}
+
 async function initialize() {
   document.documentElement.classList.remove("no-js");
   el.recordSelectButton.disabled = true;
@@ -1664,11 +1679,7 @@ async function initialize() {
   refreshAnnouncements();
 
   try {
-    await api("/api/v1/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
+    await ensureSession();
     state.catalog = await api("/api/v1/catalog");
   } catch (error) {
     el.drawStatus.textContent = `加载失败：${error.message}`;

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+import hashlib
 import logging
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -102,6 +103,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'"
+        if request.url.path.startswith("/static/") and request.url.path.endswith((".html", ".css", ".js")):
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
     application.include_router(router)
@@ -123,8 +126,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @application.get("/")
-    async def index() -> FileResponse:
-        return FileResponse(settings.project_root / "app" / "static" / "index.html")
+    def index() -> HTMLResponse:
+        static_dir = settings.project_root / "app" / "static"
+        page = (static_dir / "index.html").read_text(encoding="utf-8")
+        for filename in ("app.css", "export-image.js", "app.js"):
+            version = hashlib.sha256((static_dir / filename).read_bytes()).hexdigest()[:16]
+            page = page.replace(f'/static/{filename}"', f'/static/{filename}?v={version}"')
+        return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
     return application
 

@@ -270,8 +270,17 @@
     <!-- ============================ 我的记录 ============================ -->
     <section class="view hidden" data-view="records">
       <div class="hero records-main">
-        <p class="eyebrow">MY RECORDS</p>
-        <h1 class="hero__title">我的<span class="k">彰</span><span class="t">冬</span>派生记录</h1>
+        <div class="records-heading">
+          <p class="eyebrow">MY RECORDS</p>
+          <h1 class="hero__title">我的<span class="k">彰</span><span class="t">冬</span>派生记录</h1>
+          <button type="button" class="export-button" id="record-report-button" aria-describedby="record-report-status">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M8 2v8M4.8 7.2L8 10.4l3.2-3.2M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            整页导出
+          </button>
+        </div>
+        <p class="record-report-status" id="record-report-status" role="status" aria-live="polite"></p>
         <p class="hero__sub">记录只写在当前浏览器的 Cookie 里，清除浏览器数据就会丢。</p>
 
         <div class="stats-row">
@@ -296,12 +305,6 @@
         <div class="records-toolbar">
           <div class="filter-chips" id="record-filters" role="group" aria-label="筛选记录"></div>
           <div class="records-toolbar__actions">
-            <button type="button" class="export-button" id="record-report-button" disabled>
-              <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M8 2v8M4.8 7.2L8 10.4l3.2-3.2M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              整页导出
-            </button>
             <button type="button" class="export-button" id="record-select-button">
               <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <rect x="2.5" y="2.5" width="11" height="11" rx="3" stroke="currentColor" stroke-width="1.4"/>
@@ -317,8 +320,6 @@
             </button>
           </div>
         </div>
-
-        <p class="record-report-status" id="record-report-status" role="status" aria-live="polite"></p>
 
         <div class="record-export-bar hidden" id="record-export-bar">
           <div>
@@ -352,11 +353,13 @@
     </div>
     <div class="footer-meta">
       <p>派生数据来自 /api/v1/catalog</p>
-      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026145915号</a>
-      <a class="footer-beian" href="https://beian.mps.gov.cn/#/query/webSearch?code=44010602017402" rel="noopener noreferrer" target="_blank">
-        <img src="/static/beian.png" alt="" width="20" height="20">
-        <span>粤公网安备44010602017402号</span>
-      </a>
+      <div class="footer-registrations">
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026145915号</a>
+        <a class="footer-beian" href="https://beian.mps.gov.cn/#/query/webSearch?code=44010602017402" rel="noopener noreferrer" target="_blank">
+          <img src="/static/beian.png" alt="" width="20" height="20">
+          <span>粤公网安备44010602017402号</span>
+        </a>
+      </div>
     </div>
   </footer>
 

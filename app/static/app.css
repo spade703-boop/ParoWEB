@@ -716,6 +716,10 @@ html.no-js .picker__panel { display: none; }
 /* ---------- 我的记录 ---------- */
 
 .records-main { padding: 36px 0 96px; }
+.records-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px 16px; align-items: center; }
+.records-heading .eyebrow { grid-column: 1; margin: 0; }
+.records-heading .hero__title { grid-column: 1; grid-row: 2; }
+.records-heading .export-button { grid-column: 2; grid-row: 1 / 3; justify-self: end; }
 .stats-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 30px 0; }
 .stat-card {
   display: flex; flex-direction: column; gap: 8px;
@@ -834,6 +838,9 @@ html.no-js .picker__panel { display: none; }
 .footer-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .footer-meta a { color: inherit; text-underline-offset: 3px; }
 .footer-meta a:hover { color: var(--ink); }
+.footer-registrations { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.footer-registrations > a { display: inline-flex; align-items: center; min-height: 20px; white-space: nowrap; }
+.footer-registrations > a:first-child { padding-left: 26px; }
 .footer-beian { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .footer-beian img { display: block; flex: none; width: 20px; height: 20px; object-fit: contain; }
 
@@ -972,6 +979,8 @@ dialog::backdrop { background: rgba(30, 28, 25, .48); backdrop-filter: blur(3px)
   .community-rank-row__name { font-size: 12px; }
 
   .records-main { padding: 24px 0 110px; }
+  .records-heading .hero__title { grid-column: 1 / -1; }
+  .records-heading .export-button { grid-row: 1; }
   .stats-row { gap: 10px; margin: 20px 0; }
   .stat-card { padding: 14px; border-radius: 14px; }
   .stat-card__value { font-size: 22px; }
