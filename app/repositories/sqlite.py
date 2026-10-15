@@ -266,6 +266,11 @@ class SQLiteRepository:
             for row in normal_rows
             if row["akito_name"] and row["toya_name"]
         )
+        cooking_pairs = Counter(
+            (row["akito_name"], row["toya_name"])
+            for row in normal_rows
+            if row["counts_as_cooking"] and row["akito_name"] and row["toya_name"]
+        )
         rank_order: dict[tuple[str, str], int] = {}
         akito_order: dict[str, int] = {}
         toya_order: dict[str, int] = {}
@@ -291,6 +296,10 @@ class SQLiteRepository:
             "pair_top": [
                 {"akito_name": pair[0], "toya_name": pair[1], "count": count}
                 for pair, count in pair_values[:ranking_limit]
+            ],
+            "cooking_pairs": [
+                {"akito_name": pair[0], "toya_name": pair[1], "count": count}
+                for pair, count in cooking_pairs.most_common()
             ],
             "recent": [dict(row) for row in rows[recent_offset : recent_offset + recent_limit]],
             "recent_total": len(rows),

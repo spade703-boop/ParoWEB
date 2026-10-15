@@ -3,19 +3,37 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
+import json
 
 import httpx
 import pytest
 
 from app.config import Settings
+from app.domain.models import DrawResult
 from app.main import create_app
 
 
 @pytest.fixture
 def settings(tmp_path) -> Settings:
     base = Settings.from_env()
+    announcements_path = tmp_path / "announcements.json"
+    announcements_path.write_text(
+        json.dumps([
+            {
+                "id": "test-announcement",
+                "published_at": "2026-10-15",
+                "title": "测试公告",
+                "summary": "测试摘要",
+                "details": ["测试详情"],
+                "tags": ["测试"],
+                "highlight": True,
+            }
+        ], ensure_ascii=False),
+        encoding="utf-8",
+    )
     return replace(
         base,
+        announcements_path=announcements_path,
         database_path=tmp_path / "test.sqlite3",
         cookie_secure=False,
         allowed_hosts=("testserver",),
@@ -114,6 +132,34 @@ async def test_announcements_are_available(client: httpx.AsyncClient) -> None:
     assert {"id", "published_at", "title", "summary", "details", "tags", "highlight"} <= set(payload["items"][0])
 
 
+async def test_announcements_reload_after_file_replacement(client: httpx.AsyncClient, settings: Settings) -> None:
+    previous = (await client.get("/api/v1/announcements")).json()
+    latest = {**previous["items"][0], "id": "new-announcement", "title": "热更新公告"}
+    items = [latest, *previous["items"]]
+    draft_path = settings.announcements_path.with_name("announcements.draft.json")
+    draft_path.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    draft_path.replace(settings.announcements_path)
+
+    response = await client.get("/api/v1/announcements")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["version"] != previous["version"]
+    assert response.json()["items"] == items
+
+
+async def test_invalid_announcement_edit_keeps_last_valid_content(client: httpx.AsyncClient, settings: Settings) -> None:
+    previous = (await client.get("/api/v1/announcements")).json()
+    settings.announcements_path.write_text('[{"id":', encoding="utf-8")
+
+    response = await client.get("/api/v1/announcements")
+    assert response.status_code == 200
+    assert response.json() == previous
+
+    repaired = [{**previous["items"][0], "id": "repaired-announcement"}]
+    settings.announcements_path.write_text(json.dumps(repaired), encoding="utf-8")
+    assert (await client.get("/api/v1/announcements")).json()["items"] == repaired
+
+
 async def test_community_stats_are_aggregated(client: httpx.AsyncClient) -> None:
     empty = await client.get("/api/v1/community-stats")
     assert empty.status_code == 200
@@ -156,6 +202,52 @@ async def test_community_stats_are_aggregated(client: httpx.AsyncClient) -> None
     assert personal.status_code == 200
     assert personal.json()["total_draws"] == 6
     assert personal.json()["random_draws"] == 3
+
+
+async def test_personal_report_includes_all_history_and_cooking_pairs(client: httpx.AsyncClient, monkeypatch) -> None:
+    catalog = (await client.get("/api/v1/catalog")).json()
+    akito_name = catalog["akito"][0]["name"]
+    toya_name = catalog["toya"][0]["name"]
+    results = (
+        DrawResult(akito_name, toya_name, True, None, True),
+        DrawResult(akito_name, toya_name, False, None, False),
+        DrawResult(None, None, False, "foxbun", True),
+    )
+    monkeypatch.setattr("app.services.draw_service.draw_results", lambda *_args, **_kwargs: results)
+    for _batch in range(21):
+        response = await client.post(
+            "/api/v1/draw",
+            json={"count": 3, "fixed_side": "akito", "fixed_name": akito_name},
+            headers={"Origin": "http://testserver"},
+        )
+        assert response.status_code == 200
+
+    page = (await client.get("/api/v1/me?recent_limit=1")).json()
+    assert len(page["recent"]) == 1
+    response = await client.get("/api/v1/me/report")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    report = response.json()
+    assert report["draw_count"] == 63
+    assert report["cooking_count"] == 42
+    assert report["recent"] == []
+    assert report["akito_top"][0]["count"] == 42
+    assert report["toya_top"][0]["count"] == 42
+    assert report["cooking_pairs"] == [{
+        "akito_name": akito_name,
+        "toya_name": toya_name,
+        "count": 21,
+        "akito_avatar_url": catalog["akito"][0]["avatar_url"],
+        "toya_avatar_url": catalog["toya"][0]["avatar_url"],
+    }]
+    foxbun = next(item for item in report["special_counts"] if item["id"] == "foxbun")
+    assert foxbun["count"] == 21
+    assert "asset_urls" in foxbun
+
+    client.cookies.clear()
+    other_report = (await client.get("/api/v1/me/report")).json()
+    assert other_report["draw_count"] == 0
+    assert other_report["cooking_pairs"] == []
 
 
 async def test_adaptive_draw_cooldown_uses_daily_tiers(settings: Settings) -> None:

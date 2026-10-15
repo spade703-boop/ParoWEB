@@ -2,9 +2,24 @@
 
 当前项目应部署到 ECS 的 `/opt/paro-web`，网站容器只绑定 `127.0.0.1:8000`，公网只由 Nginx 提供 `80/443`。
 
+## 已有网站迁移公告
+
+旧版使用仓库内的 `content/announcements.json`，新版使用不进入 Git 的 `data/announcements.json`。在 `git pull` 或上传新版代码之前，先在服务器执行一次，保留原有公告：
+
+```bash
+cd /opt/paro-web
+sudo mkdir -p data
+sudo cp -n content/announcements.json data/announcements.json
+sudo chmod 644 data/announcements.json
+```
+
+然后更新代码，并执行 `sudo docker compose -f docker-compose.prod.yml up -d --build`。Compose 会从已有的 `/data` 挂载读取公告。之后直接通过 FinalShell 编辑 `/opt/paro-web/data/announcements.json`，保存后即可热更新，不需要再提交公告、拉取代码或重启容器。
+
+新安装没有公告文件时会显示空公告列表；可参考 `content/announcements.example.json` 创建自己的公告文件。将最新公告放在数组第一项，每条新公告使用新的唯一 `id`。完整发布和校验方法见 [README](../README.md#公告发布与已读提醒)。
+
 ## 1. 上传项目
 
-使用 FinalShell 文件管理器将整个项目目录上传到服务器临时目录，例如 `/home/akitoya/paro-web-upload`。不要上传 `.env`、`data/*.sqlite3`、`.pytest_cache` 或任何密钥文件。
+使用 FinalShell 文件管理器将整个项目目录上传到服务器临时目录，例如 `/home/akitoya/paro-web-upload`。不要上传 `.env`、`data/`、`.pytest_cache` 或任何密钥文件，以免覆盖服务器的数据库和公告。
 
 ## 2. 放置项目
 

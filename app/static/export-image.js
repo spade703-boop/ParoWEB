@@ -15,8 +15,8 @@
     faint: "#a89684",
     line: "#dec9c4",
     lineSoft: "#e3d8c9",
-    akito: "#e96629",
-    toya: "#2879ad",
+    akito: "#ff7722",
+    toya: "#0077dd",
     cookBg: "#fff0bf",
     cookInk: "#855d00",
     cookLine: "#dfa93a",
@@ -168,7 +168,7 @@
       return;
     }
     context.fillStyle = tint;
-    context.font = `700 48px ${FONT}`;
+    context.font = `700 ${Math.round(size * .34)}px ${FONT}`;
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.fillText(String(fallback || "?").slice(0, 1), x + size / 2, y + size / 2);
@@ -279,12 +279,10 @@
     context.beginPath();
     context.arc(MARGIN + 30, 62, 28, 0, Math.PI * 2);
     context.fill();
-    context.globalAlpha = 0.82;
     context.fillStyle = COLORS.toya;
     context.beginPath();
     context.arc(MARGIN + 53, 62, 28, 0, Math.PI * 2);
     context.fill();
-    context.globalAlpha = 1;
 
     context.fillStyle = COLORS.ink;
     context.font = `700 30px ${FONT}`;
@@ -319,7 +317,168 @@
     context.stroke();
   }
 
+  function reportText(context, text, left, top, size, color = COLORS.ink, align = "left") {
+    context.font = `700 ${size}px ${FONT}`;
+    context.fillStyle = color;
+    context.textAlign = align;
+    context.textBaseline = "middle";
+    context.fillText(text, left, top);
+  }
+
+  function reportSection(context, title, top, color = COLORS.akito) {
+    fillRounded(context, MARGIN, top + 2, 6, 28, 3, color);
+    reportText(context, title, MARGIN + 20, top + 16, 28);
+  }
+
+  function reportRankHeight(items) {
+    return 82 + Math.max(1, items.length) * 80;
+  }
+
+  function drawReportRanks(context, items, assets, title, color, top) {
+    const height = reportRankHeight(items);
+    fillRounded(context, MARGIN, top, CONTENT_WIDTH, height, 24, COLORS.card, `${color}55`, 2);
+    fillRounded(context, MARGIN + 28, top + 28, 6, 28, 3, color);
+    reportText(context, title, MARGIN + 48, top + 42, 28, color);
+    if (!items.length) {
+      reportText(context, "还没有抽取记录", WIDTH / 2, top + 112, 24, COLORS.muted, "center");
+    }
+    items.forEach((item, index) => {
+      const center = top + 108 + index * 80;
+      fillRounded(context, MARGIN + 28, center - 21, 92, 42, 10, index === 0 ? color : `${color}18`);
+      reportText(context, `TOP ${index + 1}`, MARGIN + 74, center, 20, index === 0 ? COLORS.card : color, "center");
+      context.font = `700 26px ${FONT}`;
+      reportText(context, truncate(context, item.name, CONTENT_WIDTH - 370), MARGIN + 142, center, 26, color);
+      drawAvatar(context, assets.get(item.avatar_url), item.name, WIDTH - MARGIN - 190, center - 28, 56, color);
+      reportText(context, `${item.count} 次`, WIDTH - MARGIN - 28, center, 24, color, "right");
+    });
+    return top + height;
+  }
+
+  function drawReportDishes(context, items, assets, top) {
+    reportSection(context, "抽到的派生饭", top);
+    const start = top + 54;
+    const width = (CONTENT_WIDTH - 16) / 2;
+    if (!items.length) {
+      fillRounded(context, MARGIN, start, CONTENT_WIDTH, 80, 20, COLORS.card, COLORS.lineSoft);
+      reportText(context, "还没有抽到做饭彩蛋", WIDTH / 2, start + 40, 24, COLORS.muted, "center");
+      return start + 80;
+    }
+    items.forEach((item, index) => {
+      const left = MARGIN + (index % 2) * (width + 16);
+      const rowTop = start + Math.floor(index / 2) * 86;
+      fillRounded(context, left, rowTop, width, 70, 35, COLORS.card, COLORS.lineSoft);
+      drawAvatar(context, assets.get(item.akito_avatar_url), item.akito_name, left + 14, rowTop + 15, 40, COLORS.akito);
+      drawAvatar(context, assets.get(item.toya_avatar_url), item.toya_name, left + 44, rowTop + 15, 40, COLORS.toya);
+      context.font = `700 21px ${FONT}`;
+      const countLabel = `×${item.count}`;
+      const countWidth = context.measureText(countLabel).width;
+      const nameWidth = (width - 146 - countWidth) / 2;
+      const akitoName = truncate(context, item.akito_name, nameWidth);
+      const toyaName = truncate(context, item.toya_name, nameWidth);
+      const nameLeft = left + 100;
+      reportText(context, akitoName, nameLeft, rowTop + 35, 21, COLORS.akito);
+      const crossLeft = nameLeft + context.measureText(akitoName).width + 4;
+      reportText(context, "×", crossLeft, rowTop + 35, 21, COLORS.faint);
+      reportText(context, toyaName, crossLeft + 24, rowTop + 35, 21, COLORS.toya);
+      reportText(context, countLabel, left + width - 18, rowTop + 35, 21, COLORS.muted, "right");
+    });
+    return start + Math.ceil(items.length / 2) * 86 - 16;
+  }
+
+  function drawReportSpecials(context, items, assets, top) {
+    reportSection(context, "特殊结果", top, COLORS.toya);
+    const start = top + 54;
+    const width = (CONTENT_WIDTH - 16) / 2;
+    if (!items.length) {
+      fillRounded(context, MARGIN, start, CONTENT_WIDTH, 80, 20, COLORS.card, COLORS.lineSoft);
+      reportText(context, "还没有特殊结果", WIDTH / 2, start + 40, 24, COLORS.muted, "center");
+      return start + 80;
+    }
+    items.forEach((item, index) => {
+      const left = MARGIN + (index % 2) * (width + 16);
+      const rowTop = start + Math.floor(index / 2) * 102;
+      fillRounded(context, left, rowTop, width, 86, 20, COLORS.card, COLORS.lineSoft);
+      const icons = item.asset_urls?.length ? item.asset_urls.slice(0, 2) : [null];
+      icons.forEach((url, iconIndex) => {
+        drawAvatar(context, assets.get(url), item.label, left + 18 + iconIndex * 32, rowTop + 19, 48, iconIndex ? COLORS.toya : COLORS.akito);
+      });
+      context.font = `700 24px ${FONT}`;
+      reportText(context, truncate(context, item.label, width - 236), left + 116, rowTop + 43, 24);
+      reportText(context, `${item.count} 次`, left + width - 22, rowTop + 43, 24, COLORS.toya, "right");
+    });
+    return start + Math.ceil(items.length / 2) * 102 - 16;
+  }
+
+  async function renderProfile(payload) {
+    const profile = payload.profile;
+    if (!profile) throw new Error("个人数据尚未加载，请稍后重试。");
+    if (document.fonts?.ready) await document.fonts.ready;
+    const akitoItems = (profile.akito_top || []).slice(0, 3);
+    const toyaItems = (profile.toya_top || []).slice(0, 3);
+    const dishes = profile.cooking_pairs || [];
+    const specials = profile.special_counts || [];
+    const dishHeight = dishes.length ? Math.ceil(dishes.length / 2) * 86 - 16 : 80;
+    const specialHeight = specials.length ? Math.ceil(specials.length / 2) * 102 - 16 : 80;
+    const height = 340 + reportRankHeight(akitoItems) + 24 + reportRankHeight(toyaItems)
+      + 32 + 54 + dishHeight + 32 + 54 + specialHeight + 110;
+    if (height > 16000) throw new Error("做饭组合过多，整页图片过长，请使用选择导出。");
+
+    const urls = new Set();
+    [...akitoItems, ...toyaItems].forEach((item) => { if (item.avatar_url) urls.add(item.avatar_url); });
+    dishes.forEach((item) => {
+      if (item.akito_avatar_url) urls.add(item.akito_avatar_url);
+      if (item.toya_avatar_url) urls.add(item.toya_avatar_url);
+    });
+    specials.forEach((item) => (item.asset_urls || []).slice(0, 2).forEach((url) => urls.add(url)));
+    const assets = new Map(await Promise.all(Array.from(urls, async (url) => [url, await loadImage(url)])));
+    const canvas = document.createElement("canvas");
+    canvas.width = WIDTH;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("当前浏览器不支持图片生成");
+    context.fillStyle = COLORS.paper;
+    context.fillRect(0, 0, WIDTH, height);
+    context.fillStyle = COLORS.akito;
+    context.fillRect(0, 0, WIDTH / 2, 8);
+    context.fillStyle = COLORS.toya;
+    context.fillRect(WIDTH / 2, 0, WIDTH / 2, 8);
+
+    let titleLeft = MARGIN;
+    [["我的", COLORS.ink], ["彰", COLORS.akito], ["冬", COLORS.toya], ["派生记录", COLORS.ink]].forEach(([text, color]) => {
+      reportText(context, text, titleLeft, 88, 48, color);
+      titleLeft += context.measureText(text).width;
+    });
+    reportText(context, "全部抽取统计 · 含固定模式", MARGIN, 142, 22, COLORS.muted);
+    const specialCount = specials.reduce((sum, item) => sum + (item.count || 0), 0);
+    const stats = [
+      ["累计抽取", profile.draw_count || 0, COLORS.ink],
+      ["做饭次数", profile.cooking_count || 0, COLORS.akito],
+      ["特殊结果", specialCount, COLORS.toya],
+      ["常规组合", Math.max(0, (profile.draw_count || 0) - specialCount), COLORS.ink],
+    ];
+    const statWidth = (CONTENT_WIDTH - 48) / 4;
+    stats.forEach(([label, value, color], index) => {
+      const left = MARGIN + index * (statWidth + 16);
+      fillRounded(context, left, 184, statWidth, 126, 20, COLORS.card, COLORS.lineSoft);
+      reportText(context, label, left + 22, 218, 21, COLORS.muted);
+      context.font = `700 40px ${FONT}`;
+      const size = Math.min(40, 40 * (statWidth - 44) / Math.max(1, context.measureText(String(value)).width));
+      reportText(context, String(value), left + 22, 267, size, color);
+    });
+
+    let sectionTop = drawReportRanks(context, akitoItems, assets, "抽到最多的彰人派生 TOP 3", COLORS.akito, 340);
+    sectionTop = drawReportRanks(context, toyaItems, assets, "抽到最多的冬弥派生 TOP 3", COLORS.toya, sectionTop + 24);
+    sectionTop = drawReportDishes(context, dishes, assets, sectionTop + 32);
+    sectionTop = drawReportSpecials(context, specials, assets, sectionTop + 32);
+    context.fillStyle = COLORS.lineSoft;
+    context.fillRect(MARGIN, sectionTop + 34, CONTENT_WIDTH, 1);
+    reportText(context, "Generated by 寒星", MARGIN, sectionTop + 70, 20, COLORS.faint);
+    reportText(context, formatDateTime(payload.generatedAt), WIDTH - MARGIN, sectionTop + 70, 20, COLORS.faint, "right");
+    return encodeCanvas(canvas, payload);
+  }
+
   async function render(payload) {
+    if (payload.kind === "profile") return renderProfile(payload);
     const totalItems = payload.batches.reduce((sum, batch) => sum + batch.items.length, 0);
     if (!totalItems) throw new Error("没有可导出的记录");
     if (totalItems > MAX_ITEMS) throw new Error(`一张图片最多导出 ${MAX_ITEMS} 条记录`);
@@ -366,6 +525,10 @@
     context.textAlign = "right";
     context.fillText(`生成于 ${formatDateTime(payload.generatedAt)}`, WIDTH - MARGIN, canvas.height - 52);
 
+    return encodeCanvas(canvas, payload);
+  }
+
+  async function encodeCanvas(canvas, payload) {
     const blob = await new Promise((resolve, reject) => {
       canvas.toBlob((value) => {
         if (value) resolve(value);
@@ -373,7 +536,8 @@
       }, "image/png");
     });
     const stamp = formatDateTime(payload.generatedAt).replace(/[-: ]/g, "");
-    const filename = `${payload.kind === "history" ? "paro-history" : "paro-current"}-${stamp}.png`;
+    const prefix = { history: "paro-history", profile: "paro-profile", current: "paro-current" }[payload.kind] || "paro-current";
+    const filename = `${prefix}-${stamp}.png`;
     return { canvas, blob, filename };
   }
 

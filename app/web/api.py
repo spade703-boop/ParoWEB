@@ -83,6 +83,14 @@ def _serialize_profile(profile: dict, snapshot) -> dict:
             }
             for item in profile["pair_top"]
         ],
+        "cooking_pairs": [
+            {
+                **item,
+                "akito_avatar_url": snapshot.avatars["akito"].get(item["akito_name"]),
+                "toya_avatar_url": snapshot.avatars["toya"].get(item["toya_name"]),
+            }
+            for item in profile["cooking_pairs"]
+        ],
         "recent": recent,
         "recent_total": profile["recent_total"],
         "recent_offset": profile["recent_offset"],
@@ -210,6 +218,16 @@ async def get_profile(
     profile = await services.repository.profile(
         visitor["id"], recent_limit=recent_limit, recent_offset=recent_offset
     )
+    services.sessions.set_cookie(response, token)
+    return _serialize_profile(profile, services.catalog.snapshot)
+
+
+@router.get("/me/report")
+async def get_personal_report(request: Request, response: Response) -> dict:
+    services = _services(request)
+    response.headers["Cache-Control"] = "no-store"
+    visitor, token, _is_new = await services.sessions.resolve(request)
+    profile = await services.repository.profile(visitor["id"], recent_limit=0)
     services.sessions.set_cookie(response, token)
     return _serialize_profile(profile, services.catalog.snapshot)
 

@@ -47,6 +47,7 @@ const POOL_PAGE_SIZE = 9;
 const POOL_SECTION_LIMIT = 8;
 const RECORD_EXPORT_LIMIT = 12;
 const RECORD_PAGE_SIZE = 50;
+const READ_ANNOUNCEMENT_KEY = "paro:read-announcement-id";
 
 const state = {
   ready: false,
@@ -65,6 +66,8 @@ const state = {
   poolExpanded: { akito: false, toya: false },
   recordFilter: "all",
   announcements: null,
+  announcementsLoading: false,
+  readAnnouncementId: loadReadAnnouncementId(),
   communityStats: null,
   communityStatsScope: "community",
   communityStatsLoading: false,
@@ -106,6 +109,8 @@ const el = {
   poolNote: $("#pool-note"),
   poolPager: $("#pool-pager"),
   homeUpdate: $("#home-update"),
+  homeUpdateLink: $(".home-update__link"),
+  announcementBadges: $$(".nav-new"),
   homeUpdateDate: $("#home-update-date"),
   homeUpdateTitle: $("#home-update-title"),
   updatesList: $("#updates-list"),
@@ -128,6 +133,8 @@ const el = {
   recordsPageStatus: $("#records-page-status"),
   recordsLoadMore: $("#records-load-more"),
   recordSelectButton: $("#record-select-button"),
+  recordReportButton: $("#record-report-button"),
+  recordReportStatus: $("#record-report-status"),
   recordSelectLabel: $("#record-select-label"),
   recordExportBar: $("#record-export-bar"),
   recordExportCount: $("#record-export-count"),
@@ -264,15 +271,9 @@ function route() {
       renderRecords();
     }
   }
-  if (view === "updates" && state.ready) {
-    if (state.announcements === null) {
-      loadAnnouncements().catch(() => {
-        state.announcements = [];
-        renderAnnouncements("更新公告暂时无法加载，请稍后刷新重试。");
-      });
-    } else {
-      renderAnnouncements();
-    }
+  if (view === "updates") renderAnnouncements();
+  if (state.ready && (view === "draw" || view === "updates")) {
+    refreshAnnouncements();
   }
   window.scrollTo({ top: 0, behavior: "auto" });
 }
@@ -902,6 +903,25 @@ function errorBlock(message) {
 
 /* ---------- 更新公告 ---------- */
 
+function loadReadAnnouncementId() {
+  try {
+    return window.localStorage.getItem(READ_ANNOUNCEMENT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function markAnnouncementRead(item) {
+  if (item.id !== state.announcements?.[0]?.id) return;
+  state.readAnnouncementId = item.id;
+  renderHomeAnnouncement();
+  try {
+    window.localStorage.setItem(READ_ANNOUNCEMENT_KEY, item.id);
+  } catch {
+    return;
+  }
+}
+
 function announcementCard(item) {
   const article = document.createElement("article");
   article.className = `update-card${item.highlight ? " is-highlight" : ""}`;
@@ -911,7 +931,7 @@ function announcementCard(item) {
 
   const head = div("update-card__head");
   const date = span("update-card__date", item.published_at);
-  if (item.highlight) head.append(span("update-card__latest", "最新"));
+  if (item.id === state.announcements?.[0]?.id) head.append(span("update-card__latest", "最新"));
   head.append(date);
 
   const title = document.createElement("h2");
@@ -931,16 +951,15 @@ function announcementCard(item) {
 }
 
 function renderHomeAnnouncement() {
-  if (!el.homeUpdate) return;
   const latest = state.announcements?.[0];
-  if (!latest) {
-    el.homeUpdate.classList.add("hidden");
-    return;
-  }
+  const unread = Boolean(latest && latest.id !== state.readAnnouncementId);
+  el.announcementBadges.forEach((node) => node.classList.toggle("hidden", !unread));
+  if (!el.homeUpdate) return;
+  el.homeUpdate.classList.toggle("hidden", !unread);
+  if (!unread) return;
   el.homeUpdateDate.textContent = latest.published_at;
   el.homeUpdateDate.dateTime = latest.published_at;
   el.homeUpdateTitle.textContent = latest.title;
-  el.homeUpdate.classList.remove("hidden");
 }
 
 function renderAnnouncements(message = null) {
@@ -973,12 +992,27 @@ function openAnnouncement(item) {
     ...(item.tags || []).map((tag) => span("update-tag", tag)),
   );
   el.updateDialog.showModal();
+  markAnnouncementRead(item);
 }
 
 async function loadAnnouncements() {
-  const payload = await api("/api/v1/announcements");
-  state.announcements = Array.isArray(payload.items) ? payload.items : [];
-  renderAnnouncements();
+  if (state.announcementsLoading) return;
+  state.announcementsLoading = true;
+  try {
+    const payload = await api("/api/v1/announcements");
+    state.announcements = Array.isArray(payload.items) ? payload.items : [];
+    renderAnnouncements();
+  } finally {
+    state.announcementsLoading = false;
+  }
+}
+
+function refreshAnnouncements() {
+  loadAnnouncements().catch(() => {
+    if (state.announcements === null) {
+      renderAnnouncements("更新公告暂时无法加载，请稍后重试。");
+    }
+  });
 }
 
 function communityRankRow(item, position, kind) {
@@ -1160,6 +1194,8 @@ function recordRow(entry) {
 
   const body = div("record-row__body");
   if (isSpecial) {
+    const assets = entry.special_asset_urls?.length ? entry.special_asset_urls : [null];
+    assets.forEach((url) => body.append(rawAvatar(url, entry.special_label || "特殊", "fallback")));
     const message = span("record-row__msg");
     const strong = document.createElement("strong");
     strong.textContent = entry.special_label;
@@ -1318,6 +1354,16 @@ function historyExportPayload() {
   };
 }
 
+async function profileExportPayload() {
+  const profile = await api("/api/v1/me/report");
+  return {
+    kind: "profile",
+    title: "我的彰冬派生记录",
+    generatedAt: new Date().toISOString(),
+    profile,
+  };
+}
+
 function updateRecordsPager() {
   if (!el.recordsPager) return;
   const total = Number(state.profile?.recent_total) || 0;
@@ -1379,7 +1425,8 @@ async function generateExport(payload, trigger, statusTarget) {
   trigger.setAttribute("aria-busy", "true");
   statusTarget.textContent = "正在生成图片，请稍候…";
   try {
-    const result = await window.ParoImageExporter.render(payload);
+    const resolvedPayload = typeof payload === "function" ? await payload() : payload;
+    const result = await window.ParoImageExporter.render(resolvedPayload);
     showExportResult(result);
     statusTarget.textContent = "";
   } catch (error) {
@@ -1442,6 +1489,7 @@ async function loadProfile({ append = false } = {}) {
     state.profile = profile;
     state.profileStale = false;
     el.recordSelectButton.disabled = !profile.recent?.length;
+    el.recordReportButton.disabled = false;
     updateSummary(profile);
     buildRecordFilters();
     renderRecords();
@@ -1473,6 +1521,20 @@ async function clearHistory(event) {
 /* ---------- 事件绑定 ---------- */
 
 function bindEvents() {
+  el.homeUpdateLink.addEventListener("click", (event) => {
+    const latest = state.announcements?.[0];
+    if (!latest) return;
+    event.preventDefault();
+    openAnnouncement(latest);
+  });
+  window.addEventListener("storage", (event) => {
+    if (event.key !== READ_ANNOUNCEMENT_KEY && event.key !== null) return;
+    state.readAnnouncementId = loadReadAnnouncementId();
+    renderHomeAnnouncement();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshAnnouncements();
+  });
   el.form.addEventListener("change", (event) => {
     if (event.target.name === "fixed_side") syncFixedSide(event.target.value);
   });
@@ -1567,6 +1629,9 @@ function bindEvents() {
   el.recordSelectButton.addEventListener("click", () => {
     setRecordSelectionMode(!state.recordSelectionMode);
   });
+  el.recordReportButton.addEventListener("click", () => {
+    generateExport(profileExportPayload, el.recordReportButton, el.recordReportStatus);
+  });
   el.recordExportCancel.addEventListener("click", () => setRecordSelectionMode(false));
   el.recordExportGenerate.addEventListener("click", () => {
     generateExport(historyExportPayload(), el.recordExportGenerate, el.recordExportStatus);
@@ -1596,6 +1661,7 @@ async function initialize() {
   el.pickerCaret.innerHTML = SVG.caretDown;
   bindEvents();
   route();
+  refreshAnnouncements();
 
   try {
     await api("/api/v1/session", {
@@ -1604,7 +1670,6 @@ async function initialize() {
       body: "{}",
     });
     state.catalog = await api("/api/v1/catalog");
-    await loadAnnouncements();
   } catch (error) {
     el.drawStatus.textContent = `加载失败：${error.message}`;
     return;

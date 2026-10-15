@@ -26,11 +26,11 @@
   --line-row: #dec9c4;
 
   /* 角色 */
-  --akito: #e96629;
-  --akito-soft: #f9dfcf;
-  --akito-ink: #c4551d;
-  --toya: #2879ad;
-  --toya-soft: #d9e9f3;
+  --akito: #ff7722;
+  --akito-soft: #ff772229;
+  --akito-ink: var(--akito);
+  --toya: #0077dd;
+  --toya-soft: #0077dd29;
 
   /* 做饭 */
   --cook-bg: #fff0bf;
@@ -90,7 +90,7 @@ h1, h2, h3, p { text-wrap: pretty; }
 }
 .skip-link:focus { transform: none; }
 
-:focus-visible { outline: 3px solid rgba(233, 102, 41, .38); outline-offset: 2px; }
+:focus-visible { outline: 3px solid rgba(255, 119, 34, .38); outline-offset: 2px; }
 
 /* ---------- 通用容器 / 排版 ---------- */
 
@@ -178,7 +178,7 @@ h1, h2, h3, p { text-wrap: pretty; }
   border: 1px solid var(--akito);
   border-radius: var(--radius-card);
   background: var(--card);
-  box-shadow: 0 12px 30px -10px rgba(233, 102, 41, .18);
+  box-shadow: 0 12px 30px -10px rgba(255, 119, 34, .18);
 }
 .home-update__link {
   display: flex;
@@ -346,7 +346,7 @@ h1, h2, h3, p { text-wrap: pretty; }
 }
 .picker__option[aria-selected="true"] { background: var(--akito-soft); }
 .picker__option[aria-selected="true"] .picker__option-name { color: var(--akito); font-weight: 700; }
-.picker__option.is-active { background: #faf0e6; border-color: var(--akito); }
+.picker__option.is-active { background: #ff772214; border-color: var(--akito); }
 .picker__option .picker__option-bar {
   flex: none; width: 3px; height: 16px; border-radius: 999px; background: transparent;
 }
@@ -600,7 +600,7 @@ html.no-js .picker__panel { display: none; }
   min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-card);
   background: var(--card); box-shadow: var(--shadow-card);
 }
-.update-card.is-highlight { border-color: var(--akito); box-shadow: 0 14px 36px -6px rgba(233, 102, 41, .14); }
+.update-card.is-highlight { border-color: var(--akito); box-shadow: 0 14px 36px -6px rgba(255, 119, 34, .14); }
 .update-card__button {
   display: block; width: 100%; padding: 24px; border: 0; border-radius: inherit;
   background: transparent; text-align: left;
@@ -745,6 +745,8 @@ html.no-js .picker__panel { display: none; }
 .records-pager p { margin: 0; color: var(--faint); font: 12px/1.5 var(--font-num); }
 .records-pager .secondary-button { min-width: 150px; min-height: 40px; padding-inline: 16px; }
 .records-pager .secondary-button:disabled { opacity: .55; cursor: wait; }
+.record-report-status { margin: 10px 0; color: var(--muted); font-size: 12px; }
+.record-report-status:empty { display: none; }
 .day-group { display: flex; flex-direction: column; gap: 10px; }
 .day-head {
   display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
@@ -765,7 +767,7 @@ html.no-js .picker__panel { display: none; }
 .record-select__mark { width: 11px; height: 11px; border-radius: 3px; background: transparent; }
 .record-select input:checked + .record-select__mark, .record-select input:indeterminate + .record-select__mark { background: var(--ink); }
 .record-select input:indeterminate + .record-select__mark { height: 3px; border-radius: 999px; }
-.record-select:focus-within { outline: 3px solid rgba(233, 102, 41, .3); outline-offset: 2px; }
+.record-select:focus-within { outline: 3px solid rgba(255, 119, 34, .3); outline-offset: 2px; }
 
 .record-row {
   display: flex; align-items: center; gap: 14px;
@@ -832,6 +834,8 @@ html.no-js .picker__panel { display: none; }
 .footer-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .footer-meta a { color: inherit; text-underline-offset: 3px; }
 .footer-meta a:hover { color: var(--ink); }
+.footer-beian { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.footer-beian img { display: block; flex: none; width: 20px; height: 20px; object-fit: contain; }
 
 .bottom-nav {
   display: none;
@@ -973,8 +977,8 @@ dialog::backdrop { background: rgba(30, 28, 25, .48); backdrop-filter: blur(3px)
   .stat-card__value { font-size: 22px; }
 
   .records-toolbar { gap: 10px; }
-  .records-toolbar__actions { width: 100%; }
-  .records-toolbar__actions > button { flex: 1 1 0; justify-content: center; }
+  .records-toolbar__actions { width: 100%; flex-wrap: wrap; }
+  .records-toolbar__actions > button { flex: 1 1 auto; justify-content: center; }
   .record-batch__head { gap: 7px; padding-top: 6px; }
   .record-batch__title { font-size: 11px; }
   .record-batch__meta { max-width: 38%; font-size: 10px; }

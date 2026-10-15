@@ -5,6 +5,7 @@ __pycache__/
 .env
 data/*.sqlite3
 data/*.sqlite3-*
+data/announcements*.json
 SECURITY_DEPLOYMENT_LOG.md
 *-upload/
 content/images/

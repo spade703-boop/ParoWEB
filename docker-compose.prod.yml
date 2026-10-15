@@ -12,7 +12,7 @@ services:
       PARO_COOKIE_SECURE: "true"
       PARO_DATABASE_PATH: /data/paro_web.sqlite3
       PARO_CONTENT_DIR: /bot-data
-      PARO_ANNOUNCEMENTS_PATH: /app/content/announcements.json
+      PARO_ANNOUNCEMENTS_PATH: /data/announcements.json
     ports:
       - "127.0.0.1:8000:8000"
     volumes:

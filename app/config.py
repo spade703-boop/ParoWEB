@@ -49,7 +49,7 @@ class Settings:
         environment = os.getenv("PARO_ENV", "development").strip().lower()
         content_dir = Path(os.getenv("PARO_CONTENT_DIR", PROJECT_ROOT / "content")).resolve()
         announcements_path = Path(
-            os.getenv("PARO_ANNOUNCEMENTS_PATH", PROJECT_ROOT / "content" / "announcements.json")
+            os.getenv("PARO_ANNOUNCEMENTS_PATH", PROJECT_ROOT / "data" / "announcements.json")
         ).resolve()
         database_path = Path(os.getenv("PARO_DATABASE_PATH", PROJECT_ROOT / "data" / "paro_web.sqlite3")).resolve()
         return cls(
