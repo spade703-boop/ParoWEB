@@ -7,8 +7,8 @@
 }
 
 .profile-export {
-  --report-akito: #e5a174;
-  --report-toya: #7daed2;
+  --report-akito: #df915c;
+  --report-toya: #659fc9;
   --report-ink: #292826;
   --report-muted: #716e68;
   --report-faint: #a89684;
@@ -38,6 +38,8 @@
 }
 .profile-export .a { color: var(--report-akito); }
 .profile-export .t { color: var(--report-toya); }
+.profile-export .title .a, .profile-export .dn .a { color: #ff7722; }
+.profile-export .title .t, .profile-export .dn .t { color: #0077dd; }
 .profile-export .topbar {
   display: flex;
   height: 6px;
@@ -53,7 +55,7 @@
   padding: 18px 22px;
   border: 1px solid var(--report-line);
   border-radius: 16px;
-  background: linear-gradient(110deg, #e5a1741a 0%, #f7f1e900 45%, #7daed221 100%);
+  background: linear-gradient(110deg, #df915c1a 0%, #f7f1e900 45%, #659fc921 100%);
 }
 .profile-export .stat-label { color: var(--report-muted); font-size: 14.5px; font-weight: 700; letter-spacing: 1px; }
 .profile-export .stat-num { margin-top: 10px; font-size: 36px; font-weight: 900; line-height: 1; overflow-wrap: anywhere; }
@@ -71,11 +73,11 @@
 .profile-export .cbox {
   margin: 24px 38px 0;
   padding: 18px 22px 8px;
-  border: 1px solid #e5a17452;
+  border: 1px solid #df915c52;
   border-radius: 16px;
-  background: #e5a1740e;
+  background: #df915c0e;
 }
-.profile-export .cbox.toya { border-color: #7daed257; background: #7daed20f; }
+.profile-export .cbox.toya { border-color: #659fc957; background: #659fc90f; }
 .profile-export .cbox .sec { margin: 0 0 8px; }
 .profile-export .toya .mark { background: var(--report-toya); }
 .profile-export .crow { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
@@ -83,7 +85,7 @@
 .profile-export .tag {
   flex: none;
   padding: 4px 9px;
-  border: 1px solid #e5a17480;
+  border: 1px solid #df915c80;
   border-radius: 7px;
   color: var(--report-akito);
   font-size: 11px;
@@ -91,7 +93,7 @@
   letter-spacing: 1px;
 }
 .profile-export .tag.solid { border-color: transparent; color: var(--report-card); background: var(--report-akito); }
-.profile-export .toya .tag { border-color: #7daed28c; color: var(--report-toya); }
+.profile-export .toya .tag { border-color: #659fc98c; color: var(--report-toya); }
 .profile-export .toya .tag.solid { border-color: transparent; color: var(--report-card); background: var(--report-toya); }
 .profile-export .cnames { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
 .profile-export .avas { display: flex; flex: none; }

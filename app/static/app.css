@@ -74,7 +74,8 @@ body {
 }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
-img { max-width: 100%; display: block; }
+img { max-width: 100%; }
+main img, header img, footer img, dialog img, .profile-export img { display: block; }
 h1, h2, h3, p { text-wrap: pretty; }
 .hidden { display: none !important; }
 
