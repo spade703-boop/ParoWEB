@@ -230,14 +230,6 @@ function dayKey(iso) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-function dayLabel(key) {
-  const today = dayKey(new Date().toISOString());
-  const yesterday = dayKey(new Date(Date.now() - 86400000).toISOString());
-  if (key === today) return "今天";
-  if (key === yesterday) return "昨天";
-  return key;
-}
-
 function recordBatchKey(entry) {
   return entry.batch_id || `${entry.created_at}:${entry.requested_count || 1}`;
 }
@@ -1290,7 +1282,7 @@ function renderRecords() {
       const group = div("day-group");
       const head = div("day-head");
       const left = document.createElement("strong");
-      left.textContent = `${dayLabel(key)} · ${key}`;
+      left.textContent = key;
       const parts = [`${entries.length} 抽`];
       const cook = entries.filter((entry) => entry.is_cooking || entry.counts_as_cooking).length;
       const special = entries.filter((entry) => entry.special_type).length;

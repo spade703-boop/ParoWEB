@@ -72,6 +72,11 @@
     return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日`;
   }
 
+  function formatTime(iso) {
+    const date = localDate(iso);
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
   function modeText(batch) {
     const labels = { none: "双方随机", akito: "固定彰人", toya: "固定冬弥" };
     const base = labels[batch.fixedSide] || labels.none;
@@ -303,7 +308,7 @@
     context.fillStyle = COLORS.faint;
     context.font = `400 22px ${FONT}`;
     context.textAlign = "right";
-    context.fillText(`${formatDateTime(batch.createdAt)} · ${modeText(batch)}`, WIDTH - MARGIN, y + 34);
+    context.fillText(`${formatTime(batch.createdAt)} · ${modeText(batch)}`, WIDTH - MARGIN, y + 34);
   }
 
   async function renderProfile(payload) {
