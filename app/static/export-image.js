@@ -213,7 +213,8 @@
     );
 
     const avatarSize = 140;
-    const avatarY = y + 34;
+    const contentY = y - 8;
+    const avatarY = contentY + 34;
     const akitoX = MARGIN + 238;
     const toyaX = MARGIN + 558;
     drawAvatar(context, assets.get(item.akito_avatar_url), item.akito_name, akitoX, avatarY, avatarSize, COLORS.akito);
@@ -227,14 +228,14 @@
 
     context.font = `700 30px ${FONT}`;
     context.fillStyle = COLORS.akito;
-    context.fillText(truncate(context, item.akito_name, 220), akitoX + avatarSize / 2, y + 207);
+    context.fillText(truncate(context, item.akito_name, 220), akitoX + avatarSize / 2, contentY + 207);
     context.fillStyle = COLORS.toya;
-    context.fillText(truncate(context, item.toya_name, 220), toyaX + avatarSize / 2, y + 207);
+    context.fillText(truncate(context, item.toya_name, 220), toyaX + avatarSize / 2, contentY + 207);
 
     context.font = `400 22px ${FONT}`;
     context.fillStyle = COLORS.faint;
-    context.fillText("彰人", akitoX + avatarSize / 2, y + 239);
-    context.fillText("冬弥", toyaX + avatarSize / 2, y + 239);
+    context.fillText("彰人", akitoX + avatarSize / 2, contentY + 239);
+    context.fillText("冬弥", toyaX + avatarSize / 2, contentY + 239);
 
     if (cooking) {
       drawCookingDetails(context, y, `快来做 ${item.akito_name} × ${item.toya_name} 的饭吧！`);
@@ -256,7 +257,7 @@
     const foxbun = item.special_type === "foxbun";
     const textX = MARGIN + 450;
     const textWidth = WIDTH - MARGIN - 34 - textX;
-    const textOffsetY = foxbun ? 16 : 0;
+    const textOffsetY = 16;
     fillRounded(context, MARGIN, y, CONTENT_WIDTH, height, 28, COLORS.specialBg, COLORS.specialLine, 2);
     const urls = item.special_asset_urls || [];
     const size = 112;
@@ -300,7 +301,7 @@
     context.textBaseline = "alphabetic";
     context.fillText("抽派生 · PARO DRAW", MARGIN + 98, 72);
     context.font = `700 54px ${FONT}`;
-    context.fillText(payload.title, MARGIN, 148);
+    context.fillText(payload.title, MARGIN, payload.kind === "history" ? 161 : 148);
   }
 
   function drawBatchDetails(context, batch, y) {
