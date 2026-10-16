@@ -112,18 +112,26 @@
     return item.is_cooking || item.counts_as_cooking ? 348 : 260;
   }
 
-  function canvasHeight(payload) {
-    let height = 218;
-    let previousDay = null;
-    payload.batches.forEach((batch) => {
+  function exportGroups(payload) {
+    const batches = payload.batches.filter((batch) => batch.items.length);
+    if (payload.kind !== "history") return batches.map((batch) => ({ batches: [batch] }));
+    const days = new Map();
+    batches.forEach((batch) => {
       const key = dayKey(batch.createdAt);
-      if (payload.kind === "history" && key !== previousDay) {
+      if (!days.has(key)) days.set(key, { createdAt: batch.createdAt, batches: [] });
+      days.get(key).batches.push(batch);
+    });
+    return Array.from(days.values());
+  }
+
+  function canvasHeight(groups) {
+    let height = 180;
+    groups.forEach((group) => {
+      group.batches.forEach((batch) => {
         height += 56;
-        previousDay = key;
-      }
-      height += 66;
-      batch.items.forEach((item) => {
-        height += itemHeight(item) + 18;
+        batch.items.forEach((item) => {
+          height += itemHeight(item) + 18;
+        });
       });
       height += 14;
     });
@@ -199,12 +207,6 @@
       2,
     );
 
-    context.fillStyle = COLORS.faint;
-    context.font = `700 24px ${FONT}`;
-    context.textAlign = "left";
-    context.textBaseline = "alphabetic";
-    context.fillText(`#${item.position || 1}`, MARGIN + 34, y + 50);
-
     const avatarSize = 140;
     const avatarY = y + 34;
     const akitoX = MARGIN + 238;
@@ -230,25 +232,27 @@
     context.fillText("冬弥", toyaX + avatarSize / 2, y + 239);
 
     if (cooking) {
-      drawBadge(context, MARGIN + CONTENT_WIDTH - 18, y + 18, "★ 做饭", COLORS.cookChip, COLORS.cookText);
-      fillRounded(context, MARGIN + 30, y + 270, CONTENT_WIDTH - 60, 58, 16, COLORS.cookBg);
-      context.font = `500 25px ${FONT}`;
-      context.textAlign = "center";
-      context.textBaseline = "middle";
-      context.fillStyle = COLORS.cookInk;
-      context.fillText(`快来做 ${item.akito_name} × ${item.toya_name} 的饭吧！`, WIDTH / 2, y + 299);
+      drawCookingDetails(context, y, `快来做 ${item.akito_name} × ${item.toya_name} 的饭吧！`);
     }
+  }
+
+  function drawCookingDetails(context, y, message) {
+    drawBadge(context, MARGIN + CONTENT_WIDTH - 18, y + 18, "★ 做饭", COLORS.cookChip, COLORS.cookText);
+    fillRounded(context, MARGIN + 30, y + 270, CONTENT_WIDTH - 60, 58, 16, COLORS.cookBg);
+    context.font = `500 25px ${FONT}`;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillStyle = COLORS.cookInk;
+    context.fillText(message, WIDTH / 2, y + 299);
   }
 
   function drawSpecialCard(context, item, assets, y) {
     const height = itemHeight(item);
+    const foxbun = item.special_type === "foxbun";
+    const textX = MARGIN + 450;
+    const textWidth = WIDTH - MARGIN - 34 - textX;
+    const textOffsetY = foxbun ? 16 : 0;
     fillRounded(context, MARGIN, y, CONTENT_WIDTH, height, 28, COLORS.specialBg, COLORS.specialLine, 2);
-    context.fillStyle = COLORS.faint;
-    context.font = `700 24px ${FONT}`;
-    context.textAlign = "left";
-    context.textBaseline = "alphabetic";
-    context.fillText(`#${item.position || 1}`, MARGIN + 34, y + 50);
-
     const urls = item.special_asset_urls || [];
     const size = 112;
     const gap = 14;
@@ -261,16 +265,17 @@
     }
 
     context.textAlign = "left";
+    context.textBaseline = "alphabetic";
     context.fillStyle = COLORS.specialInk;
     context.font = `700 34px ${FONT}`;
-    context.fillText(truncate(context, item.special_label || "特殊结果", 350), MARGIN + 530, y + 108);
+    context.fillText(foxbun ? "发现了一对正在贴贴的狐兔" : truncate(context, item.special_label || "特殊结果", textWidth), textX, y + 108 + textOffsetY);
     context.fillStyle = COLORS.muted;
     context.font = `400 25px ${FONT}`;
-    wrapLines(context, item.special_message || "", 340, 2).forEach((line, index) => {
-      context.fillText(line, MARGIN + 530, y + 151 + index * 36);
+    wrapLines(context, foxbun ? "快来做狐兔饭吧！" : item.special_message || "", textWidth, 2).forEach((line, index) => {
+      context.fillText(line, textX, y + 151 + textOffsetY + index * 36);
     });
-    if (item.counts_as_cooking) {
-      drawBadge(context, MARGIN + CONTENT_WIDTH - 18, y + 18, "★ 计入做饭", COLORS.cookChip, COLORS.cookText);
+    if (foxbun || item.counts_as_cooking) {
+      drawBadge(context, MARGIN + CONTENT_WIDTH - 18, y + 18, foxbun ? "★ 做饭" : "★ 计入做饭", COLORS.cookChip, COLORS.cookText);
     }
   }
 
@@ -291,30 +296,14 @@
     context.fillText("抽派生 · PARO DRAW", MARGIN + 98, 72);
     context.font = `700 54px ${FONT}`;
     context.fillText(payload.title, MARGIN, 148);
-    context.fillStyle = COLORS.muted;
-    context.font = `400 25px ${FONT}`;
-    context.fillText(payload.subtitle, MARGIN, 190);
   }
 
-  function drawBatchHeader(context, batch, y) {
-    const selected = batch.items.length;
-    const requested = Number(batch.requestedCount) || selected;
-    const countText = selected === requested ? `本次抽取 · ${requested} 抽` : `本次抽取 · 已选 ${selected}/${requested}`;
-    context.fillStyle = COLORS.ink;
-    context.font = `700 27px ${FONT}`;
-    context.textAlign = "left";
+  function drawBatchDetails(context, batch, y) {
     context.textBaseline = "alphabetic";
-    context.fillText(countText, MARGIN, y + 34);
     context.fillStyle = COLORS.faint;
     context.font = `400 22px ${FONT}`;
     context.textAlign = "right";
     context.fillText(`${formatDateTime(batch.createdAt)} · ${modeText(batch)}`, WIDTH - MARGIN, y + 34);
-    context.strokeStyle = COLORS.lineSoft;
-    context.lineWidth = 2;
-    context.beginPath();
-    context.moveTo(MARGIN, y + 58);
-    context.lineTo(WIDTH - MARGIN, y + 58);
-    context.stroke();
   }
 
   async function renderProfile(payload) {
@@ -329,9 +318,10 @@
     if (totalItems > MAX_ITEMS) throw new Error(`一张图片最多导出 ${MAX_ITEMS} 条记录`);
     if (document.fonts?.ready) await document.fonts.ready;
     const assets = await loadAssets(payload);
+    const groups = exportGroups(payload);
     const canvas = document.createElement("canvas");
     canvas.width = WIDTH;
-    canvas.height = canvasHeight(payload);
+    canvas.height = canvasHeight(groups);
     const context = canvas.getContext("2d");
     if (!context) throw new Error("当前浏览器不支持图片生成");
 
@@ -339,25 +329,23 @@
     context.fillRect(0, 0, canvas.width, canvas.height);
     drawHeader(context, payload);
 
-    let y = 218;
-    let previousDay = null;
-    payload.batches.forEach((batch) => {
-      const key = dayKey(batch.createdAt);
-      if (payload.kind === "history" && key !== previousDay) {
+    let y = 180;
+    groups.forEach((group) => {
+      if (payload.kind === "history") {
         context.fillStyle = COLORS.muted;
         context.font = `700 25px ${FONT}`;
         context.textAlign = "left";
         context.textBaseline = "alphabetic";
-        context.fillText(formatDay(batch.createdAt), MARGIN, y + 34);
-        y += 56;
-        previousDay = key;
+        context.fillText(formatDay(group.createdAt), MARGIN, y + 34);
       }
-      drawBatchHeader(context, batch, y);
-      y += 66;
-      batch.items.forEach((item) => {
-        if (item.special_type) drawSpecialCard(context, item, assets, y);
-        else drawPairCard(context, item, assets, y);
-        y += itemHeight(item) + 18;
+      group.batches.forEach((batch) => {
+        drawBatchDetails(context, batch, y);
+        y += 56;
+        batch.items.forEach((item) => {
+          if (item.special_type) drawSpecialCard(context, item, assets, y);
+          else drawPairCard(context, item, assets, y);
+          y += itemHeight(item) + 18;
+        });
       });
       y += 14;
     });

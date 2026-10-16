@@ -1331,7 +1331,6 @@ function currentExportPayload() {
   return {
     kind: "current",
     title: "本次抽取",
-    subtitle: `${state.lastDraw.items.length} 条结果 · ${formatExportSummary(state.lastDraw)}`,
     generatedAt: new Date().toISOString(),
     batches: [state.lastDraw],
   };
@@ -1349,7 +1348,6 @@ function historyExportPayload() {
   return {
     kind: "history",
     title: "我的抽取记录",
-    subtitle: `${selected.length} 条记录 · ${batches.size} 次抽取`,
     generatedAt: new Date().toISOString(),
     batches: Array.from(batches.values(), exportBatch),
   };
@@ -1376,12 +1374,6 @@ function updateRecordsPager() {
   el.recordsLoadMore.classList.toggle("hidden", !hasMore);
   el.recordsLoadMore.disabled = state.recentLoading;
   el.recordsLoadMore.textContent = state.recentLoading ? "正在加载…" : "加载更早记录";
-}
-
-function formatExportSummary(batch) {
-  const mode = MODE_LABEL[batch.fixedSide] || MODE_LABEL.none;
-  const fixedName = batch.fixedSide !== "none" && batch.fixedName ? ` · ${batch.fixedName}` : "";
-  return `${stampText(batch.createdAt)} · ${mode}${fixedName}`;
 }
 
 function clearExportResult() {
