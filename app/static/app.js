@@ -77,7 +77,6 @@ const state = {
   selectedRecordIds: new Set(),
   exportResult: null,
   cooldownActive: false,
-  cooldownText: "",
 };
 let cooldownTimer = null;
 
@@ -177,15 +176,6 @@ async function api(path, options = {}) {
     throw error;
   }
   return payload;
-}
-
-// 把服务端返回的秒数说成人话：5 秒 / 1 分 30 秒 / 2 分钟
-function formatWait(seconds) {
-  const total = Math.max(1, Math.round(Number(seconds) || 0));
-  if (total < 60) return `${total} 秒`;
-  const minutes = Math.floor(total / 60);
-  const rest = total % 60;
-  return rest ? `${minutes} 分 ${rest} 秒` : `${minutes} 分钟`;
 }
 
 function avatarBox(url, name, className) {
@@ -556,7 +546,7 @@ function syncFixedSide(side) {
 
 /* ---------- 抽取 ---------- */
 
-// 被服务端拦下时，按钮直接变成倒计时，倒完自己恢复
+// 冷却期间按钮本身就是倒计时，状态行不再重复说明，倒完自己恢复
 function stopCooldown() {
   if (cooldownTimer) {
     clearInterval(cooldownTimer);
@@ -566,11 +556,6 @@ function stopCooldown() {
   el.drawButton.classList.remove("is-cooling");
   el.drawButton.disabled = false;
   el.drawLabel.textContent = "抽取派生";
-  if (state.cooldownText && el.drawStatus.textContent === state.cooldownText) {
-    el.drawStatus.classList.remove("is-waiting");
-    el.drawStatus.textContent = "";
-  }
-  state.cooldownText = "";
 }
 
 // 按钮上的紧凑写法：59 秒内走秒，之后走 分:秒
@@ -592,9 +577,6 @@ function startCooldown(seconds) {
   const paint = () => {
     el.drawButton.disabled = true;
     el.drawLabel.textContent = `冷却 ${clockLabel(remaining)}`;
-    state.cooldownText = `抽取太频繁，${formatWait(remaining)}后可再抽`;
-    el.drawStatus.textContent = state.cooldownText;
-    el.drawStatus.classList.add("is-waiting");
   };
   paint();
   cooldownTimer = setInterval(() => {
@@ -658,17 +640,15 @@ async function submitDraw(event) {
     updateSummary(data.summary);
     state.profileStale = true;
     state.communityStats = null;
+    el.drawStatus.textContent = "";
     if (data.next_cooldown_seconds > 0) {
       startCooldown(data.next_cooldown_seconds);
-    } else {
-      el.drawStatus.textContent = "";
     }
   } catch (error) {
     const wait = Number(error.retryAfter);
+    el.drawStatus.textContent = wait > 0 ? "" : error.message;
     if (wait > 0) {
       startCooldown(wait);
-    } else {
-      el.drawStatus.textContent = error.message;
     }
   } finally {
     if (!state.cooldownActive) el.drawButton.disabled = false;

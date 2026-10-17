@@ -268,7 +268,6 @@ h1, h2, h3, p { text-wrap: pretty; }
 
 .save-hint { margin: 20px 0 0; color: var(--faint); font-size: 12px; text-align: center; }
 .form-status { min-height: 18px; margin: 10px 0 -6px; color: var(--danger); font-size: 13px; text-align: center; }
-.form-status.is-waiting { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* ---------- 固定派生选择器 ---------- */
 
