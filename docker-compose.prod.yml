@@ -11,7 +11,10 @@ services:
       PARO_ENV: production
       PARO_COOKIE_SECURE: "true"
       PARO_DATABASE_PATH: /data/paro_web.sqlite3
-      PARO_CONTENT_DIR: /bot-data
+      # Bot 的数据布局：JSON 在 data/paro/，头像仍在 data/images/。
+      # 写成 ${VAR:-default} 是为了让 .env 里也能覆盖，否则 compose 的 environment 会压过 env_file。
+      PARO_CONTENT_DIR: ${PARO_CONTENT_DIR:-/bot-data/paro}
+      PARO_IMAGES_DIR: ${PARO_IMAGES_DIR:-/bot-data/images}
       PARO_ANNOUNCEMENTS_PATH: /data/announcements.json
     ports:
       - "127.0.0.1:8000:8000"

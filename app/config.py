@@ -37,6 +37,7 @@ class Settings:
     environment: str
     project_root: Path
     content_dir: Path
+    images_dir: Path
     announcements_path: Path
     database_path: Path
     cookie_secure: bool
@@ -48,6 +49,8 @@ class Settings:
     def from_env(cls) -> "Settings":
         environment = os.getenv("PARO_ENV", "development").strip().lower()
         content_dir = Path(os.getenv("PARO_CONTENT_DIR", PROJECT_ROOT / "content")).resolve()
+        images_override = os.getenv("PARO_IMAGES_DIR")
+        images_dir = Path(images_override).resolve() if images_override else content_dir / "images"
         announcements_path = Path(
             os.getenv("PARO_ANNOUNCEMENTS_PATH", PROJECT_ROOT / "data" / "announcements.json")
         ).resolve()
@@ -56,6 +59,7 @@ class Settings:
             environment=environment,
             project_root=PROJECT_ROOT,
             content_dir=content_dir,
+            images_dir=images_dir,
             announcements_path=announcements_path,
             database_path=database_path,
             cookie_secure=_bool_env("PARO_COOKIE_SECURE", environment == "production"),

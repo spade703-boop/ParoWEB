@@ -34,7 +34,8 @@ node --test tests/announcements.test.cjs
 - 正确的 `PARO_ALLOWED_HOSTS`
 - HTTPS 站点对应的 `PARO_ALLOWED_ORIGINS`
 - 持久化路径 `PARO_DATABASE_PATH`
-- Bot 数据源路径 `PARO_CONTENT_DIR`（生产 Compose 默认是容器内的 `/bot-data`）
+- Bot 数据源路径 `PARO_CONTENT_DIR`（生产 Compose 默认是容器内的 `/bot-data/paro`）与
+  `PARO_IMAGES_DIR`（默认 `/bot-data/images`；不设置时退回 `$PARO_CONTENT_DIR/images`）
 - `PARO_DRAW_COOLDOWN_SECONDS`（默认 `5`；每日累计结果条数达到 100、200、300、400、500、700、900 后，冷却依次为 10 秒、20 秒、30 秒、45 秒、1 分钟、2 分钟、5 分钟）
 
 生产 Compose 会将宿主机 `${PARO_BOT_DATA_DIR:-/akito_bot/data}` 以只读方式挂载到 `/bot-data`，并将网站仓库的 `content/` 以只读方式挂载到 `/app/content`。如果 Bot 数据目录不同，在服务器的 `.env` 中设置 `PARO_BOT_DATA_DIR=/实际路径/data`，再重建网页容器即可。之后 Bot 更新 `paro_pools.json`、`paro_config.json` 或头像文件时，网页不需要复制文件或重新构建镜像；下一次访问目录、抽取或打开页面时会自动读取新内容。公告使用已有的 `./data:/data` 目录挂载，容器读取 `/data/announcements.json`；日常发布公告不需要 Git 操作、重建镜像或重启容器。修改 Python、HTML、CSS 或 JavaScript 等镜像内文件时，需要执行 `docker compose -f docker-compose.prod.yml up -d --build`。
@@ -118,14 +119,20 @@ sudo mv data/announcements.draft.json data/announcements.json
 
 ### 替换素材
 
-线上运行时，网站读取的素材目录由环境变量 `PARO_CONTENT_DIR` 决定 —— 容器里是 `/bot-data`，
+线上运行时，网站读取的内容由两个环境变量决定 —— 容器里默认是 `/bot-data/paro`（条目 JSON）
+和 `/bot-data/images`（头像）。两个路径都落在同一个挂载点 `/bot-data` 下面，
 它挂载的宿主机路径是 `${PARO_BOT_DATA_DIR}`（默认 `/akito_bot/data`），**也就是 Bot 自己的数据目录**。
 Bot 与网站读的是同一份文件，因此**换一张图只需覆盖那一个文件**，两边同时生效，都不需要重启。
+
+拆成两个变量只是因为 Bot 的目录里这两类文件不在同一层（JSON 在 `data/paro/`、头像在 `data/images/`），
+并不是把数据拆成两份：指向的仍然是同一个 Bot 目录里的真实文件。Bot 以后再调整目录结构时，
+改这两个变量的指向即可，不需要复制文件或改代码。
 
 - 文件名必须与 `paro_pools.json` 里的名字逐字一致；扩展名只用 `.png` / `.jpg` / `.jpeg`
   （Bot 侧的查找不含 `.webp`，写成 `.webp` 会出现“网页有图、Bot 没有”）。
 - 同名文件覆盖后，网站会自动给图片 URL 带上版本参数（`?v=<文件修改时间>`），
   访客**无需清缓存或强刷**即可看到新图；未被替换的图片保持原有缓存行为。
 - 覆盖后请确认权限对容器用户（UID `10001`）可读，例如 `sudo install -m 644 新图.png 目标路径.png`。
-- 文件放在 `$PARO_BOT_DATA_DIR/images/paro_avatars/{彰人,冬弥,fox&rabbit}/` 下，
-  与 `paro_pools.json`、`paro_config.json` 同级目录。
+- 头像放在 `$PARO_BOT_DATA_DIR/images/paro_avatars/{彰人,冬弥,fox&rabbit}/` 下。
+- `paro_pools.json`、`paro_config.json` 放在 `$PARO_BOT_DATA_DIR/paro/` 下。
+- 不单独设置 `PARO_IMAGES_DIR` 时，程序会退回旧布局 `$PARO_CONTENT_DIR/images/`。

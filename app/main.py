@@ -47,7 +47,7 @@ class Services:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     announcements = AnnouncementService(settings.announcements_path)
-    catalog = CatalogService(settings.content_dir)
+    catalog = CatalogService(settings.content_dir, settings.images_dir)
     repository = SQLiteRepository(settings.database_path)
     services = Services(
         announcements=announcements,
@@ -109,7 +109,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     application.include_router(router)
     application.mount("/static", StaticFiles(directory=settings.project_root / "app" / "static"), name="static")
-    application.mount("/content", StaticFiles(directory=settings.content_dir / "images" / "paro_avatars"), name="content")
+    application.mount("/content", StaticFiles(directory=settings.images_dir / "paro_avatars"), name="content")
 
     @application.get("/healthz")
     async def healthcheck():

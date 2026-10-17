@@ -19,8 +19,11 @@ class CatalogError(RuntimeError):
 
 
 class CatalogService:
-    def __init__(self, content_dir: Path) -> None:
+    def __init__(self, content_dir: Path, images_dir: Path | None = None) -> None:
         self.content_dir = content_dir.resolve()
+        # 图片可以和 JSON 分开放（Bot 把 paro_pools/config 挪进了 data/paro/，
+        # 头像仍留在 data/images/），不单独指定时沿用旧布局 content_dir/images。
+        self.images_dir = (images_dir or content_dir / "images").resolve()
         self._snapshot: CatalogSnapshot | None = None
         self._signature: tuple[tuple[str, int, int], ...] | None = None
         self._lock = threading.Lock()
@@ -34,12 +37,12 @@ class CatalogService:
 
     def _content_signature(self) -> tuple[tuple[str, int, int], ...]:
         paths = [self.content_dir / "paro_pools.json", self.content_dir / "paro_config.json"]
-        image_root = self.content_dir / "images" / "paro_avatars"
+        image_root = self.images_dir / "paro_avatars"
         if image_root.exists():
             paths.extend(path for path in image_root.rglob("*") if path.is_file())
         return tuple(
             sorted(
-                (str(path.relative_to(self.content_dir)), path.stat().st_mtime_ns, path.stat().st_size)
+                (str(path), path.stat().st_mtime_ns, path.stat().st_size)
                 for path in paths
                 if path.exists()
             )
@@ -246,7 +249,7 @@ class CatalogService:
         return self._asset_url(character, name)
 
     def _asset_url(self, folder: str, stem: str) -> str | None:
-        image_root = (self.content_dir / "images" / "paro_avatars").resolve()
+        image_root = (self.images_dir / "paro_avatars").resolve()
         for extension in IMAGE_EXTENSIONS:
             path = (image_root / folder / f"{stem}{extension}").resolve()
             try:
