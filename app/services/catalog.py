@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import glob
 import hashlib
 import json
 import logging
 import math
 from pathlib import Path
+import re
 import threading
 
 from app.domain.models import CatalogSnapshot, EggCategory, SpecialOutcome
@@ -12,6 +14,16 @@ from app.domain.models import CatalogSnapshot, EggCategory, SpecialOutcome
 
 logger = logging.getLogger(__name__)
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
+
+# 多图轮换：主图 `狐&兔` + 变体 `狐&兔_2` / `狐&兔_3`，与 Bot 侧命名规则一致。
+_VARIANT_RE = re.compile(r"^(?P<base>.+?)(?:_(?P<index>\d+))?$")
+
+
+def _variant_sort_key(stem: str) -> tuple[int, int, str]:
+    """主图排最前，变体按下划线后的数字升序（_2 在 _10 前，不是字典序）。"""
+    matched = _VARIANT_RE.fullmatch(stem)
+    index = matched.group("index") if matched else None
+    return (0, 0, stem) if index is None else (1, int(index), stem)
 
 
 class CatalogError(RuntimeError):
@@ -100,6 +112,9 @@ class CatalogService:
             )
             for outcome in outcomes
         }
+        special_variant_urls = {
+            outcome.id: self._stem_urls(outcome.assets) for outcome in outcomes
+        }
         digest = hashlib.sha256(pools_bytes + b"\0" + config_bytes).hexdigest()[:16]
         return CatalogSnapshot(
             version=digest,
@@ -108,7 +123,20 @@ class CatalogService:
             egg_categories=categories,
             avatars=avatars,
             special_assets=special_assets,
+            special_variant_urls=special_variant_urls,
         )
+
+    def _stem_urls(self, assets: tuple[str, ...]) -> dict[str, dict[str, str]]:
+        """按 assets 槽位分组收候选图：{槽位: {stem: URL}}，主图在最前。"""
+        grouped: dict[str, dict[str, str]] = {}
+        for asset in assets:
+            urls: dict[str, str] = {}
+            for stem in self._variant_stems("fox&rabbit", asset):
+                url = self._asset_url("fox&rabbit", stem)
+                if url is not None:
+                    urls[stem] = url
+            grouped[asset] = urls
+        return grouped
 
     @staticmethod
     def _validate_pool(pools: object, key: str) -> tuple[str, ...]:
@@ -240,6 +268,7 @@ class CatalogService:
                     assets=assets,
                     message=str(item.get("message") or item.get("label") or outcome_id),
                     counts_as_cooking=bool(item.get("counts_as_cooking", False)),
+                    unique_per_draw=bool(item.get("unique_per_draw", False)),
                 )
             )
             seen_ids.add(outcome_id)
@@ -247,6 +276,27 @@ class CatalogService:
 
     def _avatar_url(self, character: str, name: str) -> str | None:
         return self._asset_url(character, name)
+
+    def _variant_stems(self, folder: str, base: str) -> tuple[str, ...]:
+        """列出 `base` 的全部候选图 stem：主图在前，变体按数字升序（_2 在 _10 前）。"""
+        image_root = (self.images_dir / "paro_avatars").resolve()
+        target = (image_root / folder).resolve()
+        try:
+            target.relative_to(image_root)
+        except ValueError as exc:
+            raise CatalogError("素材路径超出允许目录") from exc
+        if not target.is_dir():
+            return ()
+        found: dict[str, Path] = {}
+        for extension in IMAGE_EXTENSIONS:
+            for candidate in target.glob(f"{glob.escape(base)}*{extension}"):
+                matched = _VARIANT_RE.fullmatch(candidate.stem)
+                if not matched or matched.group("base") != base:
+                    continue
+                if candidate.stat().st_size <= 0:
+                    continue
+                found.setdefault(candidate.stem, candidate)
+        return tuple(sorted(found, key=_variant_sort_key))
 
     def _asset_url(self, folder: str, stem: str) -> str | None:
         image_root = (self.images_dir / "paro_avatars").resolve()

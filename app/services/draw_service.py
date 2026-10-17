@@ -76,7 +76,9 @@ class DrawService:
                     "special_type": result.special_type,
                     "special_label": outcome_map[result.special_type].label if result.special_type else None,
                     "special_message": outcome_map[result.special_type].message if result.special_type else None,
-                    "special_asset_urls": list(snapshot.special_assets.get(result.special_type, ())) if result.special_type else [],
+                    "special_asset_urls": snapshot.asset_urls_for(
+                        result.special_type, result.special_asset_stems
+                    ),
                     "counts_as_cooking": result.counts_as_cooking,
                 }
                 for position, result in enumerate(results, 1)

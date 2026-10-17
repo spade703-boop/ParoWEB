@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
+import json
 import math
 from pathlib import Path
 import uuid
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS draw_results (
     toya_name TEXT,
     is_cooking INTEGER NOT NULL,
     special_type TEXT,
+    special_asset TEXT,
     counts_as_cooking INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     UNIQUE(batch_id, position)
@@ -87,6 +89,27 @@ def cooldown_for_daily_results(daily_results: int, base_seconds: int = 5) -> int
     return seconds
 
 
+def _with_decoded_asset(row) -> dict:
+    item = dict(row)
+    item["special_asset"] = decode_special_asset(item.get("special_asset"))
+    return item
+
+
+def encode_special_asset(stems: tuple[str | None, ...]) -> str | None:
+    """记录里存本的图 stem 列表；全空（老记录 / 没有候选图）就存 NULL。"""
+    return json.dumps(list(stems), ensure_ascii=False) if any(stems) else None
+
+
+def decode_special_asset(raw: object) -> tuple[str | None, ...]:
+    if not isinstance(raw, str) or not raw:
+        return ()
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return ()
+    return tuple(value) if isinstance(value, list) else ()
+
+
 class SQLiteRepository:
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
@@ -107,6 +130,21 @@ class SQLiteRepository:
         async with self.connect() as connection:
             await connection.execute("PRAGMA journal_mode = WAL")
             await connection.executescript(SCHEMA)
+            # CREATE TABLE IF NOT EXISTS 不会给已有库补列，老库要靠这里补上。
+            # 用 PRAGMA 判断而不是吞 duplicate column 异常：并发下吞异常会把真正的
+            # SQLITE_READONLY 一起吞掉，以后没法排查。
+            columns = {
+                row["name"]
+                for row in (
+                    await (
+                        await connection.execute("PRAGMA table_info(draw_results)")
+                    ).fetchall()
+                )
+            }
+            if "special_asset" not in columns:
+                await connection.execute(
+                    "ALTER TABLE draw_results ADD COLUMN special_asset TEXT"
+                )
             await connection.commit()
 
     async def healthcheck(self) -> bool:
@@ -210,8 +248,8 @@ class SQLiteRepository:
                     """
                     INSERT INTO draw_results(
                         id, batch_id, position, akito_name, toya_name, is_cooking,
-                        special_type, counts_as_cooking, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        special_type, special_asset, counts_as_cooking, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         (
@@ -222,6 +260,7 @@ class SQLiteRepository:
                             result.toya_name,
                             int(result.is_cooking),
                             result.special_type,
+                            encode_special_asset(result.special_asset_stems),
                             int(result.counts_as_cooking),
                             created_at,
                         )
@@ -252,7 +291,7 @@ class SQLiteRepository:
                 await connection.execute(
                     """
                     SELECT r.id, r.position, r.akito_name, r.toya_name, r.is_cooking,
-                           r.special_type, r.counts_as_cooking, r.created_at,
+                           r.special_type, r.special_asset, r.counts_as_cooking, r.created_at,
                            b.id AS batch_id, b.requested_count, b.fixed_side, b.fixed_name
                     FROM draw_results r
                     JOIN draw_batches b ON b.id = r.batch_id
@@ -310,7 +349,10 @@ class SQLiteRepository:
                 {"akito_name": pair[0], "toya_name": pair[1], "count": count}
                 for pair, count in cooking_pairs.most_common()
             ],
-            "recent": [dict(row) for row in rows[recent_offset : recent_offset + recent_limit]],
+            "recent": [
+                _with_decoded_asset(row)
+                for row in rows[recent_offset : recent_offset + recent_limit]
+            ],
             "recent_total": len(rows),
             "recent_offset": recent_offset,
             "recent_limit": recent_limit,

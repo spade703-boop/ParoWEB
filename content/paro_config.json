@@ -44,6 +44,7 @@
           "assets": ["狐&兔"],
           "message": "发现了一对正在贴贴的狐兔！",
           "counts_as_cooking": true,
+          "unique_per_draw": true,
           "legacy_stat": "foxbun_total"
         },
         {

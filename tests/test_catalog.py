@@ -226,6 +226,87 @@ def test_invalid_new_catalog_is_rejected(tmp_path, config: dict) -> None:
         CatalogService(tmp_path).load()
 
 
+def _fox_assets(tmp_path, filenames: dict[str, int]) -> None:
+    folder = tmp_path / "images" / "paro_avatars" / "fox&rabbit"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, size in filenames.items():
+        (folder / name).write_bytes(b"\0" * size)
+
+
+def _foxbun_config() -> dict:
+    return {
+        "egg_categories": [
+            _special_category(
+                "foxrabbit",
+                rate=0.03,
+                outcomes=[_outcome("foxbun", assets=["狐&兔"])],
+            ),
+            {
+                "id": "cooking",
+                "rate": 0.03,
+                "priority": 0,
+                "result_type": "cooking",
+            },
+        ]
+    }
+
+
+def test_variant_stems_follow_main_then_numbered_order(tmp_path) -> None:
+    _write_catalog(tmp_path, config=_foxbun_config())
+    _fox_assets(
+        tmp_path,
+        {
+            "狐&兔.png": 16,
+            "狐&兔_10.png": 16,
+            "狐&兔_2.png": 16,
+            "狐&兔_2_副本.png": 16,
+            "狐&兔2.png": 16,
+            "狐&兔草稿.png": 16,
+        },
+    )
+    snapshot = CatalogService(tmp_path).snapshot
+    assert tuple(snapshot.special_variant_urls["foxbun"]["狐&兔"]) == (
+        "狐&兔",
+        "狐&兔_2",
+        "狐&兔_10",
+    )
+
+
+def test_variant_scan_does_not_touch_neighbours(tmp_path) -> None:
+    _write_catalog(tmp_path, config=_foxbun_config())
+    _fox_assets(tmp_path, {"狐&兔.png": 16, "狐.png": 16, "兔.png": 16, "松饼.png": 16, "曲奇.png": 16})
+    snapshot = CatalogService(tmp_path).snapshot
+    assert tuple(snapshot.special_variant_urls["foxbun"]["狐&兔"]) == ("狐&兔",)
+
+
+def test_empty_variant_file_is_skipped(tmp_path) -> None:
+    _write_catalog(tmp_path, config=_foxbun_config())
+    _fox_assets(tmp_path, {"狐&兔.png": 16, "狐&兔_2.png": 0})
+    snapshot = CatalogService(tmp_path).snapshot
+    assert tuple(snapshot.special_variant_urls["foxbun"]["狐&兔"]) == ("狐&兔",)
+
+
+def test_unique_per_draw_is_parsed_and_defaults_to_false(tmp_path) -> None:
+    _write_catalog(
+        tmp_path,
+        config={
+            "egg_categories": [
+                _special_category(
+                    "foxrabbit",
+                    rate=0.03,
+                    outcomes=[
+                        _outcome("marked", unique_per_draw=True),
+                        _outcome("plain"),
+                    ],
+                )
+            ]
+        },
+    )
+    snapshot = CatalogService(tmp_path).snapshot
+    flags = {outcome.id: outcome.unique_per_draw for outcome in snapshot.special_outcomes}
+    assert flags == {"marked": True, "plain": False}
+
+
 def test_failed_hot_reload_keeps_previous_snapshot(tmp_path) -> None:
     _write_catalog(tmp_path)
     service = CatalogService(tmp_path)

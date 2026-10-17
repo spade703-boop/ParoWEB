@@ -61,6 +61,7 @@ def draw_results(
         reverse=True,
     )
     results: list[DrawResult] = []
+    used_unique_ids: set[str] = set()
 
     for _ in range(count):
         akito_name = fixed_akito or random_source.choice(snapshot.akito_pool)
@@ -75,12 +76,29 @@ def draw_results(
                 break
         is_cooking = bool(category and category.result_type == "cooking")
         special = None
+        chosen_asset = None
         if category and category.result_type == "special":
+            # 先剔掉本次已命中的唯一分支，再摇一次定音 —— 不是「摇中再补摇」，
+            # 后者会多消耗一次随机数，也会稀释其余分支的概率。
+            pool = [
+                outcome
+                for outcome in category.outcomes
+                if not (outcome.unique_per_draw and outcome.id in used_unique_ids)
+            ] or list(category.outcomes)
             special = random_source.choices(
-                category.outcomes,
-                [outcome.weight for outcome in category.outcomes],
+                pool,
+                [outcome.weight for outcome in pool],
                 k=1,
             )[0]
+            if special.unique_per_draw:
+                used_unique_ids.add(special.id)
+            # 每个 assets 槽位各挑一张（Bot 的 fox_icon_uris 也是这么做的）：
+            # 「狐+兔」这种两张图的结果会各轮各的，不会被挤成一张。
+            variants = snapshot.special_variant_urls.get(special.id, {})
+            chosen_asset = tuple(
+                random_source.choice(stems) if (stems := tuple(variants.get(asset, ()))) else None
+                for asset in special.assets
+            )
         if special:
             results.append(
                 DrawResult(
@@ -89,6 +107,7 @@ def draw_results(
                     is_cooking=False,
                     special_type=special.id,
                     counts_as_cooking=special.counts_as_cooking,
+                    special_asset_stems=chosen_asset,
                 )
             )
         else:

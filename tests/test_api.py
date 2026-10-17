@@ -6,13 +6,16 @@ from datetime import UTC, datetime
 import json
 import re
 import sys
+from urllib.parse import unquote
 
+import aiosqlite
 import httpx
 import pytest
 
 from app.config import Settings
 from app.domain.models import DrawResult
 from app.main import create_app
+from app.repositories.sqlite import SCHEMA, SQLiteRepository
 
 
 @pytest.fixture
@@ -413,6 +416,91 @@ async def test_concurrent_draws_are_all_persisted(client: httpx.AsyncClient) -> 
     assert {item["id"] for item in first_page.json()["recent"]}.isdisjoint(
         item["id"] for item in second_page.json()["recent"]
     )
+
+
+def _path_of(asset_url: str) -> str:
+    """去掉图片 URL 尾部的 `?v=<mtime>`，方便断言落在哪张图上。"""
+    return unquote(asset_url.split("?")[0])
+
+
+class _ForcedFoxbun:
+    """固定摇到狐兔饭并取第二张变体，用来端到端验证轮换与去重。"""
+
+    def random(self) -> float:
+        return 0.0
+
+    def choice(self, values):
+        return values[1 % len(values)]
+
+    def choices(self, population, weights, *, k):
+        return [population[3 % len(population)]]
+
+
+async def test_foxbun_rotation_returns_one_url_and_dedupes(client: httpx.AsyncClient, monkeypatch) -> None:
+    monkeypatch.setattr("app.domain.draw.random.SystemRandom", _ForcedFoxbun)
+
+    draw = await client.post(
+        "/api/v1/draw",
+        json={"count": 3, "fixed_side": "none", "fixed_name": None},
+        headers={"Origin": "http://testserver"},
+    )
+    assert draw.status_code == 200
+    results = draw.json()["results"]
+    # 同一次抽取里狐兔饭最多一次，重复命中改派给同类其余分支
+    assert [result["special_type"] for result in results] == ["foxbun", "pancake", "pancake"]
+
+    foxbun_urls = results[0]["special_asset_urls"]
+    assert len(foxbun_urls) == 1
+    assert _path_of(foxbun_urls[0]).endswith("fox&rabbit/狐&兔_2.png")
+
+    # 历史回看用抽卡时存下来的那张，反复读不变
+    for _ in range(2):
+        recent = (await client.get("/api/v1/me")).json()["recent"]
+        foxbun_record = next(item for item in recent if item["special_type"] == "foxbun")
+        assert foxbun_record["special_asset_urls"] == foxbun_urls
+
+
+async def test_legacy_record_without_stored_asset_falls_back_to_main(client: httpx.AsyncClient, monkeypatch) -> None:
+    # 老记录：special_asset 为 NULL
+    monkeypatch.setattr(
+        "app.services.draw_service.draw_results",
+        lambda *_args, **_kwargs: [DrawResult(None, None, False, "foxbun", True)],
+    )
+    draw = await client.post(
+        "/api/v1/draw",
+        json={"count": 1, "fixed_side": "none", "fixed_name": None},
+        headers={"Origin": "http://testserver"},
+    )
+    assert draw.status_code == 200
+    main_urls = draw.json()["results"][0]["special_asset_urls"]
+    assert len(main_urls) == 1
+    assert _path_of(main_urls[0]).endswith("fox&rabbit/狐&兔.png")
+
+    profile = (await client.get("/api/v1/me")).json()
+    assert profile["recent"][0]["special_asset_urls"] == main_urls
+
+
+async def test_legacy_database_gains_special_asset_column(settings: Settings) -> None:
+    legacy_schema = "\n".join(
+        line for line in SCHEMA.splitlines() if "special_asset" not in line
+    )
+    settings.database_path.parent.mkdir(parents=True, exist_ok=True)
+    async with aiosqlite.connect(settings.database_path) as connection:
+        await connection.executescript(legacy_schema)
+        await connection.commit()
+
+    repository = SQLiteRepository(settings.database_path)
+    await repository.initialize()
+    await repository.initialize()  # 幂等：再跑一次不报错
+
+    async with repository.connect() as connection:
+        columns = {
+            row["name"]
+            for row in await (
+                await connection.execute("PRAGMA table_info(draw_results)")
+            ).fetchall()
+        }
+    assert "special_asset" in columns
 
 
 async def test_mutations_require_allowed_origin(client: httpx.AsyncClient) -> None:

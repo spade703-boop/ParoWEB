@@ -79,7 +79,10 @@ def _serialize_profile(profile: dict, snapshot) -> dict:
                 "toya_avatar_url": snapshot.avatars["toya"].get(item["toya_name"]) if item["toya_name"] else None,
                 "special_label": outcome.label if outcome else None,
                 "special_message": outcome.message if outcome else None,
-                "special_asset_urls": list(snapshot.special_assets.get(special_type, ())) if special_type else [],
+                # 历史回看用抽卡时存下来的那张；老记录或图被删了就回落主图。
+                "special_asset_urls": snapshot.asset_urls_for(
+                    special_type, item.get("special_asset") or ()
+                ),
             }
         )
     return {
