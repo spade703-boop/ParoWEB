@@ -69,6 +69,7 @@ node --test tests/announcements.test.cjs
 - `result_type=special` 按 `weight` 在类内加权选一个结果，必须至少有一个结果；`result_type=cooking` 直接产出普通配对做饭，不需要结果列表。
 - `counts_as_cooking` 只管统计和展示（算不算做饭），不影响概率。狐兔饭 `is_cooking=false`，但计入做饭次数和做饭相关展示。
 - 新加类内结果：往 `outcomes` 里加对象；新加彩蛋大类：往 `egg_categories` 里加对象并给唯一 `id`、`rate`、`priority`、`result_type`。抽取主流程、接口和前端都不用改。
+- `message` 支持 `\n` 硬换行：接口原样透传，卡片、记录列表和导出的 PNG 都按行渲染。加新分支时如果要两行文案（一行说有什么、一行说可能是谁的），直接在配置里写 `\n` 即可，不用改前端。
 - 约束：大类 `id` 唯一、特殊结果 `id` 在所有大类之间全局唯一、`weight` 为有限正数、大类 `rate` 之和不超过 1、`priority` 为整数（缺省按 0）。`tags` 只是元数据，不参与抽取去重。
 - 旧配置（顶层 `cooking_rate` / `special_rate` / `special_outcomes`）仍能读，会归一化成 `foxrabbit` + `cooking` 两个大类，方便切换期回滚；概率以文件内容为准，不会被静默改成新值。
 - 配置写坏不会崩：热重载失败时保留上一份有效快照，日志出现 `Content reload failed`。

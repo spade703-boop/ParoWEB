@@ -73,12 +73,19 @@ async def test_session_catalog_draw_profile_and_clear(client: httpx.AsyncClient)
         "rabbit",
         "foxrabbit",
         "foxbun",
+        "pancake",
+        "cookie",
     ]
     special_outcomes = {
         outcome["id"]: outcome for outcome in catalog_payload["special_outcomes"]
     }
     assert special_outcomes["fox"]["category_id"] == "foxrabbit"
     assert special_outcomes["foxbun"]["counts_as_cooking"] is True
+    # 松饼 / 曲奇 是过路彩蛋：不计入做饭，文案带硬换行，前端按行渲染
+    assert special_outcomes["pancake"]["counts_as_cooking"] is False
+    assert special_outcomes["cookie"]["counts_as_cooking"] is False
+    assert "\n" in special_outcomes["pancake"]["message"]
+    assert "\n" in special_outcomes["cookie"]["message"]
     fixed_name = catalog_payload["akito"][0]["name"]
 
     draw = await client.post(

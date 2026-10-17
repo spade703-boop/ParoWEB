@@ -497,7 +497,7 @@ html.no-js .picker__panel { display: none; }
 }
 .special-text { display: flex; flex-direction: column; gap: 4px; }
 .special-text strong { color: var(--sp-ink); font-size: 18px; font-weight: 700; }
-.special-text p { margin: 0; color: var(--sp-muted); font-size: 12.5px; line-height: 1.6; }
+.special-text p { margin: 0; color: var(--sp-muted); font-size: 12.5px; line-height: 1.6; white-space: pre-line; }
 
 /* ---------- 派生池 ---------- */
 
@@ -582,7 +582,7 @@ html.no-js .picker__panel { display: none; }
 }
 .special-card__body { display: flex; flex-direction: column; gap: 5px; }
 .special-card__name { color: var(--sp-ink); font-size: 16px; font-weight: 700; }
-.special-card__msg { margin: 0; color: var(--sp-muted); font-size: 12px; line-height: 1.6; }
+.special-card__msg { margin: 0; color: var(--sp-muted); font-size: 12px; line-height: 1.6; white-space: pre-line; }
 .special-card__tag {
   align-self: flex-start; padding: 4px 9px; border-radius: 999px;
   background: var(--cook-chip); color: var(--cook-chip-ink); font-size: 10.5px; font-weight: 700;
@@ -800,7 +800,7 @@ html.no-js .picker__panel { display: none; }
 .record-row__name.t { color: var(--toya); }
 .record-row__cross { color: #c0b4a6; }
 .record-row__cross svg { width: 11px; height: 11px; }
-.record-row__msg { color: var(--sp-muted); font-size: 13px; }
+.record-row__msg { color: var(--sp-muted); font-size: 13px; white-space: pre-line; }
 .record-row__msg strong { color: var(--sp-ink); margin-right: 8px; }
 
 .outcome-chip {
@@ -1022,6 +1022,9 @@ dialog::backdrop { background: rgba(30, 28, 25, .48); backdrop-filter: blur(3px)
 }
 
 @media (max-width: 560px) {
+  /* 手机档下拉框允许折行：提示语「先选「固定彰人」或「固定冬弥」」在 320 宽会被省略号吃掉两个字，
+     宁可让触发条高一行，也不要把字裁掉 */
+  .picker__name { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.3; }
   .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .segmented__opt { font-size: 12.5px; padding: 10px 4px; }
   .result-head { align-items: flex-start; }

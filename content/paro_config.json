@@ -45,6 +45,24 @@
           "message": "发现了一对正在贴贴的狐兔！",
           "counts_as_cooking": true,
           "legacy_stat": "foxbun_total"
+        },
+        {
+          "id": "pancake",
+          "label": "松饼",
+          "weight": 1,
+          "tags": ["fox"],
+          "assets": ["松饼"],
+          "message": "这里只有一盘松饼。\n也许是某只狐狸放在这里的。",
+          "counts_as_cooking": false
+        },
+        {
+          "id": "cookie",
+          "label": "曲奇",
+          "weight": 1,
+          "tags": ["rabbit"],
+          "assets": ["曲奇"],
+          "message": "这里只有一盘曲奇。\n也许是某只兔子放在这里的。",
+          "counts_as_cooking": false
         }
       ]
     },

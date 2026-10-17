@@ -94,22 +94,34 @@
   }
 
   function wrapLines(context, value, maxWidth, maxLines = 2) {
-    const source = String(value || "");
+    // 配置里的文案可能带硬换行（一行说盘子里有什么，一行揣度是谁的）。
+    // 先按段落拆开，再逐段按宽度折行，行数预算由各段共享。
+    const paragraphs = String(value || "")
+      .split("\n")
+      .map((part) => part.trim())
+      .filter(Boolean);
     const lines = [];
-    let line = "";
-    for (const character of source) {
-      const next = line + character;
-      if (line && context.measureText(next).width > maxWidth) {
-        lines.push(line);
-        line = character;
-        if (lines.length === maxLines - 1) break;
-      } else {
-        line = next;
+    for (const paragraph of paragraphs) {
+      let line = "";
+      for (const character of paragraph) {
+        const next = line + character;
+        if (line && context.measureText(next).width > maxWidth) {
+          lines.push(line);
+          line = character;
+        } else {
+          line = next;
+        }
       }
+      if (line) lines.push(line);
+      if (lines.length > maxLines) break;
     }
-    const consumed = lines.join("").length + line.length;
-    if (line) lines.push(consumed < source.length ? truncate(context, source.slice(consumed - line.length), maxWidth) : line);
-    return lines.slice(0, maxLines);
+    if (lines.length <= maxLines) return lines;
+    // 超出行数预算：把多出来的内容折进最后一行，末尾补省略号
+    let rest = lines.slice(maxLines - 1).join("");
+    while (rest.length && context.measureText(`${rest}…`).width > maxWidth) {
+      rest = rest.slice(0, -1);
+    }
+    return [...lines.slice(0, maxLines - 1), `${rest}…`];
   }
 
   function itemHeight(item) {
@@ -252,12 +264,26 @@
     context.fillText(message, WIDTH / 2, y + 299);
   }
 
+  // 特殊卡里「标题 + 下面几行文案」当一个整体，跟左边图案的纵向中心对齐。
+  // 图案贴 y + 68、边长 112 → 中心 y + 124（刚好也是 250 高卡片的中心）。
+  // 中文字形的墨迹范围实测：上沿 ≈ 基线 - 0.85×字号，下沿 ≈ 基线 + 0.12×字号，
+  // 所以文案有几行，标题的落点就得跟着变，不能写死一个偏移。
+  const SPECIAL_ART_CENTER = 68 + 112 / 2;
+  const SPECIAL_TITLE_BASE = 108;
+  const SPECIAL_BODY_BASE = 151;
+  const SPECIAL_BODY_STEP = 36;
+
+  function specialTextOffsetY(lineCount) {
+    const blockTop = SPECIAL_TITLE_BASE - Math.round(34 * 0.85);
+    const blockBottom = SPECIAL_BODY_BASE + (lineCount - 1) * SPECIAL_BODY_STEP + Math.round(25 * 0.12);
+    return SPECIAL_ART_CENTER - (blockTop + blockBottom) / 2;
+  }
+
   function drawSpecialCard(context, item, assets, y) {
     const height = itemHeight(item);
     const foxbun = item.special_type === "foxbun";
     const textX = MARGIN + 450;
     const textWidth = WIDTH - MARGIN - 34 - textX;
-    const textOffsetY = 16;
     fillRounded(context, MARGIN, y, CONTENT_WIDTH, height, 28, COLORS.specialBg, COLORS.specialLine, 2);
     const urls = item.special_asset_urls || [];
     const size = 112;
@@ -272,13 +298,20 @@
 
     context.textAlign = "left";
     context.textBaseline = "alphabetic";
+    context.font = `700 34px ${FONT}`;
+    const title = foxbun ? "发现了一对正在贴贴的狐兔" : truncate(context, item.special_label || "特殊结果", textWidth);
+    context.font = `400 25px ${FONT}`;
+    const bodyLines = wrapLines(context, foxbun ? "快来做狐兔饭吧！" : item.special_message || "", textWidth, 2);
+    const textOffsetY = specialTextOffsetY(bodyLines.length);
+
     context.fillStyle = COLORS.specialInk;
     context.font = `700 34px ${FONT}`;
-    context.fillText(foxbun ? "发现了一对正在贴贴的狐兔" : truncate(context, item.special_label || "特殊结果", textWidth), textX, y + 108 + textOffsetY);
+    context.fillText(title, textX, y + SPECIAL_TITLE_BASE + textOffsetY);
+
     context.fillStyle = COLORS.muted;
     context.font = `400 25px ${FONT}`;
-    wrapLines(context, foxbun ? "快来做狐兔饭吧！" : item.special_message || "", textWidth, 2).forEach((line, index) => {
-      context.fillText(line, textX, y + 151 + textOffsetY + index * 36);
+    bodyLines.forEach((line, index) => {
+      context.fillText(line, textX, y + SPECIAL_BODY_BASE + textOffsetY + index * SPECIAL_BODY_STEP);
     });
     if (item.counts_as_cooking) {
       drawBadge(context, MARGIN + CONTENT_WIDTH - 18, y + 18, foxbun ? "★ 做饭" : "★ 计入做饭", COLORS.cookChip, COLORS.cookText);
