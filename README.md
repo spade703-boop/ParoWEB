@@ -82,3 +82,17 @@ sudo mv data/announcements.draft.json data/announcements.json
 ## 素材说明
 
 公开仓库不包含 `content/images/` 下的头像素材。运行时缺少头像会使用文字占位；部署自有素材前请先确认使用权。
+
+### 替换素材
+
+线上运行时，网站读取的素材目录由环境变量 `PARO_CONTENT_DIR` 决定 —— 容器里是 `/bot-data`，
+它挂载的宿主机路径是 `${PARO_BOT_DATA_DIR}`（默认 `/akito_bot/data`），**也就是 Bot 自己的数据目录**。
+Bot 与网站读的是同一份文件，因此**换一张图只需覆盖那一个文件**，两边同时生效，都不需要重启。
+
+- 文件名必须与 `paro_pools.json` 里的名字逐字一致；扩展名只用 `.png` / `.jpg` / `.jpeg`
+  （Bot 侧的查找不含 `.webp`，写成 `.webp` 会出现“网页有图、Bot 没有”）。
+- 同名文件覆盖后，网站会自动给图片 URL 带上版本参数（`?v=<文件修改时间>`），
+  访客**无需清缓存或强刷**即可看到新图；未被替换的图片保持原有缓存行为。
+- 覆盖后请确认权限对容器用户（UID `10001`）可读，例如 `sudo install -m 644 新图.png 目标路径.png`。
+- 文件放在 `$PARO_BOT_DATA_DIR/images/paro_avatars/{彰人,冬弥,fox&rabbit}/` 下，
+  与 `paro_pools.json`、`paro_config.json` 同级目录。

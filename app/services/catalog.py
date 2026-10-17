@@ -171,6 +171,12 @@ class CatalogService:
             except ValueError as exc:
                 raise CatalogError("素材路径超出允许目录") from exc
             if path.is_file():
-                return "/content/" + "/".join(relative.parts)
+                # 把文件 mtime 当版本号拼进 URL：换图 → URL 变化 → 浏览器必然重新拉取；
+                # 没换的图 URL 不变，沿用它原有的缓存行为。
+                # 不加这个参数时，同名覆盖图片会因为 URL 完全相同而被浏览器（及其
+                # 启发式新鲜期，=(now - Last-Modified) * 10%，老图可长达十几天）一直吃缓存，
+                # 导致换了图但老访客看不到。
+                stamp = path.stat().st_mtime_ns
+                return "/content/" + "/".join(relative.parts) + f"?v={stamp}"
         logger.warning("Missing content image: %s/%s", folder, stem)
         return None
