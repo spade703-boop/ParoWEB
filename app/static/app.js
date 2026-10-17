@@ -720,18 +720,74 @@ function formatEggRate(rate) {
   return `${percent.toLocaleString("zh-CN", { maximumFractionDigits: 4 })}%`;
 }
 
-function eggProbabilitySummary() {
-  return [...(state.catalog?.egg_categories || [])]
-    .sort((left, right) => Number(right.priority) - Number(left.priority))
-    .map((category) => `${eggCategoryLabel(category)} ${formatEggRate(category.rate)}`)
-    .join(" / ");
+function eggRateOf(id) {
+  const category = (state.catalog?.egg_categories || []).find((item) => item.id === id);
+  return category ? formatEggRate(category.rate) : "";
+}
+
+// 目前只有一个特殊彩蛋大类，叫得出名字就写「狐兔类彩蛋」；以后加了新大类再退成泛称。
+function specialCategoryLabel() {
+  const categories = (state.catalog?.egg_categories || []).filter((item) => item.result_type === "special");
+  return categories.length === 1 ? `${eggCategoryLabel(categories[0])}彩蛋` : "特殊彩蛋";
+}
+
+function setStackOpen(stack, open) {
+  stack.classList.toggle("is-open", open);
+  stack.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function closeAllStacks() {
+  document.querySelectorAll(".special-card__stack.is-open").forEach((el) => setStackOpen(el, false));
+}
+
+// 鼠标移出 / 点到别处 / Esc 都要收回去，否则浮层会一直盖在网格上。
+document.addEventListener("click", (event) => {
+  if (!event.target.closest || !event.target.closest(".special-card__stack")) closeAllStacks();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeAllStacks();
+});
+
+// 一个 assets 槽位 = 一叠图。多于一张时收起成相册堆叠，展开后竖排整叠。
+function iconStack(urls, label) {
+  const slot = div("special-card__slot");
+  const stacked = urls.length > 1;
+  const stack = div(`special-card__stack${stacked ? " is-stack" : ""}`);
+  urls.forEach((url) => stack.append(rawAvatar(url, label, "fallback")));
+  if (stacked) {
+    stack.append(span("special-card__count", `+${urls.length - 1}`));
+    stack.tabIndex = 0;
+    stack.setAttribute("role", "button");
+    stack.setAttribute("aria-expanded", "false");
+    stack.setAttribute("aria-label", `${label} 共 ${urls.length} 张图，展开查看全部`);
+    // 触屏没有 hover，只认点击；鼠标两种都行。
+    stack.addEventListener("pointerenter", (event) => {
+      if (event.pointerType === "mouse") setStackOpen(stack, true);
+    });
+    stack.addEventListener("pointerleave", (event) => {
+      if (event.pointerType === "mouse") setStackOpen(stack, false);
+    });
+    stack.addEventListener("click", () => {
+      setStackOpen(stack, !stack.classList.contains("is-open"));
+    });
+    stack.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        setStackOpen(stack, !stack.classList.contains("is-open"));
+      }
+    });
+  }
+  slot.append(stack);
+  return slot;
 }
 
 function specialCard(item) {
   const card = div(`special-card${item.counts_as_cooking ? " is-cook" : ""}`);
   const icons = div("special-card__icons");
-  (item.asset_urls || []).forEach((url) => icons.append(rawAvatar(url, item.label, "fallback")));
-  if (!(item.asset_urls || []).length) icons.append(rawAvatar(null, item.label, "fallback"));
+  const groups = (item.variant_urls || []).filter((group) => group && group.length);
+  const piles = groups.length ? groups : (item.asset_urls || []).map((url) => [url]);
+  if (!piles.length) icons.append(rawAvatar(null, item.label, "fallback"));
+  else piles.forEach((urls) => icons.append(iconStack(urls, item.label)));
   const body = div("special-card__body");
   const name = div("special-card__name");
   name.textContent = item.label;
@@ -808,8 +864,7 @@ function renderPoolDesktop(matches) {
       const heading = document.createElement("h2");
       heading.textContent = "特殊结果";
       wrap.append(heading);
-      const probability = eggProbabilitySummary();
-      wrap.append(span("pool-section__count", `${probability ? `${probability} · ` : ""}${specials.length} 种`));
+      wrap.append(span("pool-section__count", `${specialCategoryLabel()}共有${specials.length}种`));
       head.append(wrap);
       const note = span("pool-section__count", "抽中时占掉一个抽取位，不组成配对");
       head.append(note);
@@ -937,8 +992,13 @@ function renderPool() {
     return;
   }
   const counts = poolCounts();
-  const probability = eggProbabilitySummary();
-  el.poolSummary.textContent = `共 ${counts.all} 个派生 · 彰人 ${counts.akito} · 冬弥 ${counts.toya} · 另有 ${counts.special} 种特殊结果${probability ? ` · ${probability}` : ""}`;
+  const cooking = eggRateOf("cooking");
+  const foxrabbit = eggRateOf("foxrabbit");
+  let summary = `共 ${counts.all} 个派生：彰人 ${counts.akito} / 冬弥 ${counts.toya}`;
+  if (cooking && foxrabbit) {
+    summary += `　有${cooking}概率抽到做饭，另有${foxrabbit}概率抽到狐兔彩蛋`;
+  }
+  el.poolSummary.textContent = summary;
   const matches = poolMatches();
   if (mqMobilePool.matches) renderPoolMobile(matches);
   else renderPoolDesktop(matches);

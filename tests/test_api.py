@@ -87,6 +87,15 @@ async def test_session_catalog_draw_profile_and_clear(client: httpx.AsyncClient)
     # 松饼 / 曲奇 是过路彩蛋：不计入做饭，文案带硬换行，前端按行渲染
     assert special_outcomes["pancake"]["counts_as_cooking"] is False
     assert special_outcomes["cookie"]["counts_as_cooking"] is False
+    # 派生池靠 variant_urls 做相册堆叠：按 assets 槽位分组，一组一张到多张。
+    # 这里只钉结构（素材被 .gitignore 排除，数量取决于本地有没有图）。
+    for outcome in special_outcomes.values():
+        groups = outcome["variant_urls"]
+        assert isinstance(groups, list)
+        assert all(isinstance(group, list) for group in groups)
+        assert len(groups) == len(outcome["asset_urls"])
+    # 狐兔是「狐+兔」两个槽位，各一张 → 不会被误判成可堆叠
+    assert all(len(group) == 1 for group in special_outcomes["foxrabbit"]["variant_urls"])
     assert "\n" in special_outcomes["pancake"]["message"]
     assert "\n" in special_outcomes["cookie"]["message"]
     fixed_name = catalog_payload["akito"][0]["name"]

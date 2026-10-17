@@ -165,6 +165,13 @@ async def get_catalog(request: Request, response: Response) -> dict:
                 "label": outcome.label,
                 "message": outcome.message,
                 "asset_urls": list(snapshot.special_assets.get(outcome.id, ())),
+                # 按 assets 槽位分组的候选图，派生池拿它做相册堆叠。
+                # 组内多于一张才堆；「狐+兔」这类两个槽位各一张的结果不受影响。
+                "variant_urls": [
+                    list(urls.values())
+                    for urls in snapshot.special_variant_urls.get(outcome.id, {}).values()
+                    if urls
+                ],
                 "counts_as_cooking": outcome.counts_as_cooking,
             }
             for outcome in snapshot.special_outcomes

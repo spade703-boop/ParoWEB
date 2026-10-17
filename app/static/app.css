@@ -574,16 +574,69 @@ html.no-js .picker__panel { display: none; }
 .special-card.is-cook { border-color: var(--cook-line); }
 .special-card__icons { display: flex; gap: 8px; min-height: 88px; align-items: center; }
 /* 图标宽度跟着卡片走：卡片够宽就 84，变窄就等比缩，永远不出框体 */
+.special-card__slot {
+  position: relative; flex: 1 1 0; min-width: 0; max-width: 84px; aspect-ratio: 1;
+}
+.special-card__stack { position: relative; width: 100%; height: 100%; }
 .special-card__icons img,
 .special-card__icons .fallback {
   width: auto; flex: 1 1 0; min-width: 0; max-width: 84px;
   height: auto; aspect-ratio: 1;
   border-radius: 12px; object-fit: cover; background: var(--paper-deep);
 }
-.special-card__icons .fallback {
+.special-card__stack img,
+.special-card__stack .fallback {
+  width: 100%; height: 100%; aspect-ratio: 1;
+  border-radius: 12px; object-fit: cover; background: var(--paper-deep);
+}
+.special-card__icons .fallback,
+.special-card__stack .fallback {
   display: grid; place-items: center;
   background: var(--sp-chip); color: var(--sp-ink); font-size: 30px;
 }
+
+/* 相册堆叠：主图压在最上，后面几张往右下错开露出一角（像一叠照片）。
+   素材本身是白底，光靠错位看不出来，所以每张都描一圈浅紫边 + 主图带一点点投影。 */
+.special-card__stack.is-stack { cursor: pointer; }
+.special-card__stack.is-stack > img,
+.special-card__stack.is-stack > .fallback {
+  position: absolute; inset: 0;
+  border: 1px solid var(--sp-line);
+}
+.special-card__stack.is-stack > :nth-child(1) { z-index: 3; box-shadow: 0 1px 4px rgba(41, 40, 38, 0.16); }
+.special-card__stack.is-stack > :nth-child(2) { z-index: 2; transform: translate(8px, 8px) rotate(3deg); }
+.special-card__stack.is-stack > :nth-child(3) { z-index: 1; transform: translate(16px, 16px) rotate(-3deg); }
+.special-card__stack.is-stack > img:nth-child(n+4) { display: none; }
+
+/* 收起时给个「还有几张」的角标：手机没有 hover，不给提示就没人知道能点 */
+.special-card__count {
+  position: absolute; right: -7px; bottom: -7px; z-index: 4;
+  min-width: 19px; padding: 0 5px; border-radius: 999px;
+  background: var(--sp-ink); color: var(--sp-bg);
+  font-size: 10.5px; font-weight: 700; line-height: 19px; text-align: center;
+}
+
+/* 展开 = 原地弹出浮层，把整叠摊开。
+   桌面 3 张横排 72px（248×88）正好铺满图标区、不压到下面的文字；
+   手机放不下一行三张，退成 2×2 的 56px（136×136）。 */
+.special-card__stack.is-stack.is-open {
+  /* 往外各扩 9px（内边距 8 + 边框 1），浮层左边和收起时的图左边对齐 */
+  position: absolute; top: 0; left: -9px;
+  display: flex; gap: 8px;
+  padding: 8px;
+  background: var(--sp-bg);
+  border: 1px solid var(--sp-line);
+  border-radius: 14px;
+  box-shadow: 0 12px 28px rgba(41, 40, 38, 0.2);
+  z-index: 40;
+}
+.special-card__stack.is-stack.is-open > img,
+.special-card__stack.is-stack.is-open > .fallback {
+  position: static; transform: none; box-shadow: none;
+  flex: none; max-width: none;
+  width: 72px; height: 72px;
+}
+.special-card__stack.is-stack.is-open > .special-card__count { display: none; }
 .special-card__body { display: flex; flex-direction: column; gap: 5px; }
 .special-card__name { color: var(--sp-ink); font-size: 16px; font-weight: 700; }
 .special-card__msg { margin: 0; color: var(--sp-muted); font-size: 12px; line-height: 1.6; white-space: pre-line; }
@@ -977,6 +1030,10 @@ dialog::backdrop { background: rgba(30, 28, 25, .48); backdrop-filter: blur(3px)
   .special-card { padding: 13px; gap: 10px; border-radius: 16px; }
   .special-card__name { font-size: 14px; }
   .special-card__msg { font-size: 11.5px; line-height: 1.5; }
+  /* 一行三张放不下，摊开的浮层退成 2×2 */
+  .special-card__stack.is-stack.is-open { display: grid; grid-template-columns: repeat(2, 56px); }
+  .special-card__stack.is-stack.is-open > img,
+  .special-card__stack.is-stack.is-open > .fallback { width: 56px; height: 56px; }
 
   .updates-list { grid-template-columns: minmax(0, 1fr); padding-top: 22px; }
 
