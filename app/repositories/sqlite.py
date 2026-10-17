@@ -151,7 +151,7 @@ class SQLiteRepository:
         fixed_name: str | None,
         results: list[DrawResult],
         cooldown_seconds: int = 5,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, int]:
         batch_id = str(uuid.uuid4())
         now = datetime.now(UTC)
         created_at = now.isoformat().replace("+00:00", "Z")
@@ -236,7 +236,8 @@ class SQLiteRepository:
             except Exception:
                 await connection.rollback()
                 raise
-        return batch_id, created_at
+        next_cooldown = cooldown_for_daily_results(daily_results + result_count, cooldown_seconds)
+        return batch_id, created_at, next_cooldown
 
     async def profile(
         self,

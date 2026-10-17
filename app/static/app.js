@@ -658,7 +658,11 @@ async function submitDraw(event) {
     updateSummary(data.summary);
     state.profileStale = true;
     state.communityStats = null;
-    el.drawStatus.textContent = "";
+    if (data.next_cooldown_seconds > 0) {
+      startCooldown(data.next_cooldown_seconds);
+    } else {
+      el.drawStatus.textContent = "";
+    }
   } catch (error) {
     const wait = Number(error.retryAfter);
     if (wait > 0) {

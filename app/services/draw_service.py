@@ -35,7 +35,7 @@ class DrawService:
             fixed_side=fixed_side,
             fixed_name=resolved_fixed_name,
         )
-        batch_id, created_at = await self.repository.create_draw(
+        batch_id, created_at, next_cooldown = await self.repository.create_draw(
             visitor_id=visitor_id,
             requested_count=count,
             fixed_side=fixed_side,
@@ -63,6 +63,7 @@ class DrawService:
         return {
             "batch_id": batch_id,
             "created_at": created_at,
+            "next_cooldown_seconds": next_cooldown,
             "results": [
                 {
                     "position": position,
