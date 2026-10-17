@@ -658,6 +658,41 @@ function poolCard(item) {
   return card;
 }
 
+function eggCategoryLabel(category) {
+  if (category.id === "foxrabbit") return "狐兔类";
+  if (category.id === "cooking") return "普通做饭";
+  return category.id;
+}
+
+function formatEggRate(rate) {
+  const percent = Number(rate) * 100;
+  return `${percent.toLocaleString("zh-CN", { maximumFractionDigits: 4 })}%`;
+}
+
+function eggProbabilitySummary() {
+  return [...(state.catalog?.egg_categories || [])]
+    .sort((left, right) => Number(right.priority) - Number(left.priority))
+    .map((category) => `${eggCategoryLabel(category)} ${formatEggRate(category.rate)}`)
+    .join(" / ");
+}
+
+function specialCard(item) {
+  const card = div(`special-card${item.counts_as_cooking ? " is-cook" : ""}`);
+  const icons = div("special-card__icons");
+  (item.asset_urls || []).forEach((url) => icons.append(rawAvatar(url, item.label, "fallback")));
+  if (!(item.asset_urls || []).length) icons.append(rawAvatar(null, item.label, "fallback"));
+  const body = div("special-card__body");
+  const name = div("special-card__name");
+  name.textContent = item.label;
+  const message = document.createElement("p");
+  message.className = "special-card__msg";
+  message.textContent = item.message;
+  body.append(name, message);
+  card.append(icons, body);
+  if (item.counts_as_cooking) card.append(span("special-card__tag", "计入做饭"));
+  return card;
+}
+
 function sectionHead({ cls, title, count, link, onToggle }) {
   const head = div("pool-section__head");
   const wrap = div("pool-section__title");
@@ -722,29 +757,15 @@ function renderPoolDesktop(matches) {
       const heading = document.createElement("h2");
       heading.textContent = "特殊结果";
       wrap.append(heading);
-      wrap.append(span("pool-section__count", `合计 8% 概率 · ${specials.length} 种`));
+      const probability = eggProbabilitySummary();
+      wrap.append(span("pool-section__count", `${probability ? `${probability} · ` : ""}${specials.length} 种`));
       head.append(wrap);
       const note = span("pool-section__count", "抽中时占掉一个抽取位，不组成配对");
       head.append(note);
       section.append(head);
 
       const grid = div("pool-grid pool-grid--special");
-      specials.forEach((item) => {
-        const card = div(`special-card${item.id === "foxbun" ? " is-cook" : ""}`);
-        const icons = div("special-card__icons");
-        (item.asset_urls || []).forEach((url) => icons.append(rawAvatar(url, item.label, "fallback")));
-        if (!(item.asset_urls || []).length) icons.append(rawAvatar(null, item.label, "fallback"));
-        const body = div("special-card__body");
-        const name = div("special-card__name");
-        name.textContent = item.label;
-        const message = document.createElement("p");
-        message.className = "special-card__msg";
-        message.textContent = item.message;
-        body.append(name, message);
-        card.append(icons, body);
-        if (item.id === "foxbun") card.append(span("special-card__tag", "计入做饭"));
-        grid.append(card);
-      });
+      specials.forEach((item) => grid.append(specialCard(item)));
       section.append(grid);
       nodes.push(section);
     }
@@ -789,19 +810,7 @@ function renderPoolMobile(matches) {
   const grid = div(`pool-grid${onlySpecial ? " pool-grid--special" : ""}`);
   slice.forEach(([side, item]) => {
     if (side === "special") {
-      const card = div(`special-card${item.id === "foxbun" ? " is-cook" : ""}`);
-      const icons = div("special-card__icons");
-      (item.asset_urls || []).forEach((url) => icons.append(rawAvatar(url, item.label, "fallback")));
-      if (!(item.asset_urls || []).length) icons.append(rawAvatar(null, item.label, "fallback"));
-      const body = div("special-card__body");
-      const name = div("special-card__name");
-      name.textContent = item.label;
-      const message = document.createElement("p");
-      message.className = "special-card__msg";
-      message.textContent = item.message;
-      body.append(name, message);
-      card.append(icons, body);
-      grid.append(card);
+      grid.append(specialCard(item));
     } else {
       grid.append(poolCard(item, side));
     }
@@ -877,7 +886,8 @@ function renderPool() {
     return;
   }
   const counts = poolCounts();
-  el.poolSummary.textContent = `共 ${counts.all} 个派生 · 彰人 ${counts.akito} · 冬弥 ${counts.toya} · 另有 ${counts.special} 种特殊结果`;
+  const probability = eggProbabilitySummary();
+  el.poolSummary.textContent = `共 ${counts.all} 个派生 · 彰人 ${counts.akito} · 冬弥 ${counts.toya} · 另有 ${counts.special} 种特殊结果${probability ? ` · ${probability}` : ""}`;
   const matches = poolMatches();
   if (mqMobilePool.matches) renderPoolMobile(matches);
   else renderPoolDesktop(matches);

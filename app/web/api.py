@@ -36,14 +36,28 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def _cooking_category_id(snapshot) -> str | None:
+    return next(
+        (
+            category.id
+            for category in snapshot.egg_categories
+            if category.result_type == "cooking"
+        ),
+        None,
+    )
+
+
 def _serialize_profile(profile: dict, snapshot) -> dict:
     outcome_map = snapshot.outcome_map()
+    cooking_category_id = _cooking_category_id(snapshot)
     special_counts = [
         {
             "id": outcome.id,
+            "category_id": outcome.category_id,
             "label": outcome.label,
             "count": profile["special_counts"].get(outcome.id, 0),
             "asset_urls": list(snapshot.special_assets.get(outcome.id, ())),
+            "counts_as_cooking": outcome.counts_as_cooking,
         }
         for outcome in snapshot.special_outcomes
     ]
@@ -56,6 +70,11 @@ def _serialize_profile(profile: dict, snapshot) -> dict:
                 **item,
                 "is_cooking": bool(item["is_cooking"]),
                 "counts_as_cooking": bool(item["counts_as_cooking"]),
+                "category_id": (
+                    outcome.category_id
+                    if outcome
+                    else cooking_category_id if item["is_cooking"] else None
+                ),
                 "akito_avatar_url": snapshot.avatars["akito"].get(item["akito_name"]) if item["akito_name"] else None,
                 "toya_avatar_url": snapshot.avatars["toya"].get(item["toya_name"]) if item["toya_name"] else None,
                 "special_label": outcome.label if outcome else None,
@@ -126,12 +145,24 @@ async def get_catalog(request: Request, response: Response) -> dict:
             {"name": name, "avatar_url": snapshot.avatars["toya"].get(name)}
             for name in snapshot.toya_pool
         ],
+        "egg_categories": [
+            {
+                "id": category.id,
+                "rate": category.rate,
+                "priority": category.priority,
+                "result_type": category.result_type,
+                "outcomes": [outcome.id for outcome in category.outcomes],
+            }
+            for category in snapshot.egg_categories
+        ],
         "special_outcomes": [
             {
                 "id": outcome.id,
+                "category_id": outcome.category_id,
                 "label": outcome.label,
                 "message": outcome.message,
                 "asset_urls": list(snapshot.special_assets.get(outcome.id, ())),
+                "counts_as_cooking": outcome.counts_as_cooking,
             }
             for outcome in snapshot.special_outcomes
         ],

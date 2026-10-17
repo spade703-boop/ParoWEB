@@ -44,6 +44,22 @@ class DrawService:
             cooldown_seconds=self.cooldown_seconds,
         )
         outcome_map = snapshot.outcome_map()
+        cooking_category_id = next(
+            (
+                category.id
+                for category in snapshot.egg_categories
+                if category.result_type == "cooking"
+            ),
+            None,
+        )
+
+        def category_id_for(result) -> str | None:
+            if result.special_type:
+                return outcome_map[result.special_type].category_id
+            if result.is_cooking:
+                return cooking_category_id
+            return None
+
         return {
             "batch_id": batch_id,
             "created_at": created_at,
@@ -55,6 +71,7 @@ class DrawService:
                     "akito_avatar_url": snapshot.avatars["akito"].get(result.akito_name) if result.akito_name else None,
                     "toya_avatar_url": snapshot.avatars["toya"].get(result.toya_name) if result.toya_name else None,
                     "is_cooking": result.is_cooking,
+                    "category_id": category_id_for(result),
                     "special_type": result.special_type,
                     "special_label": outcome_map[result.special_type].label if result.special_type else None,
                     "special_message": outcome_map[result.special_type].message if result.special_type else None,

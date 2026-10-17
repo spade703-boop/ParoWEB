@@ -280,7 +280,7 @@
     wrapLines(context, foxbun ? "快来做狐兔饭吧！" : item.special_message || "", textWidth, 2).forEach((line, index) => {
       context.fillText(line, textX, y + 151 + textOffsetY + index * 36);
     });
-    if (foxbun || item.counts_as_cooking) {
+    if (item.counts_as_cooking) {
       drawBadge(context, MARGIN + CONTENT_WIDTH - 18, y + 18, foxbun ? "★ 做饭" : "★ 计入做饭", COLORS.cookChip, COLORS.cookText);
     }
   }

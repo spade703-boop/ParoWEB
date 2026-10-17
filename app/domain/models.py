@@ -6,11 +6,13 @@ from typing import Literal
 
 Side = Literal["akito", "toya"]
 FixedSide = Literal["none", "akito", "toya"]
+EggResultType = Literal["special", "cooking"]
 
 
 @dataclass(frozen=True, slots=True)
 class SpecialOutcome:
     id: str
+    category_id: str
     label: str
     weight: float
     tags: tuple[str, ...]
@@ -20,15 +22,30 @@ class SpecialOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class EggCategory:
+    id: str
+    rate: float
+    priority: int
+    result_type: EggResultType
+    outcomes: tuple[SpecialOutcome, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CatalogSnapshot:
     version: str
     akito_pool: tuple[str, ...]
     toya_pool: tuple[str, ...]
-    cooking_rate: float
-    special_rate: float
-    special_outcomes: tuple[SpecialOutcome, ...]
+    egg_categories: tuple[EggCategory, ...]
     avatars: dict[str, dict[str, str | None]]
     special_assets: dict[str, tuple[str, ...]]
+
+    @property
+    def special_outcomes(self) -> tuple[SpecialOutcome, ...]:
+        return tuple(
+            outcome
+            for category in self.egg_categories
+            for outcome in category.outcomes
+        )
 
     def outcome_map(self) -> dict[str, SpecialOutcome]:
         return {outcome.id: outcome for outcome in self.special_outcomes}

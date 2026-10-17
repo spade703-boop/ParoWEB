@@ -7,7 +7,7 @@ import math
 from pathlib import Path
 import threading
 
-from app.domain.models import CatalogSnapshot, SpecialOutcome
+from app.domain.models import CatalogSnapshot, EggCategory, SpecialOutcome
 
 
 logger = logging.getLogger(__name__)
@@ -79,9 +79,12 @@ class CatalogService:
 
         akito_pool = self._validate_pool(pools, "akito_pool")
         toya_pool = self._validate_pool(pools, "toya_pool")
-        cooking_rate = self._validate_rate(config.get("cooking_rate"), "cooking_rate")
-        special_rate = self._validate_rate(config.get("special_rate"), "special_rate")
-        outcomes = self._validate_outcomes(config.get("special_outcomes"))
+        categories = self._validate_categories(config)
+        outcomes = tuple(
+            outcome
+            for category in categories
+            for outcome in category.outcomes
+        )
         avatars = {
             "akito": {name: self._avatar_url("彰人", name) for name in akito_pool},
             "toya": {name: self._avatar_url("冬弥", name) for name in toya_pool},
@@ -99,9 +102,7 @@ class CatalogService:
             version=digest,
             akito_pool=akito_pool,
             toya_pool=toya_pool,
-            cooking_rate=cooking_rate,
-            special_rate=special_rate,
-            special_outcomes=outcomes,
+            egg_categories=categories,
             avatars=avatars,
             special_assets=special_assets,
         )
@@ -126,11 +127,88 @@ class CatalogService:
         return rate
 
     @staticmethod
-    def _validate_outcomes(raw: object) -> tuple[SpecialOutcome, ...]:
+    def _validate_priority(value: object, category_id: str) -> int:
+        # 与 Bot 的读取方式对齐：缺省按 0 处理，整数写法的浮点（如 100.0）也照收，
+        # 避免以后 Bot 侧改成浮点后整份配置被拒、网页却静默停留在旧概率上。
+        if value is None:
+            return 0
+        if isinstance(value, bool):
+            raise CatalogError(f"彩蛋大类 {category_id} 的 priority 必须是数字")
+        try:
+            priority = float(value)
+        except (TypeError, ValueError) as exc:
+            raise CatalogError(f"彩蛋大类 {category_id} 的 priority 必须是数字") from exc
+        if not math.isfinite(priority) or not priority.is_integer():
+            raise CatalogError(f"彩蛋大类 {category_id} 的 priority 必须是整数")
+        return int(priority)
+
+    @classmethod
+    def _validate_categories(cls, config: object) -> tuple[EggCategory, ...]:
+        if not isinstance(config, dict):
+            raise CatalogError("paro_config.json 必须是对象")
+        raw_categories = config.get("egg_categories")
+        if raw_categories is None:
+            raw_categories = [
+                {
+                    "id": "foxrabbit",
+                    "rate": config.get("special_rate"),
+                    "priority": 100,
+                    "result_type": "special",
+                    "outcomes": config.get("special_outcomes"),
+                },
+                {
+                    "id": "cooking",
+                    "rate": config.get("cooking_rate"),
+                    "priority": 0,
+                    "result_type": "cooking",
+                },
+            ]
+        if not isinstance(raw_categories, list) or not raw_categories:
+            raise CatalogError("egg_categories 必须是非空列表")
+
+        categories: list[EggCategory] = []
+        seen_category_ids: set[str] = set()
+        seen_outcome_ids: set[str] = set()
+        for item in raw_categories:
+            if not isinstance(item, dict):
+                raise CatalogError("彩蛋大类必须是对象")
+            category_id = str(item.get("id", "")).strip()
+            if not category_id or category_id in seen_category_ids:
+                raise CatalogError("彩蛋大类 ID 不能为空或重复")
+            result_type = item.get("result_type")
+            if result_type not in {"special", "cooking"}:
+                raise CatalogError("彩蛋大类 result_type 必须是 special 或 cooking")
+            priority = cls._validate_priority(item.get("priority"), category_id)
+            rate = cls._validate_rate(item.get("rate"), f"彩蛋大类 {category_id} 的 rate")
+            outcomes = (
+                cls._validate_outcomes(item.get("outcomes"), category_id, seen_outcome_ids)
+                if result_type == "special"
+                else ()
+            )
+            categories.append(
+                EggCategory(
+                    id=category_id,
+                    rate=rate,
+                    priority=priority,
+                    result_type=result_type,
+                    outcomes=outcomes,
+                )
+            )
+            seen_category_ids.add(category_id)
+
+        if math.fsum(category.rate for category in categories) > 1:
+            raise CatalogError("彩蛋大类概率之和不能超过 1")
+        return tuple(categories)
+
+    @staticmethod
+    def _validate_outcomes(
+        raw: object,
+        category_id: str,
+        seen_ids: set[str],
+    ) -> tuple[SpecialOutcome, ...]:
         if not isinstance(raw, list) or not raw:
-            raise CatalogError("special_outcomes 必须是非空列表")
+            raise CatalogError(f"特殊彩蛋大类 {category_id} 的 outcomes 必须是非空列表")
         outcomes: list[SpecialOutcome] = []
-        seen_ids: set[str] = set()
         for item in raw:
             if not isinstance(item, dict):
                 raise CatalogError("特殊结果必须是对象")
@@ -141,13 +219,18 @@ class CatalogService:
                 weight = float(item.get("weight"))
             except (TypeError, ValueError) as exc:
                 raise CatalogError("特殊结果权重必须是数字") from exc
-            tags = tuple(str(tag).strip() for tag in item.get("tags", []) if str(tag).strip())
-            assets = tuple(str(asset).strip() for asset in item.get("assets", []) if str(asset).strip())
-            if not math.isfinite(weight) or weight <= 0 or not tags:
-                raise CatalogError("特殊结果权重必须为正数且标签不能为空")
+            raw_tags = item.get("tags", [])
+            raw_assets = item.get("assets", [])
+            if not isinstance(raw_tags, list) or not isinstance(raw_assets, list):
+                raise CatalogError("特殊结果 tags 和 assets 必须是列表")
+            tags = tuple(str(tag).strip() for tag in raw_tags if str(tag).strip())
+            assets = tuple(str(asset).strip() for asset in raw_assets if str(asset).strip())
+            if not math.isfinite(weight) or weight <= 0:
+                raise CatalogError("特殊结果权重必须是有限正数")
             outcomes.append(
                 SpecialOutcome(
                     id=outcome_id,
+                    category_id=category_id,
                     label=str(item.get("label") or outcome_id),
                     weight=weight,
                     tags=tags,

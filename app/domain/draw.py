@@ -55,27 +55,32 @@ def draw_results(
         raise DomainError("invalid_count", "每次只能抽取 1、2 或 3 个结果")
     fixed_akito, fixed_toya = resolve_fixed_name(snapshot, fixed_side, fixed_name)
     random_source = rng or random.SystemRandom()
-    used_tags: set[str] = set()
+    categories = sorted(
+        snapshot.egg_categories,
+        key=lambda category: category.priority,
+        reverse=True,
+    )
     results: list[DrawResult] = []
 
     for _ in range(count):
         akito_name = fixed_akito or random_source.choice(snapshot.akito_pool)
         toya_name = fixed_toya or random_source.choice(snapshot.toya_pool)
-        is_cooking = random_source.random() < snapshot.cooking_rate
+        roll = random_source.random()
+        cumulative_rate = 0.0
+        category = None
+        for candidate in categories:
+            cumulative_rate += candidate.rate
+            if roll < cumulative_rate:
+                category = candidate
+                break
+        is_cooking = bool(category and category.result_type == "cooking")
         special = None
-        if not is_cooking and random_source.random() < snapshot.special_rate:
-            available = [
-                outcome
-                for outcome in snapshot.special_outcomes
-                if used_tags.isdisjoint(outcome.tags)
-            ]
-            if available:
-                special = random_source.choices(
-                    available,
-                    [outcome.weight for outcome in available],
-                    k=1,
-                )[0]
-                used_tags.update(special.tags)
+        if category and category.result_type == "special":
+            special = random_source.choices(
+                category.outcomes,
+                [outcome.weight for outcome in category.outcomes],
+                k=1,
+            )[0]
         if special:
             results.append(
                 DrawResult(
