@@ -9,3 +9,5 @@ data/announcements*.json
 SECURITY_DEPLOYMENT_LOG.md
 *-upload/
 content/images/
+.obsidian/
+.workbuddy/
