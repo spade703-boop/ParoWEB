@@ -319,7 +319,7 @@ async def test_personal_report_includes_all_history_and_cooking_pairs(client: ht
 
 
 async def test_adaptive_draw_cooldown_uses_daily_tiers(settings: Settings) -> None:
-    limited_settings = replace(settings, draw_cooldown_seconds=20)
+    limited_settings = replace(settings, draw_cooldown_seconds=5)
     app = create_app(limited_settings)
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
@@ -338,7 +338,7 @@ async def test_adaptive_draw_cooldown_uses_daily_tiers(settings: Settings) -> No
             )
             assert blocked.status_code == 429
             assert blocked.json()["error"]["code"] == "draw_limited"
-            assert 1 <= int(blocked.headers["retry-after"]) <= 20
+            assert 1 <= int(blocked.headers["retry-after"]) <= 5
 
             cleared = await api_client.delete("/api/v1/me/history", headers=headers)
             assert cleared.status_code == 200
@@ -363,7 +363,7 @@ async def test_adaptive_draw_cooldown_uses_daily_tiers(settings: Settings) -> No
                 headers=headers,
             )
             assert tier_blocked.status_code == 429
-            assert 598 <= int(tier_blocked.headers["retry-after"]) <= 600
+            assert 18 <= int(tier_blocked.headers["retry-after"]) <= 20
 
             async with repository.connect() as connection:
                 await connection.execute(

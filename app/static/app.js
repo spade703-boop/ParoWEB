@@ -76,7 +76,10 @@ const state = {
   recordSelectionMode: false,
   selectedRecordIds: new Set(),
   exportResult: null,
+  cooldownActive: false,
+  cooldownText: "",
 };
+let cooldownTimer = null;
 
 const el = {
   views: $$("[data-view]"),
@@ -84,6 +87,7 @@ const el = {
   headerCount: $("#header-count"),
   form: $("#draw-form"),
   drawButton: $("#draw-button"),
+  drawLabel: $("#draw-label"),
   drawStatus: $("#draw-status"),
   results: $("#results"),
   resultTime: $("#result-time"),
@@ -173,6 +177,15 @@ async function api(path, options = {}) {
     throw error;
   }
   return payload;
+}
+
+// 把服务端返回的秒数说成人话：5 秒 / 1 分 30 秒 / 2 分钟
+function formatWait(seconds) {
+  const total = Math.max(1, Math.round(Number(seconds) || 0));
+  if (total < 60) return `${total} 秒`;
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  return rest ? `${minutes} 分 ${rest} 秒` : `${minutes} 分钟`;
 }
 
 function avatarBox(url, name, className) {
@@ -543,6 +556,57 @@ function syncFixedSide(side) {
 
 /* ---------- 抽取 ---------- */
 
+// 被服务端拦下时，按钮直接变成倒计时，倒完自己恢复
+function stopCooldown() {
+  if (cooldownTimer) {
+    clearInterval(cooldownTimer);
+    cooldownTimer = null;
+  }
+  state.cooldownActive = false;
+  el.drawButton.classList.remove("is-cooling");
+  el.drawButton.disabled = false;
+  el.drawLabel.textContent = "抽取派生";
+  if (state.cooldownText && el.drawStatus.textContent === state.cooldownText) {
+    el.drawStatus.classList.remove("is-waiting");
+    el.drawStatus.textContent = "";
+  }
+  state.cooldownText = "";
+}
+
+// 按钮上的紧凑写法：59 秒内走秒，之后走 分:秒
+function clockLabel(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function startCooldown(seconds) {
+  const total = Math.ceil(Number(seconds) || 0);
+  if (total <= 0) return;
+  if (cooldownTimer) {
+    clearInterval(cooldownTimer);
+    cooldownTimer = null;
+  }
+  let remaining = total;
+  state.cooldownActive = true;
+  el.drawButton.classList.add("is-cooling");
+  const paint = () => {
+    el.drawButton.disabled = true;
+    el.drawLabel.textContent = `冷却 ${clockLabel(remaining)}`;
+    state.cooldownText = `抽取太频繁，${formatWait(remaining)}后可再抽`;
+    el.drawStatus.textContent = state.cooldownText;
+    el.drawStatus.classList.add("is-waiting");
+  };
+  paint();
+  cooldownTimer = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      stopCooldown();
+      return;
+    }
+    paint();
+  }, 1000);
+}
+
 function updateSummary(summary) {
   const draws = summary.draw_count ?? 0;
   const cooking = summary.cooking_count ?? 0;
@@ -596,11 +660,14 @@ async function submitDraw(event) {
     state.communityStats = null;
     el.drawStatus.textContent = "";
   } catch (error) {
-    el.drawStatus.textContent = error.retryAfter
-      ? `${error.message}（约 ${error.retryAfter} 秒）`
-      : error.message;
+    const wait = Number(error.retryAfter);
+    if (wait > 0) {
+      startCooldown(wait);
+    } else {
+      el.drawStatus.textContent = error.message;
+    }
   } finally {
-    el.drawButton.disabled = false;
+    if (!state.cooldownActive) el.drawButton.disabled = false;
   }
 }
 

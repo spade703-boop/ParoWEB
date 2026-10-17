@@ -63,20 +63,28 @@ def utc_now() -> str:
 CHINA_TZ = timezone(timedelta(hours=8))
 
 
-def cooldown_for_daily_results(daily_results: int, base_seconds: int = 20) -> int:
+# 每日累计结果条数下限 -> 冷却秒数，按顺序命中最后满足的一项。
+# 5 秒起步，相邻两档最多涨 2 倍；700 条之后进入高位墙。
+COOLDOWN_TIERS: tuple[tuple[int, int], ...] = (
+    (100, 10),
+    (200, 20),
+    (300, 30),
+    (400, 45),
+    (500, 60),
+    (700, 120),
+    (900, 300),
+)
+
+
+def cooldown_for_daily_results(daily_results: int, base_seconds: int = 5) -> int:
     if base_seconds <= 0:
         return 0
-    if daily_results < 100:
-        return base_seconds
-    if daily_results < 200:
-        return 60
-    if daily_results < 300:
-        return 600
-    if daily_results < 400:
-        return 1800
-    if daily_results < 500:
-        return 3600
-    return 7200
+    seconds = base_seconds
+    for threshold, tier_seconds in COOLDOWN_TIERS:
+        if daily_results < threshold:
+            break
+        seconds = tier_seconds
+    return seconds
 
 
 class SQLiteRepository:
@@ -142,7 +150,7 @@ class SQLiteRepository:
         fixed_side: FixedSide,
         fixed_name: str | None,
         results: list[DrawResult],
-        cooldown_seconds: int = 20,
+        cooldown_seconds: int = 5,
     ) -> tuple[str, str]:
         batch_id = str(uuid.uuid4())
         now = datetime.now(UTC)

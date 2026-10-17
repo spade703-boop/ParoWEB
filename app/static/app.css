@@ -260,10 +260,15 @@ h1, h2, h3, p { text-wrap: pretty; }
 }
 .primary-button:hover { opacity: .9; }
 .primary-button:disabled { opacity: .5; cursor: wait; }
+.primary-button.is-cooling {
+  opacity: .55; cursor: not-allowed;
+  letter-spacing: .1em; font-variant-numeric: tabular-nums;
+}
 .primary-button svg { flex: none; }
 
 .save-hint { margin: 20px 0 0; color: var(--faint); font-size: 12px; text-align: center; }
 .form-status { min-height: 18px; margin: 10px 0 -6px; color: var(--danger); font-size: 13px; text-align: center; }
+.form-status.is-waiting { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* ---------- 固定派生选择器 ---------- */
 

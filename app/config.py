@@ -64,5 +64,5 @@ class Settings:
                 "PARO_ALLOWED_ORIGINS",
                 "http://localhost:8000,http://127.0.0.1:8000,http://testserver",
             ),
-            draw_cooldown_seconds=_int_env("PARO_DRAW_COOLDOWN_SECONDS", 20),
+            draw_cooldown_seconds=_int_env("PARO_DRAW_COOLDOWN_SECONDS", 5),
         )

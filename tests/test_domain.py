@@ -175,7 +175,18 @@ def test_invalid_count(snapshot: CatalogSnapshot, count: int) -> None:
 
 @pytest.mark.parametrize(
     ("daily_results", "expected_seconds"),
-    [(0, 20), (99, 20), (100, 60), (200, 600), (300, 1800), (400, 3600), (500, 7200)],
+    [
+        (0, 5),
+        (99, 5),
+        (100, 10),
+        (200, 20),
+        (300, 30),
+        (400, 45),
+        (500, 60),
+        (700, 120),
+        (900, 300),
+        (1200, 300),
+    ],
 )
 def test_adaptive_cooldown_tiers(daily_results: int, expected_seconds: int) -> None:
     assert cooldown_for_daily_results(daily_results) == expected_seconds

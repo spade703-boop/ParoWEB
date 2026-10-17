@@ -12,7 +12,7 @@ class DrawService:
         catalog: CatalogService,
         repository: SQLiteRepository,
         *,
-        cooldown_seconds: int = 20,
+        cooldown_seconds: int = 5,
     ) -> None:
         self.catalog = catalog
         self.repository = repository

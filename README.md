@@ -35,7 +35,7 @@ node --test tests/announcements.test.cjs
 - HTTPS 站点对应的 `PARO_ALLOWED_ORIGINS`
 - 持久化路径 `PARO_DATABASE_PATH`
 - Bot 数据源路径 `PARO_CONTENT_DIR`（生产 Compose 默认是容器内的 `/bot-data`）
-- `PARO_DRAW_COOLDOWN_SECONDS`（默认 `20`；每日抽取达到 100、200、300、400、500 条后，冷却依次为 1 分钟、10 分钟、30 分钟、1 小时、2 小时）
+- `PARO_DRAW_COOLDOWN_SECONDS`（默认 `5`；每日累计结果条数达到 100、200、300、400、500、700、900 后，冷却依次为 10 秒、20 秒、30 秒、45 秒、1 分钟、2 分钟、5 分钟）
 
 生产 Compose 会将宿主机 `${PARO_BOT_DATA_DIR:-/akito_bot/data}` 以只读方式挂载到 `/bot-data`，并将网站仓库的 `content/` 以只读方式挂载到 `/app/content`。如果 Bot 数据目录不同，在服务器的 `.env` 中设置 `PARO_BOT_DATA_DIR=/实际路径/data`，再重建网页容器即可。之后 Bot 更新 `paro_pools.json`、`paro_config.json` 或头像文件时，网页不需要复制文件或重新构建镜像；下一次访问目录、抽取或打开页面时会自动读取新内容。公告使用已有的 `./data:/data` 目录挂载，容器读取 `/data/announcements.json`；日常发布公告不需要 Git 操作、重建镜像或重启容器。修改 Python、HTML、CSS 或 JavaScript 等镜像内文件时，需要执行 `docker compose -f docker-compose.prod.yml up -d --build`。
 
