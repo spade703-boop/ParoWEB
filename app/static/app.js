@@ -785,7 +785,8 @@ function renderPoolMobile(matches) {
     return;
   }
 
-  const grid = div("pool-grid");
+  const onlySpecial = slice.length > 0 && slice.every(([side]) => side === "special");
+  const grid = div(`pool-grid${onlySpecial ? " pool-grid--special" : ""}`);
   slice.forEach(([side, item]) => {
     if (side === "special") {
       const card = div(`special-card${item.id === "foxbun" ? " is-cook" : ""}`);

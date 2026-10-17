@@ -569,11 +569,15 @@ html.no-js .picker__panel { display: none; }
 }
 .special-card.is-cook { border-color: var(--cook-line); }
 .special-card__icons { display: flex; gap: 8px; min-height: 88px; align-items: center; }
-.special-card__icons img {
-  width: 84px; height: 84px; border-radius: 12px; object-fit: cover; background: var(--paper-deep);
+/* 图标宽度跟着卡片走：卡片够宽就 84，变窄就等比缩，永远不出框体 */
+.special-card__icons img,
+.special-card__icons .fallback {
+  width: auto; flex: 1 1 0; min-width: 0; max-width: 84px;
+  height: auto; aspect-ratio: 1;
+  border-radius: 12px; object-fit: cover; background: var(--paper-deep);
 }
 .special-card__icons .fallback {
-  width: 84px; height: 84px; border-radius: 12px; display: grid; place-items: center;
+  display: grid; place-items: center;
   background: var(--sp-chip); color: var(--sp-ink); font-size: 30px;
 }
 .special-card__body { display: flex; flex-direction: column; gap: 5px; }
@@ -909,12 +913,13 @@ dialog::backdrop { background: rgba(30, 28, 25, .48); backdrop-filter: blur(3px)
 
 @media (max-width: 1023px) {
   .pool-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-  .pool-grid--special { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* 这一档 .pool-grid 是 6 列，特殊卡必须显式压回 4 列（否则 4 张卡被挤成 128px） */
+  .pool-grid--special { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 899px) {
-  .container { width: min(100% - 40px, 640px); }
+  .container { width: min(100% - 40px, 720px); }
   .site-header__inner { min-height: 68px; }
   .top-nav { display: none; }
   .bottom-nav { display: block; }
@@ -958,10 +963,16 @@ dialog::backdrop { background: rgba(30, 28, 25, .48); backdrop-filter: blur(3px)
   .filter-chips { overflow-x: auto; }
   .filter-chip { flex: 1 0 auto; }
   .pool-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; }
-  .pool-grid--special { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
+  /* 这一档 .pool-grid 是 3 列，特殊卡必须显式写回 4 列；真正降成 2×2 的是 ≤759（见下方） */
+  .pool-grid--special { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px; }
   .pool-card { padding: 8px; border-radius: 14px; }
   .pool-card__name { margin-top: 6px; font-size: 11px; }
   .pool-sections { gap: 22px; }
+
+  /* 手机档特殊卡转 2×2；图标宽度已在全局规则里自适应，这里只收紧留白 */
+  .special-card { padding: 13px; gap: 10px; border-radius: 16px; }
+  .special-card__name { font-size: 14px; }
+  .special-card__msg { font-size: 11.5px; line-height: 1.5; }
 
   .updates-list { grid-template-columns: minmax(0, 1fr); padding-top: 22px; }
 
@@ -1001,6 +1012,13 @@ dialog::backdrop { background: rgba(30, 28, 25, .48); backdrop-filter: blur(3px)
   .record-export-bar { bottom: 78px; }
 
   .site-footer { padding-bottom: 88px; }
+}
+
+/* 特殊卡什么时候从"一行四张"降成"2×2"：只看放得下放不下。
+   容器上限 720 时四列每张 171.75（≈手机两列的卡宽，狐兔两个图标 68），再窄就缩得没法看。
+   → 视口 760 以上（平板竖屏 768/834）仍是一行四张，手机才换行。 */
+@media (max-width: 759px) {
+  .pool-grid--special { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 560px) {
