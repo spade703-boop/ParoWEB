@@ -92,6 +92,7 @@ paro_web/
 | `PARO_ALLOWED_HOSTS` | `localhost,127.0.0.1` | 域名白名单 |
 | `PARO_ALLOWED_ORIGINS` | `http://localhost:8000,…` | 写操作来源白名单 |
 | `PARO_DRAW_COOLDOWN_SECONDS` | `5` | 起始冷却，`0` 关闭 |
+| `PARO_STATS_CACHE_SECONDS` | `60` | 社区统计缓存秒数，`0` 关闭 |
 | `PARO_BOT_DATA_DIR` | `/akito_bot/data` | Compose 挂载的 Bot 数据目录 |
 
 冷却按**当日（中国标准时间）累计结果条数**分档：`<100→5s`、`100→10s`、`200→20s`、`300→30s`、

@@ -18,6 +18,7 @@ from app.repositories.sqlite import SQLiteRepository
 from app.services.announcements import AnnouncementService
 from app.services.catalog import CatalogService
 from app.services.draw_service import DrawService
+from app.services.stats_cache import StatsCache
 from app.web.api import router
 from app.web.errors import (
     domain_error_handler,
@@ -42,6 +43,7 @@ class Services:
     draws: DrawService
     visitor_limiter: SlidingWindowLimiter
     ip_limiter: SlidingWindowLimiter
+    stats_cache: StatsCache
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -61,6 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ),
         visitor_limiter=SlidingWindowLimiter(limit=30),
         ip_limiter=SlidingWindowLimiter(limit=60),
+        stats_cache=StatsCache(settings.stats_cache_seconds),
     )
 
     @asynccontextmanager

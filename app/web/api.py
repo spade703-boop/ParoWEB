@@ -189,9 +189,15 @@ async def get_announcements(request: Request, response: Response) -> dict:
 async def get_community_stats(request: Request, response: Response) -> dict:
     services = _services(request)
     response.headers["Cache-Control"] = "no-store"
-    stats = await services.repository.community_stats(limit=10)
+    # 全表聚合很贵（11 万行上 2.4~2.7 秒），套一层短期缓存让密集访问只算一次；
+    # 头像 URL 仍每次现拼，换图能立刻生效。抽卡 / 清空记录会 invalidate
+    stats, generated_at = await services.stats_cache.get(
+        lambda: services.repository.community_stats(limit=10)
+    )
     snapshot = services.catalog.snapshot
     return {
+        # 这份数据真正算出来的时刻；命中缓存时是缓存生成的那一刻
+        "generated_at": generated_at,
         "total_draws": stats["total_draws"],
         "random_draws": stats["random_draws"],
         "akito_top": [
@@ -244,6 +250,8 @@ async def create_draw(payload: DrawRequest, request: Request, response: Response
             {"Retry-After": str(exc.retry_after)},
         )
     services.sessions.set_cookie(response, token)
+    # 这批结果已经落库，社区统计得重新算
+    services.stats_cache.invalidate()
     return result
 
 
@@ -310,5 +318,6 @@ async def delete_history(request: Request, response: Response) -> dict:
     services = _services(request)
     visitor, token, _is_new = await services.sessions.resolve(request)
     await services.repository.clear_history(visitor["id"])
+    services.stats_cache.invalidate()
     services.sessions.set_cookie(response, token)
     return {"cleared": True, "visitor": {"created_at": visitor["created_at"]}}

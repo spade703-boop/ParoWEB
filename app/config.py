@@ -44,6 +44,7 @@ class Settings:
     allowed_hosts: tuple[str, ...]
     allowed_origins: tuple[str, ...]
     draw_cooldown_seconds: int
+    stats_cache_seconds: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -69,4 +70,5 @@ class Settings:
                 "http://localhost:8000,http://127.0.0.1:8000,http://testserver",
             ),
             draw_cooldown_seconds=_int_env("PARO_DRAW_COOLDOWN_SECONDS", 5),
+            stats_cache_seconds=_int_env("PARO_STATS_CACHE_SECONDS", 60),
         )

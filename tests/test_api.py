@@ -237,17 +237,41 @@ async def test_invalid_announcement_edit_keeps_last_valid_content(client: httpx.
     assert (await client.get("/api/v1/announcements")).json()["items"] == repaired
 
 
+async def test_community_stats_reuses_one_computation(client: httpx.AsyncClient) -> None:
+    """缓存期内复用同一份结果（generated_at 不动）；抽卡让它失效后必须重算。"""
+    first = (await client.get("/api/v1/community-stats")).json()
+    second = (await client.get("/api/v1/community-stats")).json()
+    assert first["total_draws"] == 0
+    assert second["generated_at"] == first["generated_at"]
+
+    catalog = (await client.get("/api/v1/catalog")).json()
+    draw = await client.post(
+        "/api/v1/draw",
+        json={"count": 1, "fixed_side": "akito", "fixed_name": catalog["akito"][0]["name"]},
+        headers={"Origin": "http://testserver"},
+    )
+    assert draw.status_code == 200
+
+    third = (await client.get("/api/v1/community-stats")).json()
+    assert third["total_draws"] == 1
+    assert third["generated_at"] > first["generated_at"]
+
+
 async def test_community_stats_are_aggregated(client: httpx.AsyncClient) -> None:
     empty = await client.get("/api/v1/community-stats")
     assert empty.status_code == 200
     assert empty.headers["cache-control"] == "no-store"
-    assert empty.json() == {
+    payload = empty.json()
+    # generated_at 是这份数据算出来的时刻，每次都不一样，单独断言
+    generated_at = payload.pop("generated_at")
+    assert payload == {
         "total_draws": 0,
         "random_draws": 0,
         "akito_top": [],
         "toya_top": [],
         "pair_top": [],
     }
+    assert generated_at
 
     catalog = (await client.get("/api/v1/catalog")).json()
     fixed_name = catalog["akito"][0]["name"]
