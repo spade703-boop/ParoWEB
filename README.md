@@ -1,161 +1,162 @@
-# 抽派生网站
+# 抽派生 · PARO DRAW
 
-独立的响应式网站实现，不依赖 NoneBot 进程，也不读写机器人统计文件。生产环境通过只读挂载直接读取 Bot 的 `data` 目录，因此派生池、头像和特殊结果配置只维护一份；网页会在请求时检测内容变化并热重载。更新公告单独保存在 `data/announcements.json`，由 Git 忽略，直接编辑即可热更新。
+> 粉丝向娱乐小站：从「彰人池」「冬弥池」各抽一个派生组成配对，还有小概率抽到彩蛋。
 
-## 后续规划
+非盈利同人向项目，网页端独立于机器人进程运行，数据各自隔离。
 
-① 新增特殊彩蛋-狗狐
-② 新增特殊彩蛋-派生随机变成狐/兔形态
+---
 
-## 本地运行
+## 功能一览
 
-需要 Python 3.11 或更高版本：
+| 功能 | 说明 |
+| --- | --- |
+| 抽派生 | 每次 1–3 连抽；可固定一方（指定彰人 / 冬弥的某个派生） |
+| 彩蛋 | 3% 狐兔类特殊结果（狐狸、兔子、狐兔、狐兔饭、松饼、曲奇），3% 做饭 |
+| 派生池 | 浏览全部条目（彰人 33 / 冬弥 32）+ 6 张特殊卡片，支持搜索、筛选、分页 |
+| 趣味数据 | 全站彰人 / 冬弥 / 组合 TOP 10 |
+| 我的记录 | 个人历史、做饭次数统计，可一键导出 PNG |
+| 更新公告 | 改一个 JSON 文件即可发布，未读时导航显示 NEW |
+
+## 技术栈
+
+| 层 | 选型 |
+| --- | --- |
+| 后端 | FastAPI + aiosqlite（SQLite WAL），Python 3.11+ |
+| 前端 | 原生 HTML / CSS / JS，无构建步骤 |
+| 图片导出 | html2canvas 1.4.1 + 自托管 Noto Sans SC（浏览器内生成，2× 分辨率） |
+| 部署 | Docker（`read_only` + 非 root UID 10001）+ Nginx |
+| 测试 | `pytest`（后端）+ `node --test`（公告解析） |
+
+## 快速开始
 
 ```powershell
 python -m pip install -e ".[test]"
 python -m uvicorn app.main:app --reload
 ```
 
-然后访问 `http://127.0.0.1:8000`。
-
-## 测试
+打开 `http://127.0.0.1:8000`。
 
 ```powershell
 python -m pytest
 node --test tests/announcements.test.cjs
 ```
 
+⚠️ 本地调试三件事：端口固定 8000（来源白名单只认它）；连抽前设 `PARO_DRAW_COOLDOWN_SECONDS=0`；
+**不要双击 `index.html`**（`file://` 下 CSP 与 fetch 全部失效，页面会静默失败）。
+
+## 目录结构
+
+```
+paro_web/
+├─ app/
+│  ├─ main.py           # 应用装配、安全响应头、CSP、静态资源版本化
+│  ├─ config.py         # 环境变量 → Settings
+│  ├─ domain/           # 抽取逻辑与领域模型（纯函数，无 IO）
+│  ├─ services/         # 目录快照与热重载、抽取服务、公告
+│  ├─ repositories/     # SQLite 读写（WAL）
+│  ├─ web/              # API 路由、会话 Cookie、限流、错误处理
+│  └─ static/           # 前端页面 + 导出用的字体与库
+├─ content/             # 本地内容副本：两个 JSON + 头像素材（素材不入库）
+├─ data/                # SQLite 与公告（Git 忽略）
+├─ deploy/              # Nginx 配置与 ECS 部署步骤
+└─ tests/               # pytest + node --test
+```
+
+## 接口
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| POST | `/api/v1/session` | 建立匿名访客 Cookie |
+| GET | `/api/v1/catalog` | 派生池、彩蛋概率、素材 URL |
+| POST | `/api/v1/draw` | 抽派生 |
+| GET | `/api/v1/me` | 个人记录（分页） |
+| GET | `/api/v1/me/report` | 个人总览统计 |
+| GET | `/api/v1/me/stats` | 个人做饭次数等汇总 |
+| DELETE | `/api/v1/me/history` | 清空个人记录 |
+| GET | `/api/v1/community-stats` | 全站趣味数据 |
+| GET | `/api/v1/announcements` | 公告列表 |
+| GET | `/healthz` | 健康检查（内容 + 数据库） |
+
 ## 配置
 
-环境变量示例见 `.env.example`。生产环境必须设置：
+环境变量样例见 `.env.example`。
 
-- `PARO_ENV=production`
-- `PARO_COOKIE_SECURE=true`
-- 正确的 `PARO_ALLOWED_HOSTS`
-- HTTPS 站点对应的 `PARO_ALLOWED_ORIGINS`
-- 持久化路径 `PARO_DATABASE_PATH`
-- Bot 数据源路径 `PARO_CONTENT_DIR`（生产 Compose 默认是容器内的 `/bot-data/paro`）与
-  `PARO_IMAGES_DIR`（默认 `/bot-data/images`；不设置时退回 `$PARO_CONTENT_DIR/images`）
-- `PARO_DRAW_COOLDOWN_SECONDS`（默认 `5`；每日累计结果条数达到 100、200、300、400、500、700、900 后，冷却依次为 10 秒、20 秒、30 秒、45 秒、1 分钟、2 分钟、5 分钟）
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `PARO_ENV` | `development` | `production` 时关闭 `/docs` |
+| `PARO_DATABASE_PATH` | `data/paro_web.sqlite3` | 与 Bot 统计数据物理隔离 |
+| `PARO_CONTENT_DIR` | `content` | 条目 JSON 目录（生产 `/bot-data/paro`） |
+| `PARO_IMAGES_DIR` | `<CONTENT_DIR>/images` | 头像目录（生产 `/bot-data/images`） |
+| `PARO_ANNOUNCEMENTS_PATH` | `data/announcements.json` | 公告文件 |
+| `PARO_COOKIE_SECURE` | 随环境 | HTTPS 站点必须为 `true` |
+| `PARO_ALLOWED_HOSTS` | `localhost,127.0.0.1` | 域名白名单 |
+| `PARO_ALLOWED_ORIGINS` | `http://localhost:8000,…` | 写操作来源白名单 |
+| `PARO_DRAW_COOLDOWN_SECONDS` | `5` | 起始冷却，`0` 关闭 |
+| `PARO_BOT_DATA_DIR` | `/akito_bot/data` | Compose 挂载的 Bot 数据目录 |
 
-生产 Compose 会将宿主机 `${PARO_BOT_DATA_DIR:-/akito_bot/data}` 以只读方式挂载到 `/bot-data`，并将网站仓库的 `content/` 以只读方式挂载到 `/app/content`。如果 Bot 数据目录不同，在服务器的 `.env` 中设置 `PARO_BOT_DATA_DIR=/实际路径/data`，再重建网页容器即可。之后 Bot 更新 `paro_pools.json`、`paro_config.json` 或头像文件时，网页不需要复制文件或重新构建镜像；下一次访问目录、抽取或打开页面时会自动读取新内容。公告使用已有的 `./data:/data` 目录挂载，容器读取 `/data/announcements.json`；日常发布公告不需要 Git 操作、重建镜像或重启容器。修改 Python、HTML、CSS 或 JavaScript 等镜像内文件时，需要执行 `docker compose -f docker-compose.prod.yml up -d --build`。
+冷却按**当日（中国标准时间）累计结果条数**分档：`<100→5s`、`100→10s`、`200→20s`、`300→30s`、
+`400→45s`、`500→60s`、`700→120s`、`≥900→300s`。计数存 SQLite，重启容器不会绕过。
 
-网站数据默认保存在 `data/paro_web.sqlite3`，与 Bot 统计数据物理隔离。正式公开前仍需确认素材使用权并完成备案、域名和 HTTPS 配置。
+## 部署
 
-公共排行榜只统计“双方随机”抽取；固定模式记录仍会保留在个人记录和全站总数中。抽取冷却计数按中国标准时间每日零点重置，数据保存在 SQLite 中，容器重启不会绕过限制。
-
-## 彩蛋配置（`paro_config.json`）
-
-彩蛋概率和分类只维护 Bot 的 `data/paro_config.json` 一份，网站读同一份内容。结构与判定规则：
-
-```json
-{
-  "egg_categories": [
-    {
-      "id": "foxrabbit",
-      "rate": 0.03,
-      "priority": 100,
-      "result_type": "special",
-      "outcomes": [
-        { "id": "fox", "label": "狐狸", "weight": 1, "assets": ["狐"], "counts_as_cooking": false }
-      ]
-    },
-    { "id": "cooking", "rate": 0.03, "priority": 0, "result_type": "cooking" }
-  ]
-}
-```
-
-- 每条抽取只取一次随机数，按 `priority` 从高到低累加 `rate` 划互斥区间。当前是 `[0, 0.03)` 狐兔类、`[0.03, 0.06)` 普通做饭、其余普通组合；`priority` 相同按配置顺序。
-- `rate` 是绝对概率（占单次抽取的比例），不是“没中前面的再按 x% 抽一次”的条件概率，所以两类加起来就是 6%。
-- `result_type=special` 按 `weight` 在类内加权选一个结果，必须至少有一个结果；`result_type=cooking` 直接产出普通配对做饭，不需要结果列表。
-- `counts_as_cooking` 只管统计和展示（算不算做饭），不影响概率。狐兔饭 `is_cooking=false`，但计入做饭次数和做饭相关展示。
-- `unique_per_draw: true` 表示同一次抽取内该结果最多出现一次（狐兔饭开了这个）。做法是在摇之前先把本次已命中的唯一分支从候选里剔掉，再一次性摇定；重复命中会改派给同类其余分支，**其余分支的概率不会被稀释**。候选被剔光时宁可重复也不会卡住。缺省为 `false`，老配置行为不变。
-- 新加类内结果：往 `outcomes` 里加对象；新加彩蛋大类：往 `egg_categories` 里加对象并给唯一 `id`、`rate`、`priority`、`result_type`。抽取主流程、接口和前端都不用改。
-- `message` 支持 `\n` 硬换行：接口原样透传，卡片、记录列表和导出的 PNG 都按行渲染。加新分支时如果要两行文案（一行说有什么、一行说可能是谁的），直接在配置里写 `\n` 即可，不用改前端。
-- 约束：大类 `id` 唯一、特殊结果 `id` 在所有大类之间全局唯一、`weight` 为有限正数、大类 `rate` 之和不超过 1、`priority` 为整数（缺省按 0）。`tags` 只是元数据，不参与抽取去重。
-- 旧配置（顶层 `cooking_rate` / `special_rate` / `special_outcomes`）仍能读，会归一化成 `foxrabbit` + `cooking` 两个大类，方便切换期回滚；概率以文件内容为准，不会被静默改成新值。
-- 配置写坏不会崩：热重载失败时保留上一份有效快照，日志出现 `Content reload failed`。
-
-### 特殊结果的图片轮换
-
-一个结果可以配多张图，抽到时随机挑一张，**挑中的那张会存进记录**，之后每次回看历史都是当时那张。统计汇总（`/me/report`、个人总览导出图）始终用主图，保证可复现。
-
-轮换是**按 `assets` 每个槽位各轮各的**（与 Bot 的 `fox_icon_uris` 一致）：`狐兔` 有 `["狐","兔"]` 两个槽位，各挑一张、画出来仍是两张；`狐兔饭` 只有一个槽位 `["狐&兔"]`，就在它的三张变体里挑一张。这样多图结果不会被挤成一张。
-
-命名规则与 Bot 完全一致，主图在前、变体按下划线后的**数字**升序（`_2` 在 `_10` 前，不是字典序）：
-
-```
-paro_avatars/fox&rabbit/
-├── 狐&兔.png       主图（assets 里写的就是「狐&兔」）
-├── 狐&兔_2.png     变体
-└── 狐&兔_3.jpg     变体
-```
-
-stem 必须能匹配 `^(?P<base>.+?)(?:_(?P<index>\d+))?$` 且 `base` 等于 `assets` 里的值，所以 `狐&兔草稿` / `狐&兔2` / `狐&兔_2_副本` 一概不会被收进来（避免拿临时稿当正式图）。零字节文件同样跳过。
-
-存了某张变体、后来那张图被删了，或者遇到改动前的老记录（没有存图），回看时自动回落主图，不会开天窗。
-
-派生池里这类多图结果收起成一叠照片（右下角 `+N` 标着还有几张），鼠标移上去或点一下摊开看全部：桌面横排，手机放不下一行就退成 2×2。只有一个槽位、每个槽位只有一张图的结果不受影响，例如「狐兔」仍是并排两张。
-
-**上线顺序**：先发布支持新结构的网站镜像（此时旧配置照样能启动、抽取、读历史）→ 再在 Bot 侧换上新 `paro_config.json` → 确认目录 ETag 变了、派生池的概率说明变成「狐兔类 3% / 普通做饭 3%」→ 分别抽普通、做饭、狐兔验证写库与个人统计 → 最后重启网站容器，确认能从新配置直接冷启动。Bot 侧改完配置需要发一次「重载配置 数据」（它把配置缓存在内存里）；网站不用，它按文件签名热重载。
-
-## 公告发布与已读提醒
-
-旧版网站升级前，先按照 [部署说明中的公告迁移步骤](deploy/ECS_DEPLOYMENT.md#已有网站迁移公告) 保存现有公告，再更新代码。本次路径和前端代码调整需要重建容器一次。新版不再读取 `content/announcements.json`；如果误把新公告写进旧文件，按部署说明中的补迁移步骤发布到新位置。
-
-日常使用 FinalShell 编辑服务器的 `/opt/paro-web/data/announcements.json` 并保存即可。文件格式参考 `content/announcements.example.json`；首次发布可复制示例到 `data/announcements.json`，替换示例内容后保存。本地默认路径相同；如果已有 `.env` 将 `PARO_ANNOUNCEMENTS_PATH` 指向旧文件，也要改为 `data/announcements.json`。生产 Compose 固定使用容器内的 `/data/announcements.json`。
-
-- 文件是 JSON 数组，最新公告放在第一项；每次发布新公告使用新的唯一 `id`，例如 `2026-10-15-new-pool`。
-- `published_at`、`title`、`summary` 和至少一条 `details` 必填；`tags` 和 `highlight` 可选。
-- `highlight` 控制公告卡片强调样式；首页提示和导航 NEW 根据第一条公告是否已读显示。
-- 点击首页公告会直接打开详情；从公告列表打开最新一条也会标记已读。只进入列表或查看旧公告不会清除最新提醒。
-- 已读状态保存在当前浏览器，刷新后仍然有效，同一浏览器的其他标签页也会同步。新 `id` 会重新提示；仅修改原公告文字不会重新提示。浏览器禁止本地存储时，已读状态只在当前页面有效。
-- 保存文件后，刷新网页、返回首页或公告页、重新切回网站标签页都会读取新公告。文件不存在或内容为 `[]` 时不显示公告提醒。
-- 文件格式有误时，运行中的服务保留上一份有效公告，修正后自动恢复；建议另存为 `data/announcements.draft.json`，校验后替换正式文件。正式公告和草稿都不会进入 Git 提交。
-
-可以在服务器校验草稿，再替换正式文件发布：
+Docker Compose 直接起，Bot 数据目录以只读方式挂载：
 
 ```bash
-cd /opt/paro-web
-sudo docker compose -f docker-compose.prod.yml exec -T paro-web python -c "from pathlib import Path; from app.services.announcements import AnnouncementService; items = AnnouncementService(Path('/data/announcements.draft.json')).load(); print('OK:', len(items))"
+docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-确认校验输出 `OK` 后执行：
+完整上线步骤（Nginx、HTTPS、公告迁移、权限）见 [`deploy/ECS_DEPLOYMENT.md`](deploy/ECS_DEPLOYMENT.md)。
 
-```bash
-sudo chmod 644 data/announcements.draft.json
-sudo mv data/announcements.draft.json data/announcements.json
-```
+上线前仍需搞定：备案、域名与 HTTPS，以及素材使用权确认。
 
-## 图片导出
+## 数据与素材
 
-“我的彰冬派生记录”页右上角的“个人总览导出”可直接点击，无需选择条目；即使记录列表加载失败，也可独立读取统计并导出。它生成一张完整统计总览，使用 Bot“我的派生”的 680px HTML/CSS 排版：两栏累计统计、紧凑的彰人/冬弥 TOP 3、自动换行的做饭组合胶囊、全部计入做饭的特殊结果累计次数横条。统计包含当前浏览器身份对应的全部历史记录和固定模式记录，不受列表分页、筛选或勾选状态影响；图片不逐条罗列全部历史。
+内容与 Bot **共用同一份**，网站只读不动：
 
-个人总览使用网站暖色底色，顶部横条、标题中的“彰冬”和派生饭组合名称使用橙色 `#ff7722`、蓝色 `#0077dd`，中间榜单及其装饰配色保持柔和的橙色 `#df915c`、蓝色 `#659fc9`；顶部色线左右各占一半，标题为“我的彰冬派生记录”，页脚居中显示“Generated by 寒星”。图片按 2 倍分辨率生成，使用自托管的 Noto Sans SC 可变字体和 html2canvas 1.4.1，首次导出时加载字体与渲染库，等待字体完成加载后生成图片。许可分别随 `app/static/fonts/OFL.txt` 和 `app/static/vendor/html2canvas-LICENSE.txt` 提供。
+- 生产真源 = Bot 的 data 目录（`PARO_BOT_DATA_DIR`）；仓库内 `content/` 只是本地副本，改它对线上无效。
+- `paro_pools.json`（派生条目）、`paro_config.json`（彩蛋概率）放在 `data/paro/`；头像放在
+  `data/images/paro_avatars/{彰人,冬弥,fox&rabbit}/`。
+- 改 JSON 或换头像后**无需重启**：网站按文件签名热重载，图片 URL 自带 `?v=<修改时间>`，访客不用清缓存。
+- ⚠️ Bot 侧两个 JSON 是内存缓存，改名或加减派生需要超级用户发一次「重载配置 数据」；**只换图不用发**。
+- ⚠️ 共用图片一律存 `.png` / `.jpg` / `.jpeg`（Bot 不认 `.webp`）；文件需对 UID 10001 可读（`install -m 644`）。
+- 缺图时前端走文字占位，不会开天窗。
 
-网页、当前结果及选择导出的橙蓝主题仍为 `#ff7722`、`#0077dd`。“选择导出”可导出最多 12 条具体记录，按本地日期合并同一天的结果，每天只显示一次日期，批次之间不画分隔线，保留每次抽取右上角的时间与模式。条目导出不显示记录总数、批次选择提示及卡片序号；狐兔饭保留特殊条目的框体布局，使用与普通做饭一致的角标，右侧说明为“快来做狐兔饭吧！”，不添加底部黄条。导出都在浏览器内生成 PNG，可预览、保存或调用设备分享。
+<details>
+<summary>彩蛋配置怎么写（细节）</summary>
 
-## 素材说明
+`paro_config.json` 的 `egg_categories`：每个大类给 `id` / `rate` / `priority` / `result_type` / `outcomes`。
+当前 `foxrabbit` 3%（priority 100）+ `cooking` 3%（priority 0）。
 
-公开仓库不包含 `content/images/` 下的头像素材。运行时缺少头像会使用文字占位；部署自有素材前请先确认使用权。
+- 一条抽取**只取一次随机数**，按 `priority` 降序累加 `rate` 划互斥区间 —— 不要拆成两次判定。
+- `rate` 是占单次抽取的绝对比例，两类相加就是 6%。
+- `result_type=special` 在 `outcomes` 内按 `weight` 加权选一个；`cooking` 直接产出普通配对做饭。
+- `counts_as_cooking` 只影响统计与展示，不参与概率（只有狐兔饭是 `true`）。
+- `unique_per_draw: true` 表示同一次抽取内该结果最多出现一次，实现是摇之前先剔除已命中的唯一分支。
+- 约束：大类 `id` 唯一、结果 `id` 跨大类全局唯一、`weight` 为正数、`rate` 之和 ≤ 1、`priority` 为整数。
+- 配错了不会崩：热重载失败时保留上一份有效快照，日志打 `Content reload failed`。
 
-### 替换素材
+多图轮换：主图 `狐&兔.png` + 变体 `狐&兔_2.png`（下划线后必须是纯数字）。轮换按 `assets` 每个槽位各轮各的，
+抽中那张**存进记录**、历史回看永远是当时那张；统计汇总与导出固定用主图。
 
-线上运行时，网站读取的内容由两个环境变量决定 —— 容器里默认是 `/bot-data/paro`（条目 JSON）
-和 `/bot-data/images`（头像）。两个路径都落在同一个挂载点 `/bot-data` 下面，
-它挂载的宿主机路径是 `${PARO_BOT_DATA_DIR}`（默认 `/akito_bot/data`），**也就是 Bot 自己的数据目录**。
-Bot 与网站读的是同一份文件，因此**换一张图只需覆盖那一个文件**，两边同时生效，都不需要重启。
+</details>
 
-拆成两个变量只是因为 Bot 的目录里这两类文件不在同一层（JSON 在 `data/paro/`、头像在 `data/images/`），
-并不是把数据拆成两份：指向的仍然是同一个 Bot 目录里的真实文件。Bot 以后再调整目录结构时，
-改这两个变量的指向即可，不需要复制文件或改代码。
+<details>
+<summary>公告与图片导出（细节）</summary>
 
-- 文件名必须与 `paro_pools.json` 里的名字逐字一致；扩展名只用 `.png` / `.jpg` / `.jpeg`
-  （Bot 侧的查找不含 `.webp`，写成 `.webp` 会出现“网页有图、Bot 没有”——**两边共用的图一律存 png/jpg/jpeg**）。
-- 多图轮换的变体（如 `狐&兔_2.png`）同样按上面的规则命名，见上一节。
-- 同名文件覆盖后，网站会自动给图片 URL 带上版本参数（`?v=<文件修改时间>`），
-  访客**无需清缓存或强刷**即可看到新图；未被替换的图片保持原有缓存行为。
-- 覆盖后请确认权限对容器用户（UID `10001`）可读，例如 `sudo install -m 644 新图.png 目标路径.png`。
-- 头像放在 `$PARO_BOT_DATA_DIR/images/paro_avatars/{彰人,冬弥,fox&rabbit}/` 下。
-- `paro_pools.json`、`paro_config.json` 放在 `$PARO_BOT_DATA_DIR/paro/` 下。
-- 不单独设置 `PARO_IMAGES_DIR` 时，程序会退回旧布局 `$PARO_CONTENT_DIR/images/`。
+**公告**：编辑 `data/announcements.json`（JSON 数组，最新放第一项，`id` 每次换新的）。
+必填 `published_at` / `title` / `summary` / 至少一条 `details`。已读状态存在浏览器本地，
+换 `id` 会重新提示。草稿先另存 `announcements.draft.json`，校验通过再替换正式文件。
+
+**导出**：「个人总览导出」出一张完整统计图（不用勾选条目，列表加载失败也能导）；
+「选择导出」最多 12 条具体记录。都在浏览器内生成 PNG，可预览、保存或调用设备分享。
+
+</details>
+
+## 后续规划
+
+- 新增特殊彩蛋：狗狐
+- 新增特殊彩蛋：派生随机变成狐 / 兔形态
+
+## 说明
+
+粉丝向非盈利娱乐功能，与官方无关。公开仓库不含头像素材，部署自有素材前请确认使用权。
