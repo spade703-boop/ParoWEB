@@ -118,6 +118,8 @@ def criteria() -> CleanupCriteria:
         start="2026-09-24T00:00:00Z",
         end="2026-09-27T00:00:00Z",
         peak_results_per_hour=5,
+        min_total_results=5,
+        min_span_minutes=10,
     )
 
 
@@ -137,6 +139,41 @@ def test_cleanup_plan_only_flags_same_fixed_group_inside_window(tmp_path: Path) 
     assert plan.result_count == 5
 
 
+def test_cleanup_plan_preserves_short_burst_even_when_volume_matches(tmp_path: Path) -> None:
+    database_path = tmp_path / "draws.sqlite3"
+    create_database(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO visitors(id, token_hash, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
+            ("short", "short-hash", "2026-09-26T00:00:00Z", "2026-09-26T00:00:00Z"),
+        )
+        insert_batch(
+            connection,
+            batch_id="short-1",
+            visitor_id="short",
+            fixed_side="akito",
+            fixed_name="短时固定彰人",
+            created_at="2026-09-26T02:00:00Z",
+            result_count=3,
+        )
+        insert_batch(
+            connection,
+            batch_id="short-2",
+            visitor_id="short",
+            fixed_side="akito",
+            fixed_name="短时固定彰人",
+            created_at="2026-09-26T02:02:00Z",
+            result_count=2,
+        )
+        connection.commit()
+
+    with connect(database_path, read_only=True) as connection:
+        plan = build_cleanup_plan(connection, criteria())
+
+    assert {group.visitor_id for group in plan.groups} == {"flagged"}
+    assert {batch.id for batch in plan.batches} == {"flagged-1", "flagged-2"}
+
+
 def test_preview_displays_selected_name_time_range_and_counts(tmp_path: Path, capsys) -> None:
     database_path = tmp_path / "draws.sqlite3"
     create_database(database_path)
@@ -149,7 +186,7 @@ def test_preview_displays_selected_name_time_range_and_counts(tmp_path: Path, ca
     assert "按北京时间日期汇总：2026-09-26：5 条" in output
     assert "固定选择：彰人方 · 固定彰人" in output
     assert "记录时间（北京时间）：2026-09-26 09:10:00 ～ 2026-09-26 09:20:00" in output
-    assert "抽取结果：5 条；抽取批次：2 次；单个 UTC 整点小时峰值：5 条" in output
+    assert "抽取结果：5 条；抽取批次：2 次；首尾跨度：10 分钟；单个 UTC 整点小时峰值：5 条" in output
 
 
 def test_apply_cleanup_backs_up_audits_and_preserves_cookie_mapping(tmp_path: Path) -> None:

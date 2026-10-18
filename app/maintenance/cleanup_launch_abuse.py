@@ -15,6 +15,8 @@ import sys
 DEFAULT_START = "2026-09-24T00:00:00Z"
 DEFAULT_END = "2026-09-27T00:00:00Z"
 DEFAULT_PEAK_RESULTS_PER_HOUR = 300
+DEFAULT_MIN_TOTAL_RESULTS = 800
+DEFAULT_MIN_SPAN_MINUTES = 60
 CONFIRMATION = "DELETE_FLAGGED_BATCHES"
 CHINA_TZ = timezone(timedelta(hours=8))
 SIDE_LABELS = {"akito": "彰人方", "toya": "冬弥方"}
@@ -25,6 +27,8 @@ class CleanupCriteria:
     start: str
     end: str
     peak_results_per_hour: int
+    min_total_results: int
+    min_span_minutes: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +74,9 @@ WITH hourly AS (
            b.fixed_side,
            b.fixed_name,
            substr(b.created_at, 1, 13) AS utc_hour,
-           COUNT(r.id) AS result_count
+           COUNT(r.id) AS result_count,
+           MIN(b.created_at) AS first_created_at,
+           MAX(b.created_at) AS last_created_at
     FROM draw_batches b
     JOIN draw_results r ON r.batch_id = b.id
     WHERE b.fixed_side <> 'none'
@@ -83,10 +89,14 @@ flagged AS (
            fixed_side,
            fixed_name,
            SUM(result_count) AS result_count,
-           MAX(result_count) AS peak_results_per_hour
+           MAX(result_count) AS peak_results_per_hour,
+           MIN(first_created_at) AS first_created_at,
+           MAX(last_created_at) AS last_created_at
     FROM hourly
     GROUP BY visitor_id, fixed_side, fixed_name
     HAVING MAX(result_count) >= ?
+       AND SUM(result_count) >= ?
+       AND unixepoch(MAX(last_created_at)) - unixepoch(MIN(first_created_at)) >= ? * 60
 )
 """
 
@@ -109,6 +119,10 @@ def china_timestamp(raw: str) -> str:
     return parse_timestamp(raw).astimezone(CHINA_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def span_minutes(start: str, end: str) -> int:
+    return round((parse_timestamp(end) - parse_timestamp(start)).total_seconds() / 60)
+
+
 def results_by_china_date(plan: CleanupPlan) -> dict[str, int]:
     totals: Counter[str] = Counter()
     for batch in plan.batches:
@@ -122,6 +136,10 @@ def validate_criteria(criteria: CleanupCriteria) -> None:
         raise ValueError("开始时间必须早于结束时间")
     if criteria.peak_results_per_hour < 1:
         raise ValueError("每小时结果阈值必须大于 0")
+    if criteria.min_total_results < 1:
+        raise ValueError("总结果阈值必须大于 0")
+    if criteria.min_span_minutes < 0:
+        raise ValueError("时间跨度阈值不能小于 0")
 
 
 def connect(database_path: Path, *, read_only: bool) -> sqlite3.Connection:
@@ -138,7 +156,13 @@ def connect(database_path: Path, *, read_only: bool) -> sqlite3.Connection:
 
 def build_cleanup_plan(connection: sqlite3.Connection, criteria: CleanupCriteria) -> CleanupPlan:
     validate_criteria(criteria)
-    parameters = (criteria.start, criteria.end, criteria.peak_results_per_hour)
+    parameters = (
+        criteria.start,
+        criteria.end,
+        criteria.peak_results_per_hour,
+        criteria.min_total_results,
+        criteria.min_span_minutes,
+    )
     group_rows = connection.execute(
         FLAGGED_CTE
         + """
@@ -148,8 +172,8 @@ def build_cleanup_plan(connection: sqlite3.Connection, criteria: CleanupCriteria
                f.result_count,
                f.peak_results_per_hour,
                COUNT(DISTINCT b.id) AS batch_count,
-               MIN(b.created_at) AS first_created_at,
-               MAX(b.created_at) AS last_created_at
+               f.first_created_at,
+               f.last_created_at
         FROM flagged f
         JOIN draw_batches b
           ON b.visitor_id = f.visitor_id
@@ -158,7 +182,8 @@ def build_cleanup_plan(connection: sqlite3.Connection, criteria: CleanupCriteria
         WHERE b.created_at >= ?
           AND b.created_at < ?
         GROUP BY f.visitor_id, f.fixed_side, f.fixed_name,
-                 f.result_count, f.peak_results_per_hour
+                 f.result_count, f.peak_results_per_hour,
+                 f.first_created_at, f.last_created_at
         ORDER BY f.result_count DESC, f.visitor_id, f.fixed_side, f.fixed_name
         """,
         parameters + (criteria.start, criteria.end),
@@ -320,7 +345,9 @@ def print_plan(plan: CleanupPlan, database_path: Path) -> None:
     print(f"时间范围：[{plan.criteria.start}, {plan.criteria.end})")
     print(
         "规则：同一匿名访客 + 固定方 + 固定名称，"
-        f"任一 UTC 整点小时达到 {plan.criteria.peak_results_per_hour} 条结果"
+        f"任一 UTC 整点小时达到 {plan.criteria.peak_results_per_hour} 条结果，"
+        f"总量达到 {plan.criteria.min_total_results} 条，"
+        f"首尾跨度达到 {plan.criteria.min_span_minutes} 分钟"
     )
     print(
         f"命中：{plan.visitor_count} 个访客，{len(plan.groups)} 个组合，"
@@ -341,6 +368,7 @@ def print_plan(plan: CleanupPlan, database_path: Path) -> None:
         )
         print(
             f"    抽取结果：{group.result_count} 条；抽取批次：{group.batch_count} 次；"
+            f"首尾跨度：{span_minutes(group.first_created_at, group.last_created_at)} 分钟；"
             f"单个 UTC 整点小时峰值：{group.peak_results_per_hour} 条"
         )
 
@@ -359,6 +387,18 @@ def parser() -> argparse.ArgumentParser:
         default=DEFAULT_PEAK_RESULTS_PER_HOUR,
         help=f"同一固定组合单个 UTC 小时的结果阈值，默认 {DEFAULT_PEAK_RESULTS_PER_HOUR}",
     )
+    command.add_argument(
+        "--min-total-results",
+        type=int,
+        default=DEFAULT_MIN_TOTAL_RESULTS,
+        help=f"同一固定组合的总结果阈值，默认 {DEFAULT_MIN_TOTAL_RESULTS}",
+    )
+    command.add_argument(
+        "--min-span-minutes",
+        type=int,
+        default=DEFAULT_MIN_SPAN_MINUTES,
+        help=f"同一固定组合首条到末条的跨度阈值，默认 {DEFAULT_MIN_SPAN_MINUTES} 分钟",
+    )
     command.add_argument("--apply", action="store_true", help="备份后执行删除；不传时仅预览")
     command.add_argument("--confirm", help=f"执行时必须同时传入 {CONFIRMATION}")
     command.add_argument("--backup", type=Path, help="自定义完整 SQLite 备份路径")
@@ -374,6 +414,8 @@ def main(argv: list[str] | None = None) -> int:
             start=normalize_timestamp(arguments.start),
             end=normalize_timestamp(arguments.end),
             peak_results_per_hour=arguments.peak_results_per_hour,
+            min_total_results=arguments.min_total_results,
+            min_span_minutes=arguments.min_span_minutes,
         )
         database_path = arguments.database.resolve()
         with connect(database_path, read_only=True) as connection:
