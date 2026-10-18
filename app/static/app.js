@@ -71,6 +71,9 @@ const state = {
   communityStats: null,
   communityStatsScope: "community",
   communityStatsLoading: false,
+  // 服务端算好这份数据的时间戳（不是响应到达浏览器的时间）
+  communityStatsAt: null,
+  currentView: null,
   recentLoading: false,
   sessionPromise: null,
   recordSelectionMode: false,
@@ -123,6 +126,8 @@ const el = {
   communityRandomTotal: $("#community-random-draws"),
   communityRandomLabel: $("#community-random-label"),
   communityStatsNote: $("#community-stats-note"),
+  communityUpdated: $("#community-updated"),
+  resultArea: $('[data-view="draw"] .result-area'),
   statsScopeButtons: $$('[data-stats-scope]'),
   communityAkitoList: $("#community-akito-list"),
   communityToyaList: $("#community-toya-list"),
@@ -164,6 +169,10 @@ const el = {
 };
 
 const mqMobilePool = window.matchMedia("(max-width: 899px)");
+const mqReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+// 每个视图各自滚到哪了：切走时记下，回来时还原（后退键才用得上）
+const viewScrollPositions = new Map();
 
 /* ---------- 基础工具 ---------- */
 
@@ -246,6 +255,10 @@ function currentView() {
 
 function route() {
   const view = currentView();
+  // 换 DOM 之前先记下当前视图滚到哪了：视图一切页面高度就变，那时候再读就晚了
+  if (state.currentView && state.currentView !== view) {
+    viewScrollPositions.set(state.currentView, window.scrollY);
+  }
   el.views.forEach((node) => node.classList.toggle("hidden", node.dataset.view !== view));
   el.navItems.forEach((node) => {
     const on = node.dataset.nav === view;
@@ -271,8 +284,28 @@ function route() {
   if (state.ready && (view === "draw" || view === "updates")) {
     refreshAnnouncements();
   }
-  window.scrollTo({ top: 0, behavior: "auto" });
+  // 后退/前进回旧视图时还原位置；主动点导航进来的位置已被 navigateTo 清掉，落回 0
+  window.scrollTo({ top: viewScrollPositions.get(view) || 0, behavior: "auto" });
+  state.currentView = view;
 }
+
+function motionBehavior() {
+  return mqReducedMotion.matches ? "auto" : "smooth";
+}
+
+// 主动点导航 = 从头看起；浏览器后退键走的是 hashchange，不经过这里，位置得以保留
+function navigateTo(view) {
+  viewScrollPositions.delete(view);
+  if (window.location.hash === `#${view}`) route();
+  else window.location.hash = view;
+}
+
+// 手机是单列，结果区压在控件下面，抽完不滚过去等于没抽
+function revealResultsOnMobile() {
+  if (!mqMobilePool.matches || !el.resultArea) return;
+  el.resultArea.scrollIntoView({ behavior: motionBehavior(), block: "start" });
+}
+
 
 /* ---------- 结果行卡 ---------- */
 
@@ -637,6 +670,7 @@ async function submitDraw(event) {
     renderResults(data.results);
     el.resultTime.textContent = stampText(data.created_at);
     el.exportCurrentButton.classList.remove("hidden");
+    revealResultsOnMobile();
     updateSummary(data.summary);
     state.profileStale = true;
     state.communityStats = null;
@@ -942,7 +976,11 @@ function renderPager(pages, current) {
   const go = (page) => {
     state.poolPage = page;
     renderPool();
-    el.poolPager.scrollIntoView({ block: "nearest" });
+    // 翻完页回到列表开头。原来滚的是分页器自己（block:"nearest"），而它本来就在
+    // 屏幕里，nearest 判定"不用动"，点了等于没滚
+    if (el.poolSections) {
+      el.poolSections.scrollIntoView({ behavior: motionBehavior(), block: "start" });
+    }
   };
   const nodes = [
     pagerButton(SVG.chevronLeft, {
@@ -1169,6 +1207,15 @@ function renderCommunityRankList(list, items, kind) {
   list.replaceChildren(...items.map((item, index) => communityRankRow(item, index + 1, kind)));
 }
 
+// 显示的是服务端算好这份数据的时刻。刷新后时间没变 = 这段时间没人抽卡，
+// 数据本来就一个字没动；时间跳了 = 有人抽过卡，缓存被重新算过。
+function paintStatsUpdated() {
+  if (!el.communityUpdated) return;
+  el.communityUpdated.textContent = state.communityStatsAt
+    ? `更新于 ${clockText(state.communityStatsAt)} · 刷新页面会重新抓取`
+    : "";
+}
+
 function renderCommunityStats(message = null) {
   if (!el.communityTotal) return;
   const personal = state.communityStatsScope === "personal";
@@ -1178,6 +1225,7 @@ function renderCommunityStats(message = null) {
     ? "我的 TOP 10 包含固定模式记录；双方随机数仅作为口径对照。"
     : "全站排行榜仅统计双方随机抽取；固定模式记录仍会计入总数。";
   el.communityTotal.parentElement?.setAttribute("aria-label", personal ? "我的总抽取数" : "全站总抽取数");
+  paintStatsUpdated();
   if (message || !state.communityStats) {
     el.communityTotal.textContent = "—";
     el.communityRandomTotal.textContent = "—";
@@ -1200,10 +1248,15 @@ async function loadCommunityStats() {
   renderCommunityStats();
   const path = state.communityStatsScope === "personal" ? "/api/v1/me/stats" : "/api/v1/community-stats";
   try {
-    state.communityStats = await api(path);
+    const data = await api(path);
+    state.communityStats = data;
+    // 用服务端给的时间戳，别用本地时间：命中缓存时本地时间永远是"刚刚"，
+    // 看着像刚算的，其实是别人刚才算完、我们直接拿来用的
+    state.communityStatsAt = data.generated_at || new Date().toISOString();
     renderCommunityStats();
   } catch (error) {
     state.communityStats = null;
+    state.communityStatsAt = null;
     renderCommunityStats(error.message || "数据暂时无法加载，请稍后重试。");
   } finally {
     state.communityStatsLoading = false;
@@ -1707,11 +1760,11 @@ function bindEvents() {
   });
 
   el.navItems.forEach((node) => {
-    node.addEventListener("click", () => {
-      const view = node.dataset.nav;
-      if (window.location.hash === `#${view}`) route();
-      else window.location.hash = view;
-    });
+    node.addEventListener("click", () => navigateTo(node.dataset.nav));
+  });
+  $(".brand")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    navigateTo("draw");
   });
   el.statsScopeButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -1719,6 +1772,7 @@ function bindEvents() {
       if (!scope || scope === state.communityStatsScope) return;
       state.communityStatsScope = scope;
       state.communityStats = null;
+      state.communityStatsAt = null;
       el.statsScopeButtons.forEach((item) => {
         const active = item.dataset.statsScope === scope;
         item.classList.toggle("is-active", active);
