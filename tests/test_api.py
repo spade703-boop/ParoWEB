@@ -257,6 +257,61 @@ async def test_community_stats_reuses_one_computation(client: httpx.AsyncClient)
     assert third["generated_at"] > first["generated_at"]
 
 
+async def test_cooking_pair_top_ignores_fixed_and_foxbun(settings: Settings) -> None:
+    """做饭组合榜只算双方随机 + 普通做饭；单人纪录则按含狐兔饭口径取最大值。"""
+    repository = SQLiteRepository(settings.database_path)
+    await repository.initialize()
+    stamp = "2026-10-18T00:00:00Z"
+
+    async with repository.connect() as connection:
+        await connection.execute("BEGIN IMMEDIATE")
+        for visitor_id in ("v1", "v2"):
+            await connection.execute(
+                "INSERT INTO visitors(id, token_hash, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
+                (visitor_id, f"hash-{visitor_id}", stamp, stamp),
+            )
+
+        def batch(batch_id: str, visitor_id: str, fixed_side: str) -> list:
+            return [
+                "INSERT INTO draw_batches(id, visitor_id, requested_count, fixed_side, fixed_name, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (batch_id, visitor_id, 3, fixed_side, None, stamp),
+            ]
+
+        sql, params = batch("b1", "v1", "none")
+        await connection.execute(sql, params)
+        sql, params = batch("b2", "v2", "akito")
+        await connection.execute(sql, params)
+
+        results = [
+            # 随机模式下的两次普通做饭：这一对应当成为榜首
+            ("r1", "b1", 1, "黑百合", "王子冬", 1, None, None, 1),
+            ("r2", "b1", 2, "黑百合", "王子冬", 1, None, None, 1),
+            # 狐兔饭：counts_as_cooking 但 is_cooking=0，不进组合榜，只进单人纪录
+            ("r3", "b1", 3, None, None, 0, "foxbun", None, 1),
+            # 固定模式下的普通做饭：不进全站组合榜（全站榜只统计双方随机）
+            ("r4", "b2", 1, "黑百合", "堵车冬", 1, None, None, 1),
+        ]
+        for row in results:
+            await connection.execute(
+                """
+                INSERT INTO draw_results(
+                    id, batch_id, position, akito_name, toya_name, is_cooking,
+                    special_type, special_asset, counts_as_cooking, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (*row, stamp),
+            )
+        await connection.commit()
+
+    stats = await repository.community_stats(limit=10)
+    assert stats["cooking_pair_top"] == [
+        {"akito_name": "黑百合", "toya_name": "王子冬", "count": 2}
+    ]
+    # v1 = 2 次普通做饭 + 1 次狐兔饭 = 3；v2 = 1
+    assert stats["record_holders"]["cooking"] == 3
+    assert stats["record_holders"]["specials"] == {"foxbun": 1}
+
+
 async def test_community_stats_are_aggregated(client: httpx.AsyncClient) -> None:
     empty = await client.get("/api/v1/community-stats")
     assert empty.status_code == 200
@@ -270,6 +325,8 @@ async def test_community_stats_are_aggregated(client: httpx.AsyncClient) -> None
         "akito_top": [],
         "toya_top": [],
         "pair_top": [],
+        "cooking_pair_top": [],
+        "record_holders": {"cooking": 0, "specials": {}},
     }
     assert generated_at
 

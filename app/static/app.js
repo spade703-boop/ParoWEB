@@ -126,7 +126,12 @@ const el = {
   communityRandomTotal: $("#community-random-draws"),
   communityRandomLabel: $("#community-random-label"),
   communityStatsNote: $("#community-stats-note"),
+  communityStatsNoteRecord: $("#community-stats-note-record"),
   communityUpdated: $("#community-updated"),
+  recordGrid: $("#record-grid"),
+  recordCooking: $("#record-cooking"),
+  recordFoxrabbit: $("#record-foxrabbit"),
+  communityCookPairList: $("#community-cook-pair-list"),
   resultArea: $('[data-view="draw"] .result-area'),
   statsScopeButtons: $$('[data-stats-scope]'),
   communityAkitoList: $("#community-akito-list"),
@@ -1212,8 +1217,31 @@ function renderCommunityRankList(list, items, kind) {
 function paintStatsUpdated() {
   if (!el.communityUpdated) return;
   el.communityUpdated.textContent = state.communityStatsAt
-    ? `更新于 ${clockText(state.communityStatsAt)} · 刷新页面会重新抓取`
+    ? `更新于 ${clockText(state.communityStatsAt)}`
     : "";
+}
+
+// 纪录卡只有全站口径（个人侧"我最常抽到做饭"就是自己的总数，没有"最常"可言），
+// 接口不返回 record_holders 时整组隐藏
+function paintRecordValue(row, value) {
+  if (!row) return;
+  row.classList.toggle("is-empty", !value);
+  const strong = row.querySelector("strong");
+  if (strong) {
+    strong.textContent = value ? Number(value).toLocaleString("zh-CN") : "还没有";
+  }
+}
+
+function renderRecordHolders(stats) {
+  const holders = stats?.record_holders;
+  if (!el.recordGrid) return;
+  if (!holders) {
+    el.recordGrid.classList.add("hidden");
+    return;
+  }
+  el.recordGrid.classList.remove("hidden");
+  paintRecordValue(el.recordCooking, holders.cooking);
+  paintRecordValue(el.recordFoxrabbit, holders.specials?.foxrabbit);
 }
 
 function renderCommunityStats(message = null) {
@@ -1224,15 +1252,19 @@ function renderCommunityStats(message = null) {
   el.communityStatsNote.textContent = personal
     ? "我的 TOP 10 包含固定模式记录；双方随机数仅作为口径对照。"
     : "全站排行榜仅统计双方随机抽取；固定模式记录仍会计入总数。";
+  // 单人纪录只有全站口径，切到「我的数据」时这句话没有对应内容，整句收起
+  el.communityStatsNoteRecord?.classList.toggle("hidden", personal);
   el.communityTotal.parentElement?.setAttribute("aria-label", personal ? "我的总抽取数" : "全站总抽取数");
   paintStatsUpdated();
   if (message || !state.communityStats) {
     el.communityTotal.textContent = "—";
     el.communityRandomTotal.textContent = "—";
+    el.recordGrid?.classList.add("hidden");
     const error = errorBlock(message || "正在读取数据…");
     el.communityAkitoList.replaceChildren(error.cloneNode(true));
     el.communityToyaList.replaceChildren(error.cloneNode(true));
-    el.communityPairList.replaceChildren(error);
+    el.communityPairList.replaceChildren(error.cloneNode(true));
+    el.communityCookPairList.replaceChildren(error);
     return;
   }
   el.communityTotal.textContent = Number(state.communityStats.total_draws || 0).toLocaleString("zh-CN");
@@ -1240,6 +1272,12 @@ function renderCommunityStats(message = null) {
   renderCommunityRankList(el.communityAkitoList, state.communityStats.akito_top, "akito");
   renderCommunityRankList(el.communityToyaList, state.communityStats.toya_top, "toya");
   renderCommunityRankList(el.communityPairList, state.communityStats.pair_top, "pair");
+  renderCommunityRankList(
+    el.communityCookPairList,
+    state.communityStats.cooking_pair_top,
+    "pair",
+  );
+  renderRecordHolders(state.communityStats);
 }
 
 async function loadCommunityStats() {

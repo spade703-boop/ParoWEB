@@ -319,21 +319,36 @@ class SQLiteRepository:
             for row in normal_rows
             if row["counts_as_cooking"] and row["akito_name"] and row["toya_name"]
         )
+        # 「我最常被抽到做饭的组合」用 is_cooking：不含狐兔饭，跟上面含狐兔饭的
+        # cooking_pairs 是两个口径。个人侧统计全部记录（固定模式也算），
+        # 与既有的 pair_top 保持一致 —— 全站榜只算双方随机，两边有意区分开。
+        cooking_pair_hits = Counter(
+            (row["akito_name"], row["toya_name"])
+            for row in normal_rows
+            if row["is_cooking"] and row["akito_name"] and row["toya_name"]
+        )
         rank_order: dict[tuple[str, str], int] = {}
         akito_order: dict[str, int] = {}
         toya_order: dict[str, int] = {}
+        cooking_rank_order: dict[tuple[str, str], int] = {}
         for index, row in enumerate(rows):
             if row["special_type"]:
                 continue
             akito_order.setdefault(row["akito_name"], index)
             toya_order.setdefault(row["toya_name"], index)
             rank_order.setdefault((row["akito_name"], row["toya_name"]), index)
+            if row["is_cooking"]:
+                cooking_rank_order.setdefault((row["akito_name"], row["toya_name"]), index)
 
         def top_names(counter: Counter, order: dict, limit: int = 3) -> list[dict]:
             values = sorted(counter.items(), key=lambda item: (-item[1], order.get(item[0], 10**9), str(item[0])))
             return [{"name": name, "count": count} for name, count in values[:limit]]
 
         pair_values = sorted(pair_hits.items(), key=lambda item: (-item[1], rank_order.get(item[0], 10**9), item[0]))
+        cooking_pair_values = sorted(
+            cooking_pair_hits.items(),
+            key=lambda item: (-item[1], cooking_rank_order.get(item[0], 10**9), item[0]),
+        )
         return {
             "draw_count": draw_count,
             "random_draw_count": random_draw_count,
@@ -348,6 +363,10 @@ class SQLiteRepository:
             "cooking_pairs": [
                 {"akito_name": pair[0], "toya_name": pair[1], "count": count}
                 for pair, count in cooking_pairs.most_common()
+            ],
+            "cooking_pair_top": [
+                {"akito_name": pair[0], "toya_name": pair[1], "count": count}
+                for pair, count in cooking_pair_values[:ranking_limit]
             ],
             "recent": [
                 _with_decoded_asset(row)
@@ -421,6 +440,53 @@ class SQLiteRepository:
                     (limit,),
                 )
             ).fetchall()
+            # 「最常被抽到做饭的组合」：口径是双方随机 + 普通做饭（is_cooking），
+            # 不含狐兔饭 —— 那张卡跟「最常出现的组合」并排放，两张榜差就差在这个条件上
+            cooking_pair_rows = await (
+                await connection.execute(
+                    """
+                    SELECT r.akito_name, r.toya_name, COUNT(*) AS count
+                    FROM draw_results r
+                    JOIN draw_batches b ON b.id = r.batch_id
+                    WHERE b.fixed_side = 'none'
+                      AND r.is_cooking = 1
+                      AND r.akito_name IS NOT NULL
+                      AND r.toya_name IS NOT NULL
+                    GROUP BY r.akito_name, r.toya_name
+                    ORDER BY count DESC, r.akito_name COLLATE NOCASE ASC, r.toya_name COLLATE NOCASE ASC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            ).fetchall()
+            # 单人纪录：只取最大值，不暴露是谁（访客本来就是匿名 cookie）
+            cooking_record_row = await (
+                await connection.execute(
+                    """
+                    SELECT MAX(hits) AS top FROM (
+                        SELECT b.visitor_id AS visitor_id, COUNT(*) AS hits
+                        FROM draw_results r
+                        JOIN draw_batches b ON b.id = r.batch_id
+                        WHERE r.counts_as_cooking = 1
+                        GROUP BY b.visitor_id
+                    )
+                    """
+                )
+            ).fetchone()
+            special_record_rows = await (
+                await connection.execute(
+                    """
+                    SELECT special_type, MAX(hits) AS top FROM (
+                        SELECT b.visitor_id AS visitor_id, r.special_type AS special_type, COUNT(*) AS hits
+                        FROM draw_results r
+                        JOIN draw_batches b ON b.id = r.batch_id
+                        WHERE r.special_type IS NOT NULL
+                        GROUP BY b.visitor_id, r.special_type
+                    )
+                    GROUP BY special_type
+                    """
+                )
+            ).fetchall()
 
         return {
             "total_draws": int(total_row["total_draws"] if total_row else 0),
@@ -428,6 +494,14 @@ class SQLiteRepository:
             "akito_top": [dict(row) for row in akito_rows],
             "toya_top": [dict(row) for row in toya_rows],
             "pair_top": [dict(row) for row in pair_rows],
+            "cooking_pair_top": [dict(row) for row in cooking_pair_rows],
+            # 单人纪录只给数字，不给身份
+            "record_holders": {
+                "cooking": int(cooking_record_row["top"] or 0) if cooking_record_row else 0,
+                "specials": {
+                    row["special_type"]: int(row["top"] or 0) for row in special_record_rows
+                },
+            },
         }
 
     async def clear_history(self, visitor_id: str) -> None:

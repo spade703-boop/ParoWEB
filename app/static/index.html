@@ -214,7 +214,8 @@
       <div class="hero stats-hero">
         <p class="eyebrow">COMMUNITY SNAPSHOT</p>
         <h1 class="hero__title">趣味派生数据</h1>
-        <p class="hero__sub">来自全站匿名抽取记录的实时汇总。</p>
+        <p class="community-stats-note" id="community-stats-note">全站排行榜仅统计双方随机抽取；固定模式记录仍会计入总数。</p>
+        <p class="community-stats-note" id="community-stats-note-record">单人纪录取单个访客的最高次数，其中做饭含狐兔饭。</p>
       </div>
 
       <div class="community-total" aria-label="全站总抽取数">
@@ -227,12 +228,23 @@
           <strong id="community-random-draws">—</strong>
         </div>
       </div>
-      <p class="community-stats-note" id="community-stats-note">全站排行榜仅统计双方随机抽取；固定模式记录仍会计入总数。</p>
-      <p class="community-updated" id="community-updated" role="status" aria-live="polite"></p>
-
-      <div class="stats-switch" role="tablist" aria-label="数据范围">
-        <button type="button" class="stats-switch__button is-active" data-stats-scope="community" role="tab" aria-selected="true">全站汇总</button>
-        <button type="button" class="stats-switch__button" data-stats-scope="personal" role="tab" aria-selected="false">我的数据</button>
+      <!-- 单人纪录：样式与上方「全站总抽取数」一致，只显示次数，不显示是谁 -->
+      <div class="community-total community-total--record" id="record-grid" aria-label="单人抽取纪录">
+        <div class="community-total__item">
+          <span class="community-total__label">最常抽到做饭的人</span>
+          <span class="community-total__value" id="record-cooking"><span class="community-total__lead">抽到了</span><strong>—</strong><small>次</small></span>
+        </div>
+        <div class="community-total__item">
+          <span class="community-total__label">最常抽到狐兔的人</span>
+          <span class="community-total__value" id="record-foxrabbit"><span class="community-total__lead">抽到了</span><strong>—</strong><small>次</small></span>
+        </div>
+      </div>
+      <div class="stats-switch-row">
+        <div class="stats-switch" role="tablist" aria-label="数据范围">
+          <button type="button" class="stats-switch__button is-active" data-stats-scope="community" role="tab" aria-selected="true">全站汇总</button>
+          <button type="button" class="stats-switch__button" data-stats-scope="personal" role="tab" aria-selected="false">我的数据</button>
+        </div>
+        <p class="community-updated" id="community-updated" role="status" aria-live="polite"></p>
       </div>
 
       <div class="community-rank-grid">
@@ -256,6 +268,13 @@
             <h2 id="community-pair-title">最常出现的组合</h2>
           </div>
           <ol class="community-rank-list" id="community-pair-list"></ol>
+        </section>
+        <section class="community-rank-card community-rank-card--cook-pair" aria-labelledby="community-cook-pair-title">
+          <div class="community-rank-card__head">
+            <p class="eyebrow">COOKING PAIR TOP 10</p>
+            <h2 id="community-cook-pair-title">最常被抽到做饭的组合</h2>
+          </div>
+          <ol class="community-rank-list" id="community-cook-pair-list"></ol>
         </section>
       </div>
     </section>

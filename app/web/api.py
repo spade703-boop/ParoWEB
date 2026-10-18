@@ -113,6 +113,14 @@ def _serialize_profile(profile: dict, snapshot) -> dict:
             }
             for item in profile["cooking_pairs"]
         ],
+        "cooking_pair_top": [
+            {
+                **item,
+                "akito_avatar_url": snapshot.avatars["akito"].get(item["akito_name"]),
+                "toya_avatar_url": snapshot.avatars["toya"].get(item["toya_name"]),
+            }
+            for item in profile["cooking_pair_top"]
+        ],
         "recent": recent,
         "recent_total": profile["recent_total"],
         "recent_offset": profile["recent_offset"],
@@ -216,6 +224,16 @@ async def get_community_stats(request: Request, response: Response) -> dict:
             }
             for item in stats["pair_top"]
         ],
+        "cooking_pair_top": [
+            {
+                **item,
+                "akito_avatar_url": snapshot.avatars["akito"].get(item["akito_name"]),
+                "toya_avatar_url": snapshot.avatars["toya"].get(item["toya_name"]),
+            }
+            for item in stats["cooking_pair_top"]
+        ],
+        # 单人纪录只有全站口径；个人侧不返回，"我的数据"下那三张卡自动隐藏
+        "record_holders": stats["record_holders"],
     }
 
 
@@ -309,6 +327,14 @@ async def get_personal_stats(request: Request, response: Response) -> dict:
                 "toya_avatar_url": snapshot.avatars["toya"].get(item["toya_name"]),
             }
             for item in profile["pair_top"]
+        ],
+        "cooking_pair_top": [
+            {
+                **item,
+                "akito_avatar_url": snapshot.avatars["akito"].get(item["akito_name"]),
+                "toya_avatar_url": snapshot.avatars["toya"].get(item["toya_name"]),
+            }
+            for item in profile["cooking_pair_top"]
         ],
     }
 
