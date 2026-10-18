@@ -174,6 +174,7 @@ const el = {
 };
 
 const mqMobilePool = window.matchMedia("(max-width: 899px)");
+const mqStackedDraw = window.matchMedia("(max-width: 1199px)");
 const mqReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 // 每个视图各自滚到哪了：切走时记下，回来时还原（后退键才用得上）
@@ -305,9 +306,9 @@ function navigateTo(view) {
   else window.location.hash = view;
 }
 
-// 手机是单列，结果区压在控件下面，抽完不滚过去等于没抽
-function revealResultsOnMobile() {
-  if (!mqMobilePool.matches || !el.resultArea) return;
+// 单列布局里结果区压在控件下面，抽完后把本次结果带进视口
+function revealResultsWhenStacked() {
+  if (!mqStackedDraw.matches || !el.resultArea) return;
   el.resultArea.scrollIntoView({ behavior: motionBehavior(), block: "start" });
 }
 
@@ -675,7 +676,7 @@ async function submitDraw(event) {
     renderResults(data.results);
     el.resultTime.textContent = stampText(data.created_at);
     el.exportCurrentButton.classList.remove("hidden");
-    revealResultsOnMobile();
+    revealResultsWhenStacked();
     updateSummary(data.summary);
     state.profileStale = true;
     state.communityStats = null;

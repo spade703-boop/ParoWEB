@@ -38,7 +38,7 @@ python -m uvicorn app.main:app --reload
 
 ```powershell
 python -m pytest
-node --test tests/announcements.test.cjs
+node --test
 ```
 
 ⚠️ 本地调试三件事：端口固定 8000（来源白名单只认它）；连抽前设 `PARO_DRAW_COOLDOWN_SECONDS=0`；
