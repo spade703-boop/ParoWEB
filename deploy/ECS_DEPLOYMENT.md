@@ -59,11 +59,13 @@ sudo chmod 640 data/announcements.json
 
 维护命令默认只读，口径为：`2026-09-24T00:00:00Z` 至 `2026-09-27T00:00:00Z` 内，同一匿名访客固定同一方、同一名称，任一 UTC 整点小时达到 300 条结果。它只处理固定模式，不会处理双方随机记录。
 
-先在运行中的容器里预览，不会修改数据库：
+先拉取代码并构建新镜像，但暂时不要替换运行中的网站容器。然后用新镜像启动一次性容器预览；预览只读，不会修改数据库，网站可以继续运行：
 
 ```bash
 cd /opt/paro-web
-sudo docker compose -f docker-compose.prod.yml exec -T paro-web \
+sudo git pull --ff-only origin master
+sudo docker compose -f docker-compose.prod.yml build paro-web
+sudo docker compose -f docker-compose.prod.yml run --rm --no-deps paro-web \
   python -m app.maintenance.cleanup_launch_abuse
 ```
 
