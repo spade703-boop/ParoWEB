@@ -144,9 +144,10 @@ docker compose -f docker-compose.prod.yml up -d --build
 <details>
 <summary>公告与图片导出（细节）</summary>
 
-**公告**：编辑 `data/announcements.json`（JSON 数组，最新放第一项，`id` 每次换新的）。
+**公告**：编辑 `data/announcements.json`（JSON 数组，最新放第一项，新公告使用新的唯一 `id`）。
 必填 `published_at` / `title` / `summary` / 至少一条 `details`。已读状态存在浏览器本地，
-换 `id` 会重新提示。草稿先另存 `announcements.draft.json`，校验通过再替换正式文件。
+修改最新公告的日期、标题、摘要、详情或标签，以及更换 `id`，都会重新提示。草稿先另存
+`announcements.draft.json`，校验通过再替换正式文件。
 
 **导出**：「个人总览导出」出一张完整统计图（不用勾选条目，列表加载失败也能导）；
 「选择导出」最多 12 条具体记录。都在浏览器内生成 PNG，可预览、保存或调用设备分享。

@@ -7,7 +7,7 @@ const vm = require("node:vm");
 const source = fs.readFileSync(path.join(__dirname, "../app/static/app.js"), "utf8");
 const bootstrapOffset = source.lastIndexOf("\ninitialize().catch(");
 assert.ok(bootstrapOffset > 0);
-const storageKey = "paro:read-announcement-id";
+const storageKey = "paro:read-announcement-version";
 const latest = {
   id: "latest", published_at: "2026-10-15", title: "Latest notice",
   summary: "Summary", details: ["Details"], tags: [],
@@ -67,7 +67,7 @@ function createApp(storage = new Map(), storageBlocked = false) {
   };
   const context = vm.createContext({ document, window });
   vm.runInContext(`${source.slice(0, bootstrapOffset)}
-    globalThis.app = { state, el, bindEvents, route, renderAnnouncements, openAnnouncement, loadAnnouncements };`, context);
+    globalThis.app = { state, el, bindEvents, route, renderAnnouncements, openAnnouncement, loadAnnouncements, announcementVersion };`, context);
   const app = context.app;
   app.state.announcements = [latest, older];
   app.renderAnnouncements();
@@ -85,7 +85,7 @@ test("opening the latest announcement hides both reminders across reloads", () =
   app.openAnnouncement(latest);
   assert.equal(app.el.updateDialog.open, true);
   assertNotice(app, false);
-  assert.equal(app.storage.get(storageKey), latest.id);
+  assert.equal(app.storage.get(storageKey), app.announcementVersion(latest));
   assertNotice(createApp(app.storage), false);
 });
 
@@ -111,14 +111,28 @@ test("visiting the list or opening an older announcement keeps the latest unread
   assertNotice(app, false);
 });
 
-test("a new announcement ID restores reminders; edits to a read ID do not", async () => {
+test("editing any text in the read latest announcement restores reminders", async () => {
+  const edits = [
+    { published_at: "2026-10-16" },
+    { title: "Edited title" },
+    { summary: "Edited summary" },
+    { details: ["Edited details"] },
+    { tags: ["Edited tag"] },
+  ];
+  for (const edit of edits) {
+    const app = createApp();
+    app.openAnnouncement(latest);
+    app.context.fetch = async () => ({
+      ok: true, json: async () => ({ items: [{ ...latest, ...edit }, older] }),
+    });
+    await app.loadAnnouncements();
+    assertNotice(app, true);
+  }
+});
+
+test("a new announcement ID restores reminders", async () => {
   const app = createApp();
   app.openAnnouncement(latest);
-  app.context.fetch = async () => ({
-    ok: true, json: async () => ({ items: [{ ...latest, title: "Edited title" }, older] }),
-  });
-  await app.loadAnnouncements();
-  assertNotice(app, false);
   app.context.fetch = async () => ({
     ok: true, json: async () => ({ items: [{ ...latest, id: "newer" }, latest, older] }),
   });
@@ -147,7 +161,7 @@ test("blocked storage still allows reading and hides reminders for this page", (
 test("read state is synchronized from other tabs and clearing storage", () => {
   const app = createApp();
   app.bindEvents();
-  app.storage.set(storageKey, latest.id);
+  app.storage.set(storageKey, app.announcementVersion(latest));
   app.browserEvents.storage({ key: storageKey });
   assertNotice(app, false);
   app.storage.clear();

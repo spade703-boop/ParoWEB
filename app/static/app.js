@@ -47,7 +47,7 @@ const POOL_PAGE_SIZE = 9;
 const POOL_SECTION_LIMIT = 8;
 const RECORD_EXPORT_LIMIT = 12;
 const RECORD_PAGE_SIZE = 50;
-const READ_ANNOUNCEMENT_KEY = "paro:read-announcement-id";
+const READ_ANNOUNCEMENT_KEY = "paro:read-announcement-version";
 
 const state = {
   ready: false,
@@ -67,7 +67,7 @@ const state = {
   recordFilter: "all",
   announcements: null,
   announcementsLoading: false,
-  readAnnouncementId: loadReadAnnouncementId(),
+  readAnnouncementVersion: loadReadAnnouncementVersion(),
   communityStats: null,
   communityStatsScope: "community",
   communityStatsLoading: false,
@@ -1061,7 +1061,7 @@ function errorBlock(message) {
 
 /* ---------- 更新公告 ---------- */
 
-function loadReadAnnouncementId() {
+function loadReadAnnouncementVersion() {
   try {
     return window.localStorage.getItem(READ_ANNOUNCEMENT_KEY);
   } catch {
@@ -1069,12 +1069,24 @@ function loadReadAnnouncementId() {
   }
 }
 
+function announcementVersion(item) {
+  return JSON.stringify([
+    item.id,
+    item.published_at,
+    item.title,
+    item.summary,
+    item.details || [],
+    item.tags || [],
+  ]);
+}
+
 function markAnnouncementRead(item) {
   if (item.id !== state.announcements?.[0]?.id) return;
-  state.readAnnouncementId = item.id;
+  const version = announcementVersion(item);
+  state.readAnnouncementVersion = version;
   renderHomeAnnouncement();
   try {
-    window.localStorage.setItem(READ_ANNOUNCEMENT_KEY, item.id);
+    window.localStorage.setItem(READ_ANNOUNCEMENT_KEY, version);
   } catch {
     return;
   }
@@ -1110,7 +1122,7 @@ function announcementCard(item) {
 
 function renderHomeAnnouncement() {
   const latest = state.announcements?.[0];
-  const unread = Boolean(latest && latest.id !== state.readAnnouncementId);
+  const unread = Boolean(latest && announcementVersion(latest) !== state.readAnnouncementVersion);
   el.announcementBadges.forEach((node) => node.classList.toggle("hidden", !unread));
   if (!el.homeUpdate) return;
   el.homeUpdate.classList.toggle("hidden", !unread);
@@ -1727,7 +1739,7 @@ function bindEvents() {
   });
   window.addEventListener("storage", (event) => {
     if (event.key !== READ_ANNOUNCEMENT_KEY && event.key !== null) return;
-    state.readAnnouncementId = loadReadAnnouncementId();
+    state.readAnnouncementVersion = loadReadAnnouncementVersion();
     renderHomeAnnouncement();
   });
   document.addEventListener("visibilitychange", () => {
