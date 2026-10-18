@@ -55,6 +55,30 @@ sudo chmod 640 data/announcements.json
 
 这些命令也可用于修复误执行 `chown -R akitoya /opt/paro-web` 后的数据库权限，不修改记录内容。之后直接编辑 `data/announcements.json`；用临时文件替换公告时，保留组 `10001` 的读取权限。
 
+## 上线初期异常记录清理
+
+维护命令默认只读，口径为：`2026-09-24T00:00:00Z` 至 `2026-09-27T00:00:00Z` 内，同一匿名访客固定同一方、同一名称，任一 UTC 整点小时达到 300 条结果。它只处理固定模式，不会处理双方随机记录。
+
+先在运行中的容器里预览，不会修改数据库：
+
+```bash
+cd /opt/paro-web
+sudo docker compose -f docker-compose.prod.yml exec -T paro-web \
+  python -m app.maintenance.cleanup_launch_abuse
+```
+
+预览会按组合展示完整匿名访客 ID、固定方、固定派生名称、北京时间范围、抽取批次数、结果条数和单小时峰值，并按北京时间日期汇总。确认明细无误后，停止网站写入，再用一次性容器执行。命令会先创建完整 SQLite 备份和 JSON 审计清单，之后才在单个事务中删除命中的 `draw_batches`；`draw_results` 由外键级联删除，`visitors` 和 Cookie 映射会保留。
+
+```bash
+sudo docker compose -f docker-compose.prod.yml stop paro-web
+sudo docker compose -f docker-compose.prod.yml run --rm --no-deps paro-web \
+  python -m app.maintenance.cleanup_launch_abuse \
+  --apply --confirm DELETE_FLAGGED_BATCHES
+sudo docker compose -f docker-compose.prod.yml up -d paro-web
+```
+
+备份和清单默认写在数据库旁，文件名带 UTC 时间戳。应用重启后全站统计缓存已清空；用户刷新个人记录页时会按原 Cookie 从服务器读取清理后的记录。若预览口径需要调整，可显式传入 `--start`、`--end` 或 `--peak-results-per-hour`，调整后必须重新预览再执行。
+
 ## 1. 上传项目
 
 使用 FinalShell 文件管理器将整个项目目录上传到服务器临时目录，例如 `/home/akitoya/paro-web-upload`。不要上传 `.env`、`data/`、`.pytest_cache` 或任何密钥文件，以免覆盖服务器的数据库和公告。
