@@ -283,10 +283,15 @@ async def get_profile(
     services = _services(request)
     visitor, token, _is_new = await services.sessions.resolve(request)
     profile = await services.repository.profile(
-        visitor["id"], recent_limit=recent_limit, recent_offset=recent_offset
+        visitor["id"],
+        recent_limit=recent_limit,
+        recent_offset=recent_offset,
+        cooldown_seconds=services.draws.cooldown_seconds,
     )
     services.sessions.set_cookie(response, token)
-    return _serialize_profile(profile, services.catalog.snapshot)
+    payload = _serialize_profile(profile, services.catalog.snapshot)
+    payload["cooldown_remaining_seconds"] = profile["cooldown_remaining_seconds"]
+    return payload
 
 
 @router.get("/me/report")

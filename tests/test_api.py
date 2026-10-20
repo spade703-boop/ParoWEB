@@ -424,6 +424,9 @@ async def test_adaptive_draw_cooldown_uses_daily_tiers(settings: Settings) -> No
                 headers=headers,
             )
             assert first.status_code == 200
+            refreshed_profile = await api_client.get("/api/v1/me")
+            assert refreshed_profile.status_code == 200
+            assert 1 <= refreshed_profile.json()["cooldown_remaining_seconds"] <= 5
             blocked = await api_client.post(
                 "/api/v1/draw",
                 json={"count": 1, "fixed_side": "none", "fixed_name": None},
@@ -457,6 +460,8 @@ async def test_adaptive_draw_cooldown_uses_daily_tiers(settings: Settings) -> No
             )
             assert tier_blocked.status_code == 429
             assert 18 <= int(tier_blocked.headers["retry-after"]) <= 20
+            tier_profile = await api_client.get("/api/v1/me")
+            assert 18 <= tier_profile.json()["cooldown_remaining_seconds"] <= 20
 
             async with repository.connect() as connection:
                 await connection.execute(
@@ -464,6 +469,8 @@ async def test_adaptive_draw_cooldown_uses_daily_tiers(settings: Settings) -> No
                     ("2000-01-01", datetime.now(UTC).isoformat().replace("+00:00", "Z"), visitor["id"]),
                 )
                 await connection.commit()
+            reset_profile = await api_client.get("/api/v1/me")
+            assert reset_profile.json()["cooldown_remaining_seconds"] == 0
             reset_draw = await api_client.post(
                 "/api/v1/draw",
                 json={"count": 1, "fixed_side": "none", "fixed_name": None},

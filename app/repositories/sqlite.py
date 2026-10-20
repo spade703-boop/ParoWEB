@@ -285,6 +285,7 @@ class SQLiteRepository:
         recent_limit: int = 50,
         recent_offset: int = 0,
         ranking_limit: int = 3,
+        cooldown_seconds: int | None = None,
     ) -> dict:
         async with self.connect() as connection:
             rows = await (
@@ -301,6 +302,26 @@ class SQLiteRepository:
                     (visitor_id,),
                 )
             ).fetchall()
+            cooldown_remaining = None
+            if cooldown_seconds is not None:
+                limit_row = await (
+                    await connection.execute(
+                        "SELECT last_draw_at, quota_day, daily_results FROM draw_limits WHERE visitor_id = ?",
+                        (visitor_id,),
+                    )
+                ).fetchone()
+                cooldown_remaining = 0
+                now = datetime.now(UTC)
+                quota_day = now.astimezone(CHINA_TZ).date().isoformat()
+                if limit_row and limit_row["quota_day"] == quota_day and limit_row["last_draw_at"]:
+                    required_cooldown = cooldown_for_daily_results(
+                        int(limit_row["daily_results"]), cooldown_seconds
+                    )
+                    last_draw_datetime = datetime.fromisoformat(
+                        limit_row["last_draw_at"].replace("Z", "+00:00")
+                    )
+                    elapsed = (now - last_draw_datetime).total_seconds()
+                    cooldown_remaining = max(0, math.ceil(required_cooldown - elapsed))
 
         draw_count = len(rows)
         random_draw_count = sum(1 for row in rows if row["fixed_side"] == "none")
@@ -349,7 +370,7 @@ class SQLiteRepository:
             cooking_pair_hits.items(),
             key=lambda item: (-item[1], cooking_rank_order.get(item[0], 10**9), item[0]),
         )
-        return {
+        profile = {
             "draw_count": draw_count,
             "random_draw_count": random_draw_count,
             "cooking_count": cooking_count,
@@ -377,6 +398,9 @@ class SQLiteRepository:
             "recent_limit": recent_limit,
             "recent_has_more": recent_offset + recent_limit < len(rows),
         }
+        if cooldown_remaining is not None:
+            profile["cooldown_remaining_seconds"] = cooldown_remaining
+        return profile
 
     async def community_stats(self, *, limit: int = 10) -> dict:
         async with self.connect() as connection:

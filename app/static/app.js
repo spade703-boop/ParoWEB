@@ -628,6 +628,11 @@ function startCooldown(seconds) {
   }, 1000);
 }
 
+function syncCooldownFromProfile(profile) {
+  const remaining = Number(profile?.cooldown_remaining_seconds);
+  if (remaining > 0) startCooldown(remaining);
+}
+
 function updateSummary(summary) {
   const draws = summary.draw_count ?? 0;
   const cooking = summary.cooking_count ?? 0;
@@ -1702,6 +1707,7 @@ async function loadProfile({ append = false } = {}) {
     state.profileStale = false;
     el.recordSelectButton.disabled = !profile.recent?.length;
     updateSummary(profile);
+    syncCooldownFromProfile(profile);
     buildRecordFilters();
     renderRecords();
   } finally {
@@ -1902,6 +1908,7 @@ async function initialize() {
   syncFixedSide("none");
   renderPool();
   await loadProfile();
+  if (!state.cooldownActive) el.drawButton.disabled = false;
   route();
 }
 
