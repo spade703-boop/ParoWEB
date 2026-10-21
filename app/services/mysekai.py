@@ -124,6 +124,7 @@ class RenderResult:
     map_png_base64: str
     card_png_base64: str
     visit_counts: dict[str, int]
+    birthday: dict | None = None
 
 
 _CN = timezone(timedelta(hours=8))
@@ -609,6 +610,7 @@ class MysekaiService:
                     str(key): int(value)
                     for key, value in (data.get("visit_counts") or {}).items()
                 },
+                birthday=data.get("birthday"),
             )
         except (ValueError, KeyError, TypeError):
             raise UpstreamError("出图服务返回了无法解析的数据") from None
@@ -647,6 +649,7 @@ class MysekaiService:
         nickname: str | None,
         map_png_base64: str,
         card_png_base64: str,
+        birthday: dict | None = None,
     ) -> tuple[str, str]:
         url = self.settings.mysekai_push_url
         if not url:
@@ -658,6 +661,7 @@ class MysekaiService:
             "nickname": nickname,
             "map_png_base64": map_png_base64,
             "card_png_base64": card_png_base64,
+            "birthday": birthday,
         }
         headers = {"Content-Type": "application/json"}
         if self.settings.mysekai_push_token:
@@ -759,6 +763,7 @@ class MysekaiService:
             nickname=binding.get("nickname"),
             map_png_base64=result.map_png_base64,
             card_png_base64=result.card_png_base64,
+            birthday=result.birthday,
         )
         await self.repository.update_mysekai_upload_push_status(
             upload_id, push_status
