@@ -45,8 +45,7 @@
     <section class="workspace hidden" id="workspace" aria-labelledby="workspace-title">
       <div class="workspace-head">
         <p class="eyebrow">MYSEKAI SNAPSHOT</p>
-        <h1 class="workspace-title" id="workspace-title">上传响应体，生成两张图</h1>
-        <p class="workspace-sub">一份响应体 → 四场景资源地图 + 916×1076 材料汇总卡。响应体只在内存中解密和渲染，不落盘、不记录内容。</p>
+        <h1 class="workspace-title" id="workspace-title">MySekai解析工具</h1>
       </div>
 
       <div class="workspace-grid">
@@ -54,8 +53,7 @@
           <div class="control-card__group">
             <label class="control-card__legend" for="qq">QQ 号</label>
             <input class="text-input" id="qq" name="qq" inputmode="numeric" autocomplete="off"
-                   placeholder="绑定过的 QQ 号" required>
-            <p class="field-hint" id="qq-hint">输入绑定过的 QQ 号，会自动带出账号资料。</p>
+                   placeholder="已绑定的QQ号" required>
           </div>
 
           <div class="control-card__group">
@@ -97,7 +95,7 @@
           </div>
 
           <p class="form-status" id="upload-status" role="status" aria-live="polite"></p>
-          <button class="primary-button" id="upload-submit" type="submit">生成地图与资料卡</button>
+          <button class="primary-button" id="upload-submit" type="submit">生成MySekai解析</button>
         </form>
 
         <section class="result-panel" id="result" aria-label="生成结果" aria-live="polite">

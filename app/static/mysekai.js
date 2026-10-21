@@ -9,6 +9,35 @@ const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const QQ_RE = /^\d{5,12}$/;
 const GAME_ID_RE = /^\d{15,25}$/;
 
+/* QQ 号与游戏 ID 存在本机 cookie 里，方便下次自动填回；清 cookie 即失效。 */
+const COOKIE_QQ = "paro_mysekai_qq";
+const COOKIE_GAME_ID = "paro_mysekai_gid";
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 180;
+
+function readCookie(name) {
+  const prefix = `${name}=`;
+  for (const part of document.cookie.split(";")) {
+    const item = part.trim();
+    if (item.startsWith(prefix)) return item.slice(prefix.length);
+  }
+  return "";
+}
+
+function saveInput(name, value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  const secure = location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = digits
+    ? `${name}=${digits}; Path=/; Max-Age=${COOKIE_MAX_AGE}; SameSite=Lax${secure}`
+    : `${name}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+}
+
+function restoreInputs() {
+  const qq = readCookie(COOKIE_QQ);
+  const gameId = readCookie(COOKIE_GAME_ID);
+  if (qq) el.qq.value = qq;
+  if (gameId) el.gameId.value = gameId;
+}
+
 const state = {
   file: null,
   busy: false,
@@ -29,7 +58,6 @@ const el = {
   uploadForm: $("#upload-form"),
   qq: $("#qq"),
   gameId: $("#game-id"),
-  qqHint: $("#qq-hint"),
   dropZone: $("#drop-zone"),
   dropTitle: $("#drop-title"),
   fileInput: $("#file-input"),
@@ -87,6 +115,11 @@ async function api(path, options = {}) {
 
 function setStatus(node, message) {
   node.textContent = message || "";
+}
+
+function setFormStatus(message, ok = false) {
+  setStatus(el.uploadStatus, message);
+  el.uploadStatus.classList.toggle("is-ok", Boolean(ok) && Boolean(message));
 }
 
 function setButton(button, busy, label) {
@@ -169,12 +202,17 @@ el.qq.addEventListener("input", () => {
   window.clearTimeout(state.lookupTimer);
   const value = el.qq.value.trim();
   state.binding = null;
+  saveInput(COOKIE_QQ, value);
   if (value.length < 5) {
-    setStatus(el.qqHint, "输入绑定过的 QQ 号，会自动带出账号资料。");
-    el.qqHint.classList.remove("is-ok");
+    setFormStatus("");
     return;
   }
   state.lookupTimer = window.setTimeout(() => lookupBinding(value), 400);
+});
+
+el.gameId.addEventListener("input", () => {
+  saveInput(COOKIE_GAME_ID, el.gameId.value.trim());
+  el.uploadStatus.classList.remove("is-ok");
 });
 
 async function lookupBinding(qq) {
@@ -183,24 +221,25 @@ async function lookupBinding(qq) {
       `/api/v1/mysekai/lookup?qq=${encodeURIComponent(qq)}`
     );
     state.binding = data.binding;
-    if (!el.gameId.value.trim()) {
-      el.gameId.value = data.binding.game_user_id;
+    const boundId = String(data.binding.game_user_id || "");
+    if (boundId && el.gameId.value.trim() !== boundId) {
+      el.gameId.value = boundId;
+      saveInput(COOKIE_GAME_ID, boundId);
     }
     const name = data.binding.nickname || "未知昵称";
-    setStatus(el.qqHint, `已绑定：${name} · ${data.binding.game_user_id}`);
-    el.qqHint.classList.add("is-ok");
+    setFormStatus(`已绑定：${name} · ${boundId}`, true);
   } catch (error) {
     state.binding = null;
-    el.qqHint.classList.remove("is-ok");
+    el.uploadStatus.classList.remove("is-ok");
     if (error.status === 401) {
       showGate("登录已过期，请重新输入密码");
       return;
     }
     if (error.status === 404) {
-      setStatus(el.qqHint, "这个 QQ 还没有绑定，请先在群里绑定");
+      setFormStatus("这个 QQ 还没有绑定，请先在群里绑定");
       return;
     }
-    setStatus(el.qqHint, error.message);
+    setFormStatus(error.message);
   }
 }
 
@@ -209,7 +248,7 @@ async function lookupBinding(qq) {
 function setFile(file) {
   if (!file) return;
   if (file.size > MAX_FILE_BYTES) {
-    setStatus(el.uploadStatus, "文件超过 4 MB，请确认上传的是响应体");
+    setFormStatus("文件超过 4 MB，请确认上传的是响应体");
     return;
   }
   state.file = file;
@@ -217,7 +256,7 @@ function setFile(file) {
   el.fileSize.textContent = formatBytes(file.size);
   el.fileChip.classList.remove("hidden");
   el.dropTitle.textContent = "已选择文件，可重新选择";
-  setStatus(el.uploadStatus, "");
+  setFormStatus("");
 }
 
 function clearFile() {
@@ -314,28 +353,28 @@ el.uploadForm.addEventListener("submit", async (event) => {
   const qq = el.qq.value.trim();
   const gameId = el.gameId.value.trim();
   if (!QQ_RE.test(qq)) {
-    setStatus(el.uploadStatus, "请输入正确的 QQ 号");
+    setFormStatus("请输入正确的 QQ 号");
     el.qq.focus();
     return;
   }
   if (!GAME_ID_RE.test(gameId)) {
-    setStatus(el.uploadStatus, "请输入正确的游戏 ID（15–25 位数字）");
+    setFormStatus("请输入正确的游戏 ID（15–25 位数字）");
     el.gameId.focus();
     return;
   }
   if (state.binding && state.binding.game_user_id !== gameId) {
-    setStatus(el.uploadStatus, "游戏 ID 与这个 QQ 的绑定不一致");
+    setFormStatus("游戏 ID 与这个 QQ 的绑定不一致");
     el.gameId.focus();
     return;
   }
   if (!state.file) {
-    setStatus(el.uploadStatus, "请选择响应体文件");
+    setFormStatus("请选择响应体文件");
     return;
   }
 
   state.busy = true;
   setButton(el.uploadSubmit, true, "生成中…");
-  setStatus(el.uploadStatus, "");
+  setFormStatus("");
   showLoading();
   try {
     const fileBase64 = await fileToBase64(state.file);
@@ -351,19 +390,20 @@ el.uploadForm.addEventListener("submit", async (event) => {
     renderResult(data);
   } catch (error) {
     showEmpty();
-    setStatus(el.uploadStatus, error.message);
+    setFormStatus(error.message);
     if (error.status === 401) {
       showGate("登录已过期，请重新输入密码");
     }
   } finally {
     state.busy = false;
-    setButton(el.uploadSubmit, false, "生成地图与资料卡");
+    setButton(el.uploadSubmit, false, "生成MySekai解析");
   }
 });
 
 /* ------------------------------------------------------------------ boot */
 
 async function initialize() {
+  restoreInputs();
   try {
     const data = await api("/api/v1/mysekai/session");
     if (!data.enabled) {
