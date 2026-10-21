@@ -186,7 +186,17 @@ async def gate_image(payload: GateRequest, request: Request):
         data = await service.fetch_mysekai_gate_data(
             payload.game_user_id, payload.server
         )
-        png = await service.render_gate_image(data)
+        binding = await service.repository.get_mysekai_binding_by_game(
+            payload.server, payload.game_user_id
+        )
+        profile = None
+        if binding:
+            profile = {
+                "nickname": binding.get("nickname"),
+                "user_id": binding.get("game_user_id"),
+                "avatar_base64": binding.get("leader_avatar"),
+            }
+        png = await service.render_gate_image(data, profile)
     except MysekaiError as exc:
         return error_response(exc.status, exc.code, str(exc), exc.details)
     return Response(content=png, media_type="image/png")

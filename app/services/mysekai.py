@@ -483,13 +483,17 @@ class MysekaiService:
             fallback_used=fallback_used,
         )
 
-    async def render_gate_image(self, data: MysekaiGateData) -> bytes:
+    async def render_gate_image(
+        self, data: MysekaiGateData, profile: dict | None = None
+    ) -> bytes:
         """Ask the render service for the gate upgrade long image."""
         payload = {
             "gate_id": data.gate_id,
             "level": data.gate_level,
             "materials": {str(k): v for k, v in data.materials.items()},
         }
+        if profile:
+            payload["profile"] = profile
         url = f"{self.settings.mysekai_service_url}/render/gate"
         try:
             async with self._client(timeout=60.0) as client:
