@@ -21,6 +21,7 @@ import hmac
 import io
 import json
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -85,6 +86,11 @@ class BindingMismatch(MysekaiError):
     status = 403
 
 
+class BindingConflict(MysekaiError):
+    code = "binding_conflict"
+    status = 409
+
+
 class AccountNotFound(MysekaiError):
     code = "account_not_found"
     status = 404
@@ -93,6 +99,10 @@ class AccountNotFound(MysekaiError):
 class UpstreamError(MysekaiError):
     code = "upstream_error"
     status = 502
+
+
+class HarukiUnavailable(UpstreamError):
+    code = "haruki_unavailable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,11 +320,13 @@ class MysekaiService:
             async with self._client(timeout=20.0) as client:
                 response = await client.get(url, params=params)
         except httpx.HTTPError:
-            raise UpstreamError("Haruki 暂时不可用，请稍后再试") from None
+            raise HarukiUnavailable("Haruki 暂时不可用，请稍后再试") from None
         if response.status_code == 404:
             raise AccountNotFound(
                 "游戏 ID 不存在，或还没有在 Haruki 开启公开权限"
             )
+        if response.status_code >= 500:
+            raise HarukiUnavailable("Haruki 暂时不可用，请稍后再试")
         if response.status_code != 200:
             raise UpstreamError("Haruki 暂时不可用，请稍后再试")
         try:
@@ -357,11 +369,12 @@ class MysekaiService:
                 if isinstance(card, dict) and card.get("cardId") == leader_card_id:
                     trained = card.get("defaultImage") == "special_training"
                     break
-        assetbundle = (
-            await self._card_assetbundle(leader_card_id, server)
-            if leader_card_id is not None
-            else None
-        )
+        assetbundle = None
+        if leader_card_id is not None:
+            try:
+                assetbundle = await self._card_assetbundle(leader_card_id, server)
+            except (httpx.HTTPError, UpstreamError, ValueError):
+                assetbundle = None
         avatar_png = None
         if assetbundle:
             avatar_png = await self._download_avatar(
@@ -380,13 +393,26 @@ class MysekaiService:
 
     # ------------------------------------------------------------------ data
     async def bind(self, qq: str, game_user_id: str, server: str) -> dict:
+        if await self.repository.get_mysekai_binding(qq) is not None:
+            raise BindingConflict(
+                "这个 QQ 已经绑定了游戏 ID，请先解绑后再绑定",
+                code="qq_already_bound",
+            )
+        if (
+            await self.repository.get_mysekai_binding_by_game(server, game_user_id)
+            is not None
+        ):
+            raise BindingConflict(
+                "这个游戏 ID 已经绑定了其他 QQ",
+                code="game_id_already_bound",
+            )
         profile = await self.fetch_haruki_profile(game_user_id, server)
         avatar = (
             base64.b64encode(profile.avatar_png).decode("ascii")
             if profile.avatar_png
             else None
         )
-        await self.repository.upsert_mysekai_binding(
+        conflict = await self.repository.create_mysekai_binding(
             qq=qq,
             server=server,
             game_user_id=profile.game_user_id,
@@ -396,13 +422,29 @@ class MysekaiService:
             leader_avatar=avatar,
             profile_image_type=profile.profile_image_type,
         )
+        if conflict == "qq":
+            raise BindingConflict(
+                "这个 QQ 已经绑定了游戏 ID，请先解绑后再绑定",
+                code="qq_already_bound",
+            )
+        if conflict == "game_user_id":
+            raise BindingConflict(
+                "这个游戏 ID 已经绑定了其他 QQ",
+                code="game_id_already_bound",
+            )
         binding = await self.repository.get_mysekai_binding(qq)
-        if binding is None:  # pragma: no cover - upsert guarantees it
+        if binding is None:  # pragma: no cover - insert guarantees it
             raise UpstreamError("绑定保存失败")
         return binding
 
-    async def lookup(self, qq: str) -> dict | None:
+    async def query_binding(self, qq: str) -> dict | None:
         return await self.repository.get_mysekai_binding(qq)
+
+    async def unbind(self, qq: str) -> dict:
+        binding = await self.repository.delete_mysekai_binding(qq)
+        if binding is None:
+            raise BindingNotFound("这个 QQ 还没有绑定游戏 ID")
+        return binding
 
     # ------------------------------------------------------------------ render
     async def _render(self, body: bytes, profile_payload: dict) -> RenderResult:
@@ -450,6 +492,7 @@ class MysekaiService:
     async def _push(
         self,
         *,
+        upload_id: str,
         qq: str,
         game_user_id: str,
         nickname: str | None,
@@ -460,10 +503,10 @@ class MysekaiService:
         if not url:
             return "unconfigured", "推送未配置"
         payload = {
+            "upload_id": upload_id,
             "qq": qq,
             "game_user_id": game_user_id,
             "nickname": nickname,
-            "message": f"@{qq} 你 {game_user_id} 这份 ID 的响应是这样的",
             "map_png_base64": map_png_base64,
             "card_png_base64": card_png_base64,
         }
@@ -496,6 +539,33 @@ class MysekaiService:
             )
         if binding["server"] != server:
             raise BindingMismatch("绑定的服务器与本次选择不一致")
+
+        try:
+            refreshed = await self.fetch_haruki_profile(game_user_id, server)
+        except HarukiUnavailable:
+            pass
+        else:
+            avatar = (
+                base64.b64encode(refreshed.avatar_png).decode("ascii")
+                if refreshed.avatar_png
+                else (
+                    binding.get("leader_avatar")
+                    if refreshed.leader_card_id == binding.get("leader_card_id")
+                    else None
+                )
+            )
+            updated = await self.repository.update_mysekai_binding_profile(
+                qq=qq,
+                nickname=refreshed.nickname,
+                deck_id=refreshed.deck_id,
+                leader_card_id=refreshed.leader_card_id,
+                leader_avatar=avatar,
+                profile_image_type=refreshed.profile_image_type,
+            )
+            if updated is None:
+                raise BindingNotFound("这个 QQ 的绑定已经解除，请重新绑定后再上传")
+            binding = updated
+
         try:
             body = base64.b64decode(file_base64, validate=True)
         except (ValueError, TypeError):
@@ -515,14 +585,9 @@ class MysekaiService:
             "avatar_base64": avatar,
         }
         result = await self._render(body, profile_payload)
-        push_status, push_message = await self._push(
-            qq=qq,
-            game_user_id=binding["game_user_id"],
-            nickname=binding.get("nickname"),
-            map_png_base64=result.map_png_base64,
-            card_png_base64=result.card_png_base64,
-        )
-        upload_id = await self.repository.record_mysekai_upload(
+        upload_id = str(uuid.uuid4())
+        await self.repository.record_mysekai_upload(
+            upload_id=upload_id,
             qq=qq,
             server=server,
             game_user_id=binding["game_user_id"],
@@ -530,7 +595,18 @@ class MysekaiService:
             sites=len(result.sites),
             points=result.points,
             drops=result.drops,
-            push_status=push_status,
+            push_status="pending",
+        )
+        push_status, push_message = await self._push(
+            upload_id=upload_id,
+            qq=qq,
+            game_user_id=binding["game_user_id"],
+            nickname=binding.get("nickname"),
+            map_png_base64=result.map_png_base64,
+            card_png_base64=result.card_png_base64,
+        )
+        await self.repository.update_mysekai_upload_push_status(
+            upload_id, push_status
         )
         return {
             "upload_id": upload_id,

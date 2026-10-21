@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS mysekai_bindings (
 );
 CREATE INDEX IF NOT EXISTS idx_mysekai_bindings_game
     ON mysekai_bindings(server, game_user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mysekai_bindings_game
+    ON mysekai_bindings(server, game_user_id);
 
 CREATE TABLE IF NOT EXISTS mysekai_uploads (
     id TEXT PRIMARY KEY,
@@ -560,7 +562,7 @@ class SQLiteRepository:
             },
         }
 
-    async def upsert_mysekai_binding(
+    async def create_mysekai_binding(
         self,
         *,
         qq: str,
@@ -571,11 +573,28 @@ class SQLiteRepository:
         leader_card_id: int | None,
         leader_avatar: str | None,
         profile_image_type: str | None,
-    ) -> None:
+    ) -> str | None:
         now = utc_now()
         async with self.connect() as connection:
             await connection.execute("BEGIN IMMEDIATE")
             try:
+                qq_row = await (
+                    await connection.execute(
+                        "SELECT 1 FROM mysekai_bindings WHERE qq = ?", (qq,)
+                    )
+                ).fetchone()
+                if qq_row:
+                    await connection.rollback()
+                    return "qq"
+                game_row = await (
+                    await connection.execute(
+                        "SELECT 1 FROM mysekai_bindings WHERE server = ? AND game_user_id = ?",
+                        (server, game_user_id),
+                    )
+                ).fetchone()
+                if game_row:
+                    await connection.rollback()
+                    return "game_user_id"
                 await connection.execute(
                     """
                     INSERT INTO mysekai_bindings(
@@ -583,15 +602,6 @@ class SQLiteRepository:
                         leader_card_id, leader_avatar, profile_image_type,
                         created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(qq) DO UPDATE SET
-                        server = excluded.server,
-                        game_user_id = excluded.game_user_id,
-                        nickname = excluded.nickname,
-                        deck_id = excluded.deck_id,
-                        leader_card_id = excluded.leader_card_id,
-                        leader_avatar = excluded.leader_avatar,
-                        profile_image_type = excluded.profile_image_type,
-                        updated_at = excluded.updated_at
                     """,
                     (
                         qq,
@@ -607,6 +617,7 @@ class SQLiteRepository:
                     ),
                 )
                 await connection.commit()
+                return None
             except Exception:
                 await connection.rollback()
                 raise
@@ -620,9 +631,79 @@ class SQLiteRepository:
             ).fetchone()
         return dict(row) if row else None
 
+    async def get_mysekai_binding_by_game(
+        self, server: str, game_user_id: str
+    ) -> dict | None:
+        async with self.connect() as connection:
+            row = await (
+                await connection.execute(
+                    "SELECT * FROM mysekai_bindings WHERE server = ? AND game_user_id = ?",
+                    (server, game_user_id),
+                )
+            ).fetchone()
+        return dict(row) if row else None
+
+    async def update_mysekai_binding_profile(
+        self,
+        *,
+        qq: str,
+        nickname: str | None,
+        deck_id: int | None,
+        leader_card_id: int | None,
+        leader_avatar: str | None,
+        profile_image_type: str | None,
+    ) -> dict | None:
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                UPDATE mysekai_bindings
+                SET nickname = ?, deck_id = ?, leader_card_id = ?,
+                    leader_avatar = ?, profile_image_type = ?, updated_at = ?
+                WHERE qq = ?
+                """,
+                (
+                    nickname,
+                    deck_id,
+                    leader_card_id,
+                    leader_avatar,
+                    profile_image_type,
+                    utc_now(),
+                    qq,
+                ),
+            )
+            row = await (
+                await connection.execute(
+                    "SELECT * FROM mysekai_bindings WHERE qq = ?", (qq,)
+                )
+            ).fetchone()
+            await connection.commit()
+        return dict(row) if row else None
+
+    async def delete_mysekai_binding(self, qq: str) -> dict | None:
+        async with self.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = await (
+                    await connection.execute(
+                        "SELECT * FROM mysekai_bindings WHERE qq = ?", (qq,)
+                    )
+                ).fetchone()
+                if row is None:
+                    await connection.rollback()
+                    return None
+                await connection.execute(
+                    "DELETE FROM mysekai_bindings WHERE qq = ?", (qq,)
+                )
+                await connection.commit()
+                return dict(row)
+            except Exception:
+                await connection.rollback()
+                raise
+
     async def record_mysekai_upload(
         self,
         *,
+        upload_id: str,
         qq: str,
         server: str,
         game_user_id: str,
@@ -631,8 +712,7 @@ class SQLiteRepository:
         points: int,
         drops: int,
         push_status: str,
-    ) -> str:
-        upload_id = str(uuid.uuid4())
+    ) -> None:
         async with self.connect() as connection:
             await connection.execute(
                 """
@@ -655,7 +735,16 @@ class SQLiteRepository:
                 ),
             )
             await connection.commit()
-        return upload_id
+
+    async def update_mysekai_upload_push_status(
+        self, upload_id: str, push_status: str
+    ) -> None:
+        async with self.connect() as connection:
+            await connection.execute(
+                "UPDATE mysekai_uploads SET push_status = ? WHERE id = ?",
+                (push_status, upload_id),
+            )
+            await connection.commit()
 
     async def clear_history(self, visitor_id: str) -> None:
         async with self.connect() as connection:

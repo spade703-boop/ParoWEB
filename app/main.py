@@ -21,6 +21,7 @@ from app.services.draw_service import DrawService
 from app.services.mysekai import MysekaiService
 from app.services.stats_cache import StatsCache
 from app.web.api import router
+from app.web.mysekai_api import internal_router as mysekai_internal_router
 from app.web.mysekai_api import router as mysekai_router
 from app.web.errors import (
     domain_error_handler,
@@ -103,9 +104,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.middleware("http")
     async def security_middleware(request: Request, call_next):
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
-            origin = request.headers.get("origin")
-            if origin not in settings.allowed_origins:
-                return error_response(403, "invalid_origin", "请求来源不被允许")
+            is_mysekai_internal = request.url.path in {
+                "/internal/v1/mysekai/bind",
+                "/internal/v1/mysekai/unbind",
+            }
+            if not is_mysekai_internal:
+                origin = request.headers.get("origin")
+                if origin not in settings.allowed_origins:
+                    return error_response(403, "invalid_origin", "请求来源不被允许")
             if request.method in {"POST", "PUT", "PATCH"} and not request.headers.get("content-type", "").lower().startswith("application/json"):
                 return error_response(415, "json_required", "请求体必须使用 JSON")
         response = await call_next(request)
@@ -120,6 +126,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     application.include_router(router)
     application.include_router(mysekai_router)
+    application.include_router(mysekai_internal_router)
     application.mount("/static", StaticFiles(directory=settings.project_root / "app" / "static"), name="static")
     application.mount("/content", StaticFiles(directory=settings.images_dir / "paro_avatars"), name="content")
 

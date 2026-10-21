@@ -105,6 +105,54 @@ sudo chmod 600 .env
 
 确认 `.env` 中的域名是 `akitoya.top,www.akitoya.top`，不要把令牌、密码或 AccessKey 写入文件。
 
+### MySekai 三服务联动
+
+解析仓库保持私有即可，不需要为了部署改成公开。用有权限的部署密钥或 GitHub 凭据把
+`mysekai-re-pipeline` 放在 `/opt/mysekai-re-pipeline`，并固定到已确认的功能分支：
+
+```bash
+cd /opt
+sudo git clone --branch feat/submit-json-profile \
+  https://github.com/spade703-boop/mysekai-re-pipeline.git
+cd /opt/mysekai-re-pipeline
+sudo git rev-parse HEAD
+```
+
+预期版本包含提交 `90eb6f0`，并提供接收原始响应体的 `POST /submit`。默认目录正好对应
+Compose 的 `../mysekai-re-pipeline`；若放在其他位置，在 ParoWEB `.env` 设置
+`PARO_MYSEKAI_PIPELINE_DIR`。
+
+生成两个不同的随机密钥：一个用于 Bot → ParoWEB，另一个用于 ParoWEB → Bot。不要复用：
+
+```bash
+openssl rand -hex 32
+openssl rand -hex 32
+```
+
+ParoWEB 的 `/opt/paro-web/.env`：
+
+```dotenv
+PARO_MYSEKAI_PASSWORD=<群公告共享密码>
+PARO_MYSEKAI_SESSION_SECRET=<独立随机密钥>
+PARO_MYSEKAI_INTERNAL_TOKEN=<Bot到ParoWEB密钥>
+PARO_MYSEKAI_PUSH_URL=http://host.docker.internal:8080/internal/v1/mysekai/push
+PARO_MYSEKAI_PUSH_TOKEN=<ParoWEB到Bot密钥>
+```
+
+AkitoBot 的 `.env`：
+
+```dotenv
+MYSEKAI_GROUP_ID=637651773
+MYSEKAI_PARO_BASE_URL=http://127.0.0.1:8000
+MYSEKAI_PARO_TOKEN=<Bot到ParoWEB密钥>
+MYSEKAI_PUSH_TOKEN=<ParoWEB到Bot密钥>
+```
+
+若 AkitoBot 直接运行在宿主机，NoneBot 的 `8080` 需要能从 Docker bridge 到达；将 `HOST`
+设为 `0.0.0.0`，同时在云安全组和主机防火墙中拒绝公网访问 `8080`。ParoWEB 通过
+`host.docker.internal:8080` 访问，Bot 则通过宿主机回环地址访问 ParoWEB。若 Bot 也在容器中，
+把两个 URL 换成相应的内部服务名即可，仍不要暴露 `/internal/` 到公网。
+
 ## 4. 构建并启动应用
 
 ```bash
@@ -123,6 +171,7 @@ sudo ss -lntp | grep ':8000'
 ```
 
 预期 `8000` 只显示 `127.0.0.1`，不能显示 `0.0.0.0` 或 `[::]`。
+同时确认 `mysekai-parser` 状态为 Up；它只通过 Compose 内网的 `8765` 暴露，不映射宿主机端口。
 
 ## 5. 安装 Nginx
 
@@ -146,6 +195,9 @@ sudo systemctl reload nginx
 ```
 
 确认 `https://akitoya.top` 正常后，再验证 HTTP 是否 301 到 HTTPS。
+
+MySekai 上线后额外验证：公网 `/internal/` 返回 404，上传入口的请求体限制为 8 MiB、
+读写超时为 300 秒；Bot 内部绑定调用应直连 `127.0.0.1:8000`，不要经过公网域名。
 
 ## 7. 不应执行
 

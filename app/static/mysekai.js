@@ -1,6 +1,6 @@
 /* ==========================================================================
    MySekai 群友入口 · 页面交互
-   只做三件事：密码门、QQ → 绑定资料回填、上传 → 展示两张图。
+   只做三件事：密码门、记住 QQ/ID、上传 → 展示两张图。
    所有请求都走同源 /api/v1/mysekai/*，不引任何第三方脚本。
    ========================================================================== */
 
@@ -41,8 +41,6 @@ function restoreInputs() {
 const state = {
   file: null,
   busy: false,
-  lookupTimer: null,
-  binding: null,
   lastResult: null,
 };
 
@@ -196,52 +194,17 @@ el.gateForm.addEventListener("submit", async (event) => {
   }
 });
 
-/* ------------------------------------------------------------------ QQ 回填 */
+/* ------------------------------------------------------------------ 本机记忆 */
 
 el.qq.addEventListener("input", () => {
-  window.clearTimeout(state.lookupTimer);
-  const value = el.qq.value.trim();
-  state.binding = null;
-  saveInput(COOKIE_QQ, value);
-  if (value.length < 5) {
-    setFormStatus("");
-    return;
-  }
-  state.lookupTimer = window.setTimeout(() => lookupBinding(value), 400);
+  saveInput(COOKIE_QQ, el.qq.value.trim());
+  el.uploadStatus.classList.remove("is-ok");
 });
 
 el.gameId.addEventListener("input", () => {
   saveInput(COOKIE_GAME_ID, el.gameId.value.trim());
   el.uploadStatus.classList.remove("is-ok");
 });
-
-async function lookupBinding(qq) {
-  try {
-    const data = await api(
-      `/api/v1/mysekai/lookup?qq=${encodeURIComponent(qq)}`
-    );
-    state.binding = data.binding;
-    const boundId = String(data.binding.game_user_id || "");
-    if (boundId && el.gameId.value.trim() !== boundId) {
-      el.gameId.value = boundId;
-      saveInput(COOKIE_GAME_ID, boundId);
-    }
-    const name = data.binding.nickname || "未知昵称";
-    setFormStatus(`已绑定：${name} · ${boundId}`, true);
-  } catch (error) {
-    state.binding = null;
-    el.uploadStatus.classList.remove("is-ok");
-    if (error.status === 401) {
-      showGate("登录已过期，请重新输入密码");
-      return;
-    }
-    if (error.status === 404) {
-      setFormStatus("这个 QQ 还没有绑定，请先在群里绑定");
-      return;
-    }
-    setFormStatus(error.message);
-  }
-}
 
 /* ------------------------------------------------------------------ file */
 
@@ -359,11 +322,6 @@ el.uploadForm.addEventListener("submit", async (event) => {
   }
   if (!GAME_ID_RE.test(gameId)) {
     setFormStatus("请输入正确的游戏 ID（15–25 位数字）");
-    el.gameId.focus();
-    return;
-  }
-  if (state.binding && state.binding.game_user_id !== gameId) {
-    setFormStatus("游戏 ID 与这个 QQ 的绑定不一致");
     el.gameId.focus();
     return;
   }

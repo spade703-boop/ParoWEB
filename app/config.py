@@ -52,7 +52,7 @@ class Settings:
     mysekai_haruki_base: str
     mysekai_asset_base: str
     mysekai_master_base: str
-    mysekai_bot_token: str
+    mysekai_internal_token: str
     mysekai_push_url: str
     mysekai_push_token: str
 
@@ -99,7 +99,10 @@ class Settings:
                 "PARO_MYSEKAI_MASTER_BASE",
                 "https://sekai-api-cdn.haruki.seiunx.com",
             ).rstrip("/"),
-            mysekai_bot_token=os.getenv("PARO_MYSEKAI_BOT_TOKEN", "").strip(),
+            mysekai_internal_token=os.getenv(
+                "PARO_MYSEKAI_INTERNAL_TOKEN",
+                os.getenv("PARO_MYSEKAI_BOT_TOKEN", ""),
+            ).strip(),
             mysekai_push_url=os.getenv("PARO_MYSEKAI_PUSH_URL", "").strip(),
             mysekai_push_token=os.getenv("PARO_MYSEKAI_PUSH_TOKEN", "").strip(),
         )

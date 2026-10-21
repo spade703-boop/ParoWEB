@@ -16,8 +16,11 @@ services:
       PARO_CONTENT_DIR: ${PARO_CONTENT_DIR:-/bot-data/paro}
       PARO_IMAGES_DIR: ${PARO_IMAGES_DIR:-/bot-data/images}
       PARO_ANNOUNCEMENTS_PATH: /data/announcements.json
+      PARO_MYSEKAI_SERVICE_URL: http://mysekai-parser:8765
     ports:
       - "127.0.0.1:8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/data
       - ./content:/app/content:ro
@@ -32,6 +35,41 @@ services:
     pids_limit: 256
     mem_limit: 512m
     cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    depends_on:
+      - mysekai-parser
+
+  mysekai-parser:
+    build:
+      context: ${PARO_MYSEKAI_PIPELINE_DIR:-../mysekai-re-pipeline}
+      dockerfile_inline: |
+        FROM python:3.12-slim
+        ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+        WORKDIR /app
+        COPY requirements.txt ./
+        RUN pip install --no-cache-dir -r requirements.txt
+        COPY . .
+        CMD ["python", "service/server.py"]
+    image: mysekai-re-pipeline:local
+    container_name: mysekai-parser
+    restart: unless-stopped
+    environment:
+      MYSEKAI_HOST: 0.0.0.0
+      MYSEKAI_PORT: "8765"
+      MYSEKAI_REGION: sc
+    expose:
+      - "8765"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.5
     logging:
       driver: json-file
       options:

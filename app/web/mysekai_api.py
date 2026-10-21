@@ -23,6 +23,7 @@ from app.web.errors import error_response
 
 
 router = APIRouter(prefix="/api/v1/mysekai")
+internal_router = APIRouter(prefix="/internal/v1/mysekai")
 
 QQ_PATTERN = r"^\d{5,12}$"
 GAME_ID_PATTERN = r"^\d{15,25}$"
@@ -53,6 +54,12 @@ class SubmitRequest(BaseModel):
     file_base64: str = Field(min_length=1, max_length=6_000_000)
 
 
+class QqRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qq: str = Field(pattern=QQ_PATTERN)
+
+
 def _mysekai(request: Request) -> MysekaiService:
     return request.app.state.services.mysekai
 
@@ -64,6 +71,19 @@ def _require_session(request: Request) -> None:
 
 def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
+
+
+def _internal_auth_error(request: Request):
+    expected = request.app.state.settings.mysekai_internal_token
+    if not expected:
+        return error_response(503, "internal_api_disabled", "MySekai 内部接口未配置")
+    scheme, _, supplied = request.headers.get("Authorization", "").partition(" ")
+    valid = scheme.lower() == "bearer" and hmac.compare_digest(
+        supplied.encode("utf-8"), expected.encode("utf-8")
+    )
+    if not valid:
+        return error_response(403, "forbidden", "无权调用 MySekai 内部接口")
+    return None
 
 
 def _serialize_binding(binding: dict) -> dict:
@@ -125,36 +145,42 @@ async def logout(response: Response) -> dict:
     return {"ok": True}
 
 
-@router.get("/lookup")
-async def lookup(qq: str, request: Request):
-    try:
-        _require_session(request)
-    except MysekaiError as exc:
-        return error_response(exc.status, exc.code, str(exc))
-    if not QQ_RE.fullmatch(qq):
-        return error_response(422, "invalid_qq", "QQ 号格式不正确")
-    binding = await _mysekai(request).lookup(qq)
-    if binding is None:
-        return error_response(404, "not_bound", "这个 QQ 还没有绑定游戏 ID")
-    return {"ok": True, "binding": _serialize_binding(binding)}
-
-
-@router.post("/bind")
+@internal_router.post("/bind")
 async def bind(payload: BindRequest, request: Request):
-    settings = request.app.state.settings
-    if not settings.mysekai_bot_token:
-        return error_response(503, "bind_disabled", "绑定接口未配置")
-    supplied = request.headers.get("X-Mysekai-Bot-Token", "")
-    if not hmac.compare_digest(
-        supplied.encode("utf-8"), settings.mysekai_bot_token.encode("utf-8")
-    ):
-        return error_response(403, "forbidden", "无权调用绑定接口")
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
     if payload.server != "cn":
         return error_response(422, "unsupported_server", "第一版只支持国服")
     try:
         binding = await _mysekai(request).bind(
             payload.qq, payload.game_user_id, payload.server
         )
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return {"ok": True, "binding": _serialize_binding(binding)}
+
+
+@internal_router.get("/query")
+async def query_binding(qq: str, request: Request):
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    if not QQ_RE.fullmatch(qq):
+        return error_response(422, "invalid_qq", "QQ 号格式不正确")
+    binding = await _mysekai(request).query_binding(qq)
+    if binding is None:
+        return error_response(404, "not_bound", "这个 QQ 还没有绑定游戏 ID")
+    return {"ok": True, "binding": _serialize_binding(binding)}
+
+
+@internal_router.post("/unbind")
+async def unbind(payload: QqRequest, request: Request):
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        binding = await _mysekai(request).unbind(payload.qq)
     except MysekaiError as exc:
         return error_response(exc.status, exc.code, str(exc), exc.details)
     return {"ok": True, "binding": _serialize_binding(binding)}

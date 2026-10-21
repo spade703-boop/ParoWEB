@@ -90,20 +90,26 @@ paro_web/
 | POST | `/api/v1/mysekai/auth` | 共享密码换 12h 会话 Cookie |
 | GET | `/api/v1/mysekai/session` | 当前是否已解锁 |
 | DELETE | `/api/v1/mysekai/session` | 退出 |
-| GET | `/api/v1/mysekai/lookup?qq=` | 查询 QQ 的绑定资料（昵称 / ID / 队长卡） |
 | POST | `/api/v1/mysekai/submit` | 上传响应体 → 两张图 |
-| POST | `/api/v1/mysekai/bind` | Bot 专用：校验 Haruki 公开资料并写入绑定 |
+| POST | `/internal/v1/mysekai/bind` | Bot 专用：校验 Haruki 公开资料并建立绑定 |
+| GET | `/internal/v1/mysekai/query?qq=` | Bot 专用：查询绑定 |
+| POST | `/internal/v1/mysekai/unbind` | Bot 专用：解除绑定 |
 
 ### 绑定（Bot 侧）
 
 Bot 在群里确认用户 ID 后调用：
 
 ```bash
-curl -X POST http://<site>/api/v1/mysekai/bind \
+curl -X POST http://127.0.0.1:8000/internal/v1/mysekai/bind \
   -H "Content-Type: application/json" \
-  -H "X-Mysekai-Bot-Token: <PARO_MYSEKAI_BOT_TOKEN>" \
+  -H "Authorization: Bearer <PARO_MYSEKAI_INTERNAL_TOKEN>" \
   -d '{"qq":"123456789","game_user_id":"7440000000000000000","server":"cn"}'
 ```
+
+绑定是严格一对一：一个 QQ 只能绑定一个游戏 ID，一个游戏 ID 也只能绑定一个 QQ；
+换绑必须先由本人在群内执行解绑。Haruki 查询只能确认账号存在并读取公开资料，不能证明
+指令发送者实际拥有该账号。`/internal/` 不经过浏览器 Origin 校验，但必须带 Bearer 密钥，
+生产 Nginx 会直接拦截公网对该路径的访问。
 
 后端请求 Haruki 工具箱公开 API：
 
@@ -117,9 +123,11 @@ GET {PARO_MYSEKAI_HARUKI_BASE}/api/public/cn/suite/{game_id}
 
 ### 上传校验
 
-页面要求填 QQ + 游戏 ID。服务端核对「填写的 ID == 该 QQ 的绑定 ID」，
+页面要求填 QQ + 游戏 ID，两项只用 180 天浏览器 Cookie 记住上次输入；服务端不提供
+公开的 QQ → ID 查询接口。上传时服务端核对「填写的 ID == 该 QQ 的绑定 ID」，
 不一致直接拒绝出图。响应体本身不含游戏 ID，所以这是**绑定一致性校验**，
-不是“文件归属证明”；每次上传仍记录响应体 SHA-256 供核对。
+不是“文件归属证明”；每次上传仍记录响应体 SHA-256 供核对。校验通过后会重新查询
+Haruki：404 仍拒绝，网络错误或 5xx 才使用数据库中的最近一次公开资料缓存。
 
 出图由独立的 MySekai 服务完成（默认 `PARO_MYSEKAI_SERVICE_URL=http://127.0.0.1:8765`），
 不在浏览器里跑。成功后页面展示两张图并可下载；同时：
@@ -133,17 +141,18 @@ GET {PARO_MYSEKAI_HARUKI_BASE}/api/public/cn/suite/{game_id}
 
 ```json
 {
+  "upload_id": "6d082f2c-4e04-4b5f-9ef5-c6fb895d9387",
   "qq": "123456789",
   "game_user_id": "7440000000000000000",
   "nickname": "玩家昵称",
-  "message": "@123456789 你 7440000000000000000 这份 ID 的响应是这样的",
   "map_png_base64": "...",
   "card_png_base64": "..."
 }
 ```
 
 带 `PARO_MYSEKAI_PUSH_TOKEN` 时加 `Authorization: Bearer <token>`。
-推送失败不影响网页出图，页面会显示“推送失败”。
+Bot 固定投递到 `MYSEKAI_GROUP_ID`，不接受网页指定群号，并用 `upload_id` 持久化去重。
+推送失败不影响网页出图，页面只显示“推送失败”，不提供重新推送按钮。
 
 ## 配置
 
@@ -168,9 +177,10 @@ GET {PARO_MYSEKAI_HARUKI_BASE}/api/public/cn/suite/{game_id}
 | `PARO_MYSEKAI_HARUKI_BASE` | `https://toolbox-api-direct.haruki.seiunx.com` | Haruki 工具箱公开 API |
 | `PARO_MYSEKAI_ASSET_BASE` | `https://sekai-assets.haruki.seiunx.com` | 队长卡资源 CDN |
 | `PARO_MYSEKAI_MASTER_BASE` | `https://sekai-api-cdn.haruki.seiunx.com` | 卡牌主数据 CDN |
-| `PARO_MYSEKAI_BOT_TOKEN` | 空 | Bot 调绑定接口的共享密钥；留空则绑定关闭 |
+| `PARO_MYSEKAI_INTERNAL_TOKEN` | 空 | Bot 调内部绑定接口的 Bearer 密钥 |
 | `PARO_MYSEKAI_PUSH_URL` | 空 | 群推送 webhook；留空则只出图 |
 | `PARO_MYSEKAI_PUSH_TOKEN` | 空 | 推送 webhook 的 Bearer token |
+| `PARO_MYSEKAI_PIPELINE_DIR` | `../mysekai-re-pipeline` | Compose 构建解析服务的仓库路径 |
 
 冷却按**当日（中国标准时间）累计结果条数**分档：`<100→5s`、`100→10s`、`200→20s`、`300→30s`、
 `400→45s`、`500→60s`、`700→120s`、`≥900→300s`。计数存 SQLite，重启容器不会绕过。
