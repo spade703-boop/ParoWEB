@@ -104,15 +104,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.middleware("http")
     async def security_middleware(request: Request, call_next):
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
-            is_mysekai_internal = request.url.path in {
+            # Token-authenticated, non-browser callers: the Bot and the mobile
+            # capture module send no Origin and carry a Bearer token instead.
+            is_token_api = request.url.path in {
                 "/internal/v1/mysekai/bind",
                 "/internal/v1/mysekai/unbind",
+                "/api/v1/mysekai/ingest",
             }
-            if not is_mysekai_internal:
+            if not is_token_api:
                 origin = request.headers.get("origin")
                 if origin not in settings.allowed_origins:
                     return error_response(403, "invalid_origin", "请求来源不被允许")
-            if request.method in {"POST", "PUT", "PATCH"} and not request.headers.get("content-type", "").lower().startswith("application/json"):
+            # The capture module posts the encrypted response body as-is.
+            is_binary_upload = request.url.path == "/api/v1/mysekai/ingest"
+            if (
+                request.method in {"POST", "PUT", "PATCH"}
+                and not is_binary_upload
+                and not request.headers.get("content-type", "").lower().startswith("application/json")
+            ):
                 return error_response(415, "json_required", "请求体必须使用 JSON")
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"

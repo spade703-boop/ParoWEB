@@ -53,6 +53,8 @@ class Settings:
     mysekai_asset_base: str
     mysekai_master_base: str
     mysekai_internal_token: str
+    mysekai_ingest_token: str
+    mysekai_ingest_allowlist: frozenset[str]
     mysekai_push_url: str
     mysekai_push_token: str
 
@@ -103,6 +105,17 @@ class Settings:
                 "PARO_MYSEKAI_INTERNAL_TOKEN",
                 os.getenv("PARO_MYSEKAI_BOT_TOKEN", ""),
             ).strip(),
+            # 移动端（iOS 模块）上报用；留空时复用 internal token，省一个配置项。
+            mysekai_ingest_token=(
+                os.getenv("PARO_MYSEKAI_INGEST_TOKEN", "").strip()
+                or os.getenv(
+                    "PARO_MYSEKAI_INTERNAL_TOKEN",
+                    os.getenv("PARO_MYSEKAI_BOT_TOKEN", ""),
+                ).strip()
+            ),
+            mysekai_ingest_allowlist=frozenset(
+                _csv_env("PARO_MYSEKAI_INGEST_ALLOWLIST", "")
+            ),
             mysekai_push_url=os.getenv("PARO_MYSEKAI_PUSH_URL", "").strip(),
             mysekai_push_token=os.getenv("PARO_MYSEKAI_PUSH_TOKEN", "").strip(),
         )

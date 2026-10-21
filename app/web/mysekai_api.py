@@ -7,13 +7,16 @@ MySekai service stays on loopback: this backend is the only thing that calls it.
 from __future__ import annotations
 
 import hmac
+import logging
 import re
 
 from fastapi import APIRouter, Request, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.mysekai import (
     COOKIE_NAME,
+    MAX_BODY_BYTES,
     SESSION_TTL_SECONDS,
     MysekaiError,
     MysekaiService,
@@ -21,6 +24,8 @@ from app.services.mysekai import (
 )
 from app.web.errors import error_response
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/mysekai")
 internal_router = APIRouter(prefix="/internal/v1/mysekai")
@@ -213,3 +218,130 @@ async def submit(payload: SubmitRequest, request: Request):
     except MysekaiError as exc:
         return error_response(exc.status, exc.code, str(exc), exc.details)
     return {"ok": True, **result}
+
+
+def _ingest_auth_error(request: Request):
+    expected = request.app.state.settings.mysekai_ingest_token
+    if not expected:
+        return error_response(503, "ingest_disabled", "MySekai 上报告口未配置")
+    scheme, _, supplied = request.headers.get("Authorization", "").partition(" ")
+    valid = scheme.lower() == "bearer" and hmac.compare_digest(
+        supplied.encode("utf-8"), expected.encode("utf-8")
+    )
+    if not valid:
+        return error_response(403, "forbidden", "无权调用 MySekai 上报告口")
+    return None
+
+
+def _ingest_allowed(request: Request, game_user_id: str) -> bool:
+    allowlist = request.app.state.settings.mysekai_ingest_allowlist
+    return not allowlist or game_user_id in allowlist
+
+
+@router.post("/ingest")
+async def ingest(request: Request):
+    """Receive a raw response body from the mobile capture module.
+
+    Deliberately outside ``/internal/``: nginx answers 404 for that prefix, and
+    the phone has to reach this endpoint over the public internet. Identity is
+    the Bearer token plus the bound game id, never a browser session.
+    """
+    auth_error = _ingest_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+
+    game_user_id = (request.headers.get("X-Mysekai-Game-Id") or "").strip()
+    if not GAME_ID_RE.fullmatch(game_user_id):
+        return error_response(422, "invalid_game_id", "游戏 ID 格式不正确")
+    if not _ingest_allowed(request, game_user_id):
+        return error_response(403, "not_allowlisted", "这个游戏 ID 不在上报白名单内")
+
+    body = await request.body()
+    if not body:
+        return error_response(422, "empty_body", "响应体为空")
+    if len(body) > MAX_BODY_BYTES:
+        return error_response(413, "body_too_large", "响应体超过 4 MB")
+
+    # 密文长度必须是 16 的倍数；不是就说明手机端把二进制当文本处理坏了。
+    # 只记长度与余数，不记内容。
+    try:
+        result = await _mysekai(request).ingest(
+            game_user_id=game_user_id, server="cn", body=body
+        )
+    except MysekaiError as exc:
+        logger.warning(
+            "mysekai ingest failed game_id=%s bytes=%d mod16=%d code=%s",
+            game_user_id,
+            len(body),
+            len(body) % 16,
+            exc.code,
+        )
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    logger.info(
+        "mysekai ingest ok game_id=%s bytes=%d mod16=%d upload_id=%s",
+        game_user_id,
+        len(body),
+        len(body) % 16,
+        result["upload_id"],
+    )
+    return {
+        "ok": True,
+        "upload_id": result["upload_id"],
+        "points": result["points"],
+        "drops": result["drops"],
+        "sites": result["sites"],
+        "push": result["push"],
+    }
+
+
+# ---------------------------------------------------------------- 模块下载
+
+TEMPLATE_DIR = "app/templates"
+
+
+def _read_template(settings, name: str) -> str:
+    path = settings.project_root / TEMPLATE_DIR / name
+    return path.read_text(encoding="utf-8")
+
+
+@router.get("/module")
+async def download_module(request: Request):
+    """Download the Shadowrocket module with this deployment's token baked in."""
+    try:
+        _require_session(request)
+    except MysekaiError:
+        return RedirectResponse("/mysekai", status_code=303)
+
+    settings = request.app.state.settings
+    if not settings.mysekai_ingest_token:
+        return error_response(503, "ingest_disabled", "MySekai 上报告口未配置")
+
+    base = str(request.base_url).rstrip("/")
+    body = (
+        _read_template(settings, "mysekai.sgmodule")
+        .replace("__BASE_URL__", base)
+        .replace("__TOKEN__", settings.mysekai_ingest_token)
+    )
+    return Response(
+        content=body,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": 'attachment; filename="mysekai.sgmodule"'},
+    )
+
+
+@router.get("/capture.js")
+async def capture_script(request: Request, t: str = ""):
+    """Serve the capture script to Shadowrocket, keyed by the ingest token."""
+    settings = request.app.state.settings
+    expected = settings.mysekai_ingest_token
+    if not expected:
+        return error_response(503, "ingest_disabled", "MySekai 上报告口未配置")
+    if not t or not hmac.compare_digest(t, expected):
+        return error_response(403, "forbidden", "无权获取脚本")
+
+    body = _read_template(settings, "mysekai-capture.js").replace("__TOKEN__", expected)
+    return Response(
+        content=body,
+        media_type="application/javascript; charset=utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
