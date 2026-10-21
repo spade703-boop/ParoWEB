@@ -7,4 +7,4 @@
 mysekai-capture = type=http-response, pattern=^https?://[^/]+\.dailygn\.com/api/user/\d+/mysekai(\?.*)?$, requires-body=1, binary-body-mode=1, max-size=104857600, script-path=__BASE_URL__/api/v1/mysekai/capture.js?t=__TOKEN__, timeout=60
 
 [MITM]
-hostname = %APPEND% *.dailygn.com
+hostname = %APPEND% mkcn-prod-public-60001-1.dailygn.com
