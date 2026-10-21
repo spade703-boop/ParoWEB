@@ -4,7 +4,7 @@
 #!homepage=__BASE_URL__/mysekai
 
 [Script]
-mysekai-capture = type=http-response, pattern=^https?://[^/]+\.dailygn\.com/api/user/\d+/mysekai(\?.*)?$, requires-body=true, max-size=12582912, script-path=__BASE_URL__/api/v1/mysekai/capture.js?t=__TOKEN__, timeout=30
+mysekai-capture = type=http-response, pattern=^https?://[^/]+\.dailygn\.com/api/user/\d+/mysekai(\?.*)?$, requires-body=1, binary-body-mode=1, max-size=104857600, script-path=__BASE_URL__/api/v1/mysekai/capture.js?t=__TOKEN__, timeout=60
 
 [MITM]
 hostname = %APPEND% *.dailygn.com

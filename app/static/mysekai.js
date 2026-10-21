@@ -185,6 +185,7 @@ el.gateForm.addEventListener("submit", async (event) => {
     });
     el.gatePassword.value = "";
     showWorkspace();
+    upgradeIosLink();
   } catch (error) {
     setStatus(el.gateStatus, error.message);
     shakeGate();
@@ -358,6 +359,22 @@ el.uploadForm.addEventListener("submit", async (event) => {
   }
 });
 
+/* --------------------------------------------------------------- iOS 模块 */
+
+async function upgradeIosLink() {
+  const link = document.getElementById("ios-install-link");
+  if (!link) return;
+  try {
+    const data = await api("/api/v1/mysekai/module-link");
+    if (!data?.install_url) return;
+    link.href = data.install_url;
+    link.removeAttribute("download");
+    link.textContent = "一键安装到 Shadowrocket";
+  } catch {
+    // 拿不到就用普通下载链接，不打扰用户
+  }
+}
+
 /* ------------------------------------------------------------------ boot */
 
 async function initialize() {
@@ -369,8 +386,12 @@ async function initialize() {
       el.gateSubmit.disabled = true;
       return;
     }
-    if (data.authenticated) showWorkspace();
-    else showGate();
+    if (data.authenticated) {
+      showWorkspace();
+      upgradeIosLink();
+    } else {
+      showGate();
+    }
   } catch {
     showGate("服务暂时不可用，请稍后再试");
   }

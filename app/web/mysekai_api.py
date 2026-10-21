@@ -9,6 +9,7 @@ from __future__ import annotations
 import hmac
 import logging
 import re
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import RedirectResponse
@@ -305,14 +306,21 @@ def _read_template(settings, name: str) -> str:
 
 
 @router.get("/module")
-async def download_module(request: Request):
-    """Download the Shadowrocket module with this deployment's token baked in."""
-    try:
-        _require_session(request)
-    except MysekaiError:
-        return RedirectResponse("/mysekai", status_code=303)
+async def download_module(request: Request, t: str = ""):
+    """Download the Shadowrocket module with this deployment's token baked in.
 
+    Accepts either a browser session (the download link on the page) or the
+    ingest token as ``?t=`` — Shadowrocket fetches this itself for one-click
+    install and carries no cookies.
+    """
     settings = request.app.state.settings
+    by_token = bool(t) and hmac.compare_digest(t, settings.mysekai_ingest_token or "")
+    if not by_token:
+        try:
+            _require_session(request)
+        except MysekaiError:
+            return RedirectResponse("/mysekai", status_code=303)
+
     if not settings.mysekai_ingest_token:
         return error_response(503, "ingest_disabled", "MySekai 上报告口未配置")
 
@@ -345,3 +353,22 @@ async def capture_script(request: Request, t: str = ""):
         media_type="application/javascript; charset=utf-8",
         headers={"Cache-Control": "no-store"},
     )
+
+
+@router.get("/module-link")
+async def module_links(request: Request):
+    """One-click install URL for Shadowrocket, built from the current request."""
+    try:
+        _require_session(request)
+    except MysekaiError:
+        return error_response(401, "session_invalid", "请先输入密码")
+    settings = request.app.state.settings
+    if not settings.mysekai_ingest_token:
+        return error_response(503, "ingest_disabled", "MySekai 上报告口未配置")
+    base = str(request.base_url).rstrip("/")
+    module_url = f"{base}/api/v1/mysekai/module?t={settings.mysekai_ingest_token}"
+    return {
+        "ok": True,
+        "download_url": module_url,
+        "install_url": "shadowrocket://install?module=" + quote(module_url, safe=""),
+    }

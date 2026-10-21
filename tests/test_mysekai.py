@@ -583,6 +583,9 @@ async def test_module_download_bakes_in_the_token(tmp_path) -> None:
     assert INGEST_TOKEN in text
     assert "http://testserver/api/v1/mysekai/capture.js" in text
     assert "__TOKEN__" not in text and "__BASE_URL__" not in text
+    # 手机端能否拿到二进制 body 取决于这个开关
+    assert "binary-body-mode=1" in text
+    assert "requires-body=1" in text
 
 
 async def test_capture_script_needs_the_token(tmp_path) -> None:
@@ -603,3 +606,44 @@ async def test_capture_script_needs_the_token(tmp_path) -> None:
     assert allowed.status_code == 200
     assert INGEST_TOKEN in allowed.text
     assert "__TOKEN__" not in allowed.text
+
+
+async def test_module_can_be_fetched_with_token_without_a_session(tmp_path) -> None:
+    settings = _settings(tmp_path, mysekai_ingest_token=INGEST_TOKEN)
+    app = create_app(settings)
+    app.state.services.mysekai.transport = _mock_transport()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            denied = await client.get(
+                "/api/v1/mysekai/module", params={"t": "wrong"}
+            )
+            allowed = await client.get(
+                "/api/v1/mysekai/module", params={"t": INGEST_TOKEN}
+            )
+
+    assert denied.status_code == 303
+    assert allowed.status_code == 200
+    assert INGEST_TOKEN in allowed.text
+
+
+async def test_module_link_builds_the_shadowrocket_scheme(tmp_path) -> None:
+    settings = _settings(tmp_path, mysekai_ingest_token=INGEST_TOKEN)
+    app = create_app(settings)
+    app.state.services.mysekai.transport = _mock_transport()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            anonymous = await client.get("/api/v1/mysekai/module-link")
+            await _login(client)
+            response = await client.get("/api/v1/mysekai/module-link")
+
+    assert anonymous.status_code == 401
+    assert response.status_code == 200
+    data = response.json()
+    assert data["install_url"].startswith("shadowrocket://install?module=")
+    assert INGEST_TOKEN in data["download_url"]
