@@ -55,6 +55,38 @@ CREATE INDEX IF NOT EXISTS idx_batches_visitor_created
     ON draw_batches(visitor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_results_batch_position
     ON draw_results(batch_id, position);
+
+-- MySekai 群友入口：QQ ↔ 游戏 ID 绑定，以及每次上传的审计记录。
+-- 绑定资料只存公开信息（昵称/队长卡/头像），不存抓包内容。
+CREATE TABLE IF NOT EXISTS mysekai_bindings (
+    qq TEXT PRIMARY KEY,
+    server TEXT NOT NULL,
+    game_user_id TEXT NOT NULL,
+    nickname TEXT,
+    deck_id INTEGER,
+    leader_card_id INTEGER,
+    leader_avatar TEXT,
+    profile_image_type TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mysekai_bindings_game
+    ON mysekai_bindings(server, game_user_id);
+
+CREATE TABLE IF NOT EXISTS mysekai_uploads (
+    id TEXT PRIMARY KEY,
+    qq TEXT NOT NULL,
+    server TEXT NOT NULL,
+    game_user_id TEXT NOT NULL,
+    body_sha256 TEXT NOT NULL,
+    sites INTEGER NOT NULL,
+    points INTEGER NOT NULL,
+    drops INTEGER NOT NULL,
+    push_status TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mysekai_uploads_qq_created
+    ON mysekai_uploads(qq, created_at DESC);
 """
 
 
@@ -527,6 +559,103 @@ class SQLiteRepository:
                 },
             },
         }
+
+    async def upsert_mysekai_binding(
+        self,
+        *,
+        qq: str,
+        server: str,
+        game_user_id: str,
+        nickname: str | None,
+        deck_id: int | None,
+        leader_card_id: int | None,
+        leader_avatar: str | None,
+        profile_image_type: str | None,
+    ) -> None:
+        now = utc_now()
+        async with self.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            try:
+                await connection.execute(
+                    """
+                    INSERT INTO mysekai_bindings(
+                        qq, server, game_user_id, nickname, deck_id,
+                        leader_card_id, leader_avatar, profile_image_type,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(qq) DO UPDATE SET
+                        server = excluded.server,
+                        game_user_id = excluded.game_user_id,
+                        nickname = excluded.nickname,
+                        deck_id = excluded.deck_id,
+                        leader_card_id = excluded.leader_card_id,
+                        leader_avatar = excluded.leader_avatar,
+                        profile_image_type = excluded.profile_image_type,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        qq,
+                        server,
+                        game_user_id,
+                        nickname,
+                        deck_id,
+                        leader_card_id,
+                        leader_avatar,
+                        profile_image_type,
+                        now,
+                        now,
+                    ),
+                )
+                await connection.commit()
+            except Exception:
+                await connection.rollback()
+                raise
+
+    async def get_mysekai_binding(self, qq: str) -> dict | None:
+        async with self.connect() as connection:
+            row = await (
+                await connection.execute(
+                    "SELECT * FROM mysekai_bindings WHERE qq = ?", (qq,)
+                )
+            ).fetchone()
+        return dict(row) if row else None
+
+    async def record_mysekai_upload(
+        self,
+        *,
+        qq: str,
+        server: str,
+        game_user_id: str,
+        body_sha256: str,
+        sites: int,
+        points: int,
+        drops: int,
+        push_status: str,
+    ) -> str:
+        upload_id = str(uuid.uuid4())
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO mysekai_uploads(
+                    id, qq, server, game_user_id, body_sha256,
+                    sites, points, drops, push_status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    upload_id,
+                    qq,
+                    server,
+                    game_user_id,
+                    body_sha256,
+                    sites,
+                    points,
+                    drops,
+                    push_status,
+                    utc_now(),
+                ),
+            )
+            await connection.commit()
+        return upload_id
 
     async def clear_history(self, visitor_id: str) -> None:
         async with self.connect() as connection:

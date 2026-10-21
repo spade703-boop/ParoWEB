@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f1e9">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="description" content="群友入口：上传 MySekai 响应体，生成资源地图与材料汇总卡。">
+  <title>群友入口 · 抽派生</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/mysekai.css">
+  <script src="/static/mysekai.js" defer></script>
+</head>
+<body class="mysekai-page">
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <header class="site-header">
+    <div class="container site-header__inner">
+      <a class="brand" href="/" aria-label="抽派生PARO DRAW 返回首页">
+        <span><strong>抽派生</strong><small>PARO DRAW</small></span>
+      </a>
+      <a class="mysekai-back" href="/">返回首页</a>
+    </div>
+  </header>
+
+  <main id="main" class="container mysekai-main">
+    <!-- ============================ 密码门 ============================ -->
+    <section class="gate" id="gate" aria-labelledby="gate-title">
+      <div class="gate-card" id="gate-card">
+        <p class="eyebrow">PRIVATE ACCESS</p>
+        <h1 class="gate-title" id="gate-title">群友入口</h1>
+        <p class="gate-sub">输入群里约定的密码，进入 MySekai 响应体上传页。</p>
+        <form id="gate-form" novalidate>
+          <label class="field-label" for="gate-password">访问密码</label>
+          <input class="text-input" id="gate-password" name="password" type="password"
+                 autocomplete="current-password" placeholder="群友密码" required>
+          <p class="form-status" id="gate-status" role="status" aria-live="polite"></p>
+          <button class="primary-button" id="gate-submit" type="submit">进入</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============================ 上传工作台 ============================ -->
+    <section class="workspace hidden" id="workspace" aria-labelledby="workspace-title">
+      <div class="workspace-head">
+        <p class="eyebrow">MYSEKAI SNAPSHOT</p>
+        <h1 class="workspace-title" id="workspace-title">上传响应体，生成两张图</h1>
+        <p class="workspace-sub">一份响应体 → 四场景资源地图 + 916×1076 材料汇总卡。响应体只在内存中解密和渲染，不落盘、不记录内容。</p>
+      </div>
+
+      <div class="workspace-grid">
+        <form class="control-card upload-card" id="upload-form" novalidate>
+          <div class="control-card__group">
+            <label class="control-card__legend" for="qq">QQ 号</label>
+            <input class="text-input" id="qq" name="qq" inputmode="numeric" autocomplete="off"
+                   placeholder="绑定过的 QQ 号" required>
+            <p class="field-hint" id="qq-hint">输入绑定过的 QQ 号，会自动带出账号资料。</p>
+          </div>
+
+          <div class="control-card__group">
+            <label class="control-card__legend" for="game-id">游戏 ID</label>
+            <input class="text-input" id="game-id" name="game_user_id" inputmode="numeric" autocomplete="off"
+                   placeholder="19 位数字 ID" required>
+          </div>
+
+          <div class="control-card__group">
+            <span class="control-card__legend">服务器</span>
+            <div class="segmented segmented--two" role="radiogroup" aria-label="服务器">
+              <label>
+                <input type="radio" name="region" value="cn" checked>
+                <span class="segmented__opt">国服</span>
+              </label>
+              <label>
+                <input type="radio" name="region" value="jp" disabled>
+                <span class="segmented__opt">其他服 · 暂未支持</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="control-card__group">
+            <span class="control-card__legend">响应体</span>
+            <button type="button" class="drop-zone" id="drop-zone" aria-describedby="file-hint">
+              <svg class="drop-zone__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 16V4M12 4L7.5 8.5M12 4L16.5 8.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M4.5 15.5V18.5C4.5 19.6 5.4 20.5 6.5 20.5H17.5C18.6 20.5 19.5 19.6 19.5 18.5V15.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+              </svg>
+              <strong id="drop-title">拖入响应体，或点击选择</strong>
+              <small id="file-hint">原始密文文件 · 最大 4 MB</small>
+            </button>
+            <input type="file" id="file-input" accept=".mysekai,.bin,application/octet-stream" hidden>
+            <div class="file-chip hidden" id="file-chip">
+              <span class="file-chip__name" id="file-name"></span>
+              <span class="file-chip__size" id="file-size"></span>
+              <button type="button" class="file-chip__clear" id="file-clear" aria-label="移除文件">×</button>
+            </div>
+          </div>
+
+          <p class="form-status" id="upload-status" role="status" aria-live="polite"></p>
+          <button class="primary-button" id="upload-submit" type="submit">生成地图与资料卡</button>
+        </form>
+
+        <section class="result-panel" id="result" aria-label="生成结果" aria-live="polite">
+          <div class="result-empty" id="result-empty">
+            <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">
+              <rect x="5" y="7" width="30" height="26" rx="4" stroke="currentColor" stroke-width="1.6"/>
+              <path d="M5 15H35M14 15V33" stroke="currentColor" stroke-width="1.2" opacity=".6"/>
+              <circle cx="24" cy="24" r="4.2" stroke="currentColor" stroke-width="1.4"/>
+            </svg>
+            <p>上传后在这里显示<br>地图与资料卡</p>
+          </div>
+
+          <div class="result-loading hidden" id="result-loading">
+            <div class="loading-track" aria-hidden="true"><span></span></div>
+            <p>正在解密、投影、渲染…</p>
+          </div>
+
+          <div class="result-content hidden" id="result-content">
+            <div class="profile-strip">
+              <img class="profile-avatar hidden" id="profile-avatar" alt="" width="44" height="44">
+              <span class="profile-avatar profile-avatar--fallback" id="profile-avatar-fallback" aria-hidden="true">?</span>
+              <div class="profile-meta">
+                <strong id="profile-name">—</strong>
+                <span id="profile-id">—</span>
+              </div>
+              <span class="push-badge" id="push-badge">—</span>
+            </div>
+
+            <figure class="image-card">
+              <figcaption>
+                <span>资源地图</span>
+                <a class="download-link" id="download-map" href="#" download="mysekai-map.png">下载 PNG</a>
+              </figcaption>
+              <div class="image-frame image-frame--map">
+                <img id="result-map" alt="MySekai 四场景资源地图" width="2000" height="1669">
+              </div>
+            </figure>
+
+            <figure class="image-card">
+              <figcaption>
+                <span>材料汇总卡</span>
+                <a class="download-link" id="download-card" href="#" download="mysekai-card.png">下载 PNG</a>
+              </figcaption>
+              <div class="image-frame image-frame--card">
+                <img id="result-card" alt="MySekai 材料汇总卡" width="916" height="1076">
+              </div>
+            </figure>
+
+            <p class="result-meta" id="result-meta"></p>
+          </div>
+        </section>
+      </div>
+
+      <footer class="mysekai-footnote">
+        <span>响应体只在内存中处理；页面不会保存你的文件。</span>
+        <span>出图：MySekai 离线管线</span>
+      </footer>
+    </section>
+  </main>
+</body>
+</html>

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import secrets
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -45,6 +46,15 @@ class Settings:
     allowed_origins: tuple[str, ...]
     draw_cooldown_seconds: int
     stats_cache_seconds: int
+    mysekai_password: str
+    mysekai_session_secret: str
+    mysekai_service_url: str
+    mysekai_haruki_base: str
+    mysekai_asset_base: str
+    mysekai_master_base: str
+    mysekai_bot_token: str
+    mysekai_push_url: str
+    mysekai_push_token: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -71,4 +81,25 @@ class Settings:
             ),
             draw_cooldown_seconds=_int_env("PARO_DRAW_COOLDOWN_SECONDS", 5),
             stats_cache_seconds=_int_env("PARO_STATS_CACHE_SECONDS", 60),
+            mysekai_password=os.getenv("PARO_MYSEKAI_PASSWORD", "").strip(),
+            mysekai_session_secret=os.getenv("PARO_MYSEKAI_SESSION_SECRET", "").strip()
+            or secrets.token_urlsafe(32),
+            mysekai_service_url=os.getenv(
+                "PARO_MYSEKAI_SERVICE_URL", "http://127.0.0.1:8765"
+            ).rstrip("/"),
+            mysekai_haruki_base=os.getenv(
+                "PARO_MYSEKAI_HARUKI_BASE",
+                "https://toolbox-api-direct.haruki.seiunx.com",
+            ).rstrip("/"),
+            mysekai_asset_base=os.getenv(
+                "PARO_MYSEKAI_ASSET_BASE",
+                "https://sekai-assets.haruki.seiunx.com",
+            ).rstrip("/"),
+            mysekai_master_base=os.getenv(
+                "PARO_MYSEKAI_MASTER_BASE",
+                "https://sekai-api-cdn.haruki.seiunx.com",
+            ).rstrip("/"),
+            mysekai_bot_token=os.getenv("PARO_MYSEKAI_BOT_TOKEN", "").strip(),
+            mysekai_push_url=os.getenv("PARO_MYSEKAI_PUSH_URL", "").strip(),
+            mysekai_push_token=os.getenv("PARO_MYSEKAI_PUSH_TOKEN", "").strip(),
         )

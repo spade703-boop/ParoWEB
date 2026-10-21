@@ -18,8 +18,10 @@ from app.repositories.sqlite import SQLiteRepository
 from app.services.announcements import AnnouncementService
 from app.services.catalog import CatalogService
 from app.services.draw_service import DrawService
+from app.services.mysekai import MysekaiService
 from app.services.stats_cache import StatsCache
 from app.web.api import router
+from app.web.mysekai_api import router as mysekai_router
 from app.web.errors import (
     domain_error_handler,
     error_response,
@@ -44,6 +46,8 @@ class Services:
     visitor_limiter: SlidingWindowLimiter
     ip_limiter: SlidingWindowLimiter
     stats_cache: StatsCache
+    mysekai: MysekaiService
+    mysekai_auth_limiter: SlidingWindowLimiter
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -64,6 +68,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         visitor_limiter=SlidingWindowLimiter(limit=30),
         ip_limiter=SlidingWindowLimiter(limit=60),
         stats_cache=StatsCache(settings.stats_cache_seconds),
+        mysekai=MysekaiService(settings, repository),
+        mysekai_auth_limiter=SlidingWindowLimiter(limit=5, window_seconds=300),
     )
 
     @asynccontextmanager
@@ -111,6 +117,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     application.include_router(router)
+    application.include_router(mysekai_router)
     application.mount("/static", StaticFiles(directory=settings.project_root / "app" / "static"), name="static")
     application.mount("/content", StaticFiles(directory=settings.images_dir / "paro_avatars"), name="content")
 
@@ -133,6 +140,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         static_dir = settings.project_root / "app" / "static"
         page = (static_dir / "index.html").read_text(encoding="utf-8")
         for filename in ("app.css", "profile-export.css", "profile-export.js", "export-image.js", "app.js"):
+            version = hashlib.sha256((static_dir / filename).read_bytes()).hexdigest()[:16]
+            page = page.replace(f'/static/{filename}"', f'/static/{filename}?v={version}"')
+        return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
+
+    @application.get("/mysekai")
+    def mysekai_index() -> HTMLResponse:
+        static_dir = settings.project_root / "app" / "static"
+        page = (static_dir / "mysekai.html").read_text(encoding="utf-8")
+        for filename in ("app.css", "mysekai.css", "mysekai.js"):
             version = hashlib.sha256((static_dir / filename).read_bytes()).hexdigest()[:16]
             page = page.replace(f'/static/{filename}"', f'/static/{filename}?v={version}"')
         return HTMLResponse(page, headers={"Cache-Control": "no-cache"})

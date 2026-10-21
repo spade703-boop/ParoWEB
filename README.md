@@ -77,6 +77,74 @@ paro_web/
 | GET | `/api/v1/announcements` | 公告列表 |
 | GET | `/healthz` | 健康检查（内容 + 数据库） |
 
+## MySekai 群友入口
+
+主站页脚右侧的 `·` 是入口，跳转到 `/mysekai`：先输入群共享密码，再上传 MySekai
+响应体，生成四场景资源地图与 916×1076 材料汇总卡。页面只收响应体，不需要 HAR
+或请求头。
+
+### 接口
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| POST | `/api/v1/mysekai/auth` | 共享密码换 12h 会话 Cookie |
+| GET | `/api/v1/mysekai/session` | 当前是否已解锁 |
+| DELETE | `/api/v1/mysekai/session` | 退出 |
+| GET | `/api/v1/mysekai/lookup?qq=` | 查询 QQ 的绑定资料（昵称 / ID / 队长卡） |
+| POST | `/api/v1/mysekai/submit` | 上传响应体 → 两张图 |
+| POST | `/api/v1/mysekai/bind` | Bot 专用：校验 Haruki 公开资料并写入绑定 |
+
+### 绑定（Bot 侧）
+
+Bot 在群里确认用户 ID 后调用：
+
+```bash
+curl -X POST http://<site>/api/v1/mysekai/bind \
+  -H "Content-Type: application/json" \
+  -H "X-Mysekai-Bot-Token: <PARO_MYSEKAI_BOT_TOKEN>" \
+  -d '{"qq":"123456789","game_user_id":"7440000000000000000","server":"cn"}'
+```
+
+后端请求 Haruki 工具箱公开 API：
+
+```
+GET {PARO_MYSEKAI_HARUKI_BASE}/api/public/cn/suite/{game_id}
+    ?key=userGamedata,userProfile,userDecks,userCards
+```
+
+拿到 `userGamedata.name`、当前 deck、队长卡，并下载/缓存 96×96 队长卡头像。
+用户在 Haruki 侧未开启公开权限时返回 404，绑定会被拒绝。
+
+### 上传校验
+
+页面要求填 QQ + 游戏 ID。服务端核对「填写的 ID == 该 QQ 的绑定 ID」，
+不一致直接拒绝出图。响应体本身不含游戏 ID，所以这是**绑定一致性校验**，
+不是“文件归属证明”；每次上传仍记录响应体 SHA-256 供核对。
+
+出图由独立的 MySekai 服务完成（默认 `PARO_MYSEKAI_SERVICE_URL=http://127.0.0.1:8765`），
+不在浏览器里跑。成功后页面展示两张图并可下载；同时：
+
+- 卡面叠加 Haruki 昵称、游戏 ID、队长卡头像；
+- 地图底部加 `昵称 · ID · Haruki` 脚注。
+
+### 群推送 webhook（可选）
+
+设置 `PARO_MYSEKAI_PUSH_URL` 后，后端在出图成功时向该地址 POST：
+
+```json
+{
+  "qq": "123456789",
+  "game_user_id": "7440000000000000000",
+  "nickname": "玩家昵称",
+  "message": "@123456789 你 7440000000000000000 这份 ID 的响应是这样的",
+  "map_png_base64": "...",
+  "card_png_base64": "..."
+}
+```
+
+带 `PARO_MYSEKAI_PUSH_TOKEN` 时加 `Authorization: Bearer <token>`。
+推送失败不影响网页出图，页面会显示“推送失败”。
+
 ## 配置
 
 环境变量样例见 `.env.example`。
@@ -94,6 +162,15 @@ paro_web/
 | `PARO_DRAW_COOLDOWN_SECONDS` | `5` | 起始冷却，`0` 关闭 |
 | `PARO_STATS_CACHE_SECONDS` | `60` | 社区统计缓存秒数，`0` 关闭 |
 | `PARO_BOT_DATA_DIR` | `/akito_bot/data` | Compose 挂载的 Bot 数据目录 |
+| `PARO_MYSEKAI_PASSWORD` | 空 | 群友入口共享密码；留空则功能关闭 |
+| `PARO_MYSEKAI_SESSION_SECRET` | 随机 | 会话 Cookie 的 HMAC 密钥；生产必须固定 |
+| `PARO_MYSEKAI_SERVICE_URL` | `http://127.0.0.1:8765` | MySekai 出图服务 |
+| `PARO_MYSEKAI_HARUKI_BASE` | `https://toolbox-api-direct.haruki.seiunx.com` | Haruki 工具箱公开 API |
+| `PARO_MYSEKAI_ASSET_BASE` | `https://sekai-assets.haruki.seiunx.com` | 队长卡资源 CDN |
+| `PARO_MYSEKAI_MASTER_BASE` | `https://sekai-api-cdn.haruki.seiunx.com` | 卡牌主数据 CDN |
+| `PARO_MYSEKAI_BOT_TOKEN` | 空 | Bot 调绑定接口的共享密钥；留空则绑定关闭 |
+| `PARO_MYSEKAI_PUSH_URL` | 空 | 群推送 webhook；留空则只出图 |
+| `PARO_MYSEKAI_PUSH_TOKEN` | 空 | 推送 webhook 的 Bearer token |
 
 冷却按**当日（中国标准时间）累计结果条数**分档：`<100→5s`、`100→10s`、`200→20s`、`300→30s`、
 `400→45s`、`500→60s`、`700→120s`、`≥900→300s`。计数存 SQLite，重启容器不会绕过。
