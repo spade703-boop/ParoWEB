@@ -921,18 +921,6 @@ html.no-js .picker__panel { display: none; }
 .footer-beian { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .footer-beian img { display: block; flex: none; width: 20px; height: 20px; object-fit: contain; }
 
-/* 群友入口：页脚里一个不显眼的点，知道的人点进去。 */
-.mysekai-entry {
-  display: inline-flex; align-items: center;
-  padding: 0 4px;
-  color: var(--fainter);
-  font-size: 18px; line-height: 1;
-  text-decoration: none;
-  transition: color .15s ease;
-}
-.mysekai-entry:hover,
-.mysekai-entry:focus-visible { color: var(--ink); }
-
 .bottom-nav {
   display: none;
   position: fixed; z-index: 40; left: 0; right: 0; bottom: 0;

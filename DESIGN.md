@@ -2,7 +2,7 @@
 
 > 本文件是 ParoWEB 的视觉契约。现有页面（抽派生主站）在 `app/static/app.css` 中已有
 > 一套稳定的隐式系统；本文件把它提取成 token，之后新增页面/组件必须引用这里的
-> 变量与模式。2026-10-21 为 `/mysekai` 群友入口页首次建立。
+> 变量与模式。2026-10-21 为群友入口页首次建立，入口路径后改为 `/roomlist`。
 
 ## 1. Atmosphere & Identity
 
@@ -159,4 +159,4 @@
 | --- | --- | --- | --- |
 | 现有 `app.css` 中存在少量非 token 的 px/颜色（历史样式） | `app/static/app.css` | 本次只新增页面，不做全站重构 | 后续统一 token 化 |
 | 主站 CSP 允许一个 inline style hash | `app/main.py` | 既有页面需要 | 迁移到外部 CSS 后移除 |
-| 结果图以 data URL 返回 | `/mysekai` | 本地/群友工具，避免额外的临时存储 | 若并发上升改为结果 ID + 短期 URL |
+| 结果图以 data URL 返回 | `/roomlist` | 本地/群友工具，避免额外的临时存储 | 若并发上升改为结果 ID + 短期 URL |

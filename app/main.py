@@ -162,8 +162,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             page = page.replace(f'/static/{filename}"', f'/static/{filename}?v={version}"')
         return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
-    @application.get("/mysekai")
-    def mysekai_index() -> HTMLResponse:
+    # 入口名故意中性化，避免被搜到；首页不再挂链接，只私下分发。
+    @application.get("/roomlist")
+    def roomlist_index() -> HTMLResponse:
         static_dir = settings.project_root / "app" / "static"
         page = (static_dir / "mysekai.html").read_text(encoding="utf-8")
         for filename in ("app.css", "mysekai.css", "mysekai.js"):

@@ -408,7 +408,7 @@ async def test_submit_haruki_refresh_fallback(
 
 
 async def test_page_and_hidden_entry(client: httpx.AsyncClient) -> None:
-    page = await client.get("/mysekai")
+    page = await client.get("/roomlist")
     assert page.status_code == 200
     assert "神秘入口" in page.text
     assert "输入群公告内的密码" in page.text
@@ -420,9 +420,12 @@ async def test_page_and_hidden_entry(client: httpx.AsyncClient) -> None:
     assert "paro_mysekai_qq" in script.text
     assert "paro_mysekai_gid" in script.text
 
+    # 入口不再出现在首页，旧地址也不保留跳转，避免被爬虫顺着找到新路径
     index = await client.get("/")
     assert index.status_code == 200
-    assert 'href="/mysekai"' in index.text
+    assert 'href="/mysekai"' not in index.text
+    assert 'href="/roomlist"' not in index.text
+    assert (await client.get("/mysekai")).status_code == 404
 
 
 # ---------------------------------------------------------------- ingest（移动端上传）
@@ -562,7 +565,7 @@ async def test_module_download_requires_a_session(tmp_path) -> None:
             response = await client.get("/api/v1/mysekai/module")
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/mysekai"
+    assert response.headers["location"] == "/roomlist"
 
 
 async def test_module_download_bakes_in_the_token(tmp_path) -> None:

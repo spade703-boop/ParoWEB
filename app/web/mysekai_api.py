@@ -319,7 +319,7 @@ async def download_module(request: Request, t: str = ""):
         try:
             _require_session(request)
         except MysekaiError:
-            return RedirectResponse("/mysekai", status_code=303)
+            return RedirectResponse("/roomlist", status_code=303)
 
     if not settings.mysekai_ingest_token:
         return error_response(503, "ingest_disabled", "MySekai 上报告口未配置")
