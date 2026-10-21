@@ -48,6 +48,7 @@ class Services:
     stats_cache: StatsCache
     mysekai: MysekaiService
     mysekai_auth_limiter: SlidingWindowLimiter
+    mysekai_submit_limiter: SlidingWindowLimiter
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -70,6 +71,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         stats_cache=StatsCache(settings.stats_cache_seconds),
         mysekai=MysekaiService(settings, repository),
         mysekai_auth_limiter=SlidingWindowLimiter(limit=5, window_seconds=300),
+        mysekai_submit_limiter=SlidingWindowLimiter(limit=10, window_seconds=300),
     )
 
     @asynccontextmanager

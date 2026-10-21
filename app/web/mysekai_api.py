@@ -50,7 +50,7 @@ class SubmitRequest(BaseModel):
     qq: str = Field(pattern=QQ_PATTERN)
     game_user_id: str = Field(pattern=GAME_ID_PATTERN)
     region: str = Field(default="cn", pattern=r"^(cn|jp|tw|kr|en)$")
-    file_base64: str = Field(min_length=1)
+    file_base64: str = Field(min_length=1, max_length=6_000_000)
 
 
 def _mysekai(request: Request) -> MysekaiService:
@@ -168,6 +168,15 @@ async def submit(payload: SubmitRequest, request: Request):
         return error_response(exc.status, exc.code, str(exc))
     if payload.region != "cn":
         return error_response(422, "unsupported_server", "第一版只支持国服")
+    limiter = request.app.state.services.mysekai_submit_limiter
+    allowed, retry_after = limiter.check(_client_ip(request))
+    if not allowed:
+        return error_response(
+            429,
+            "rate_limited",
+            "上传太频繁，请稍后再试",
+            headers={"Retry-After": str(retry_after)},
+        )
     try:
         result = await _mysekai(request).submit(
             qq=payload.qq,
