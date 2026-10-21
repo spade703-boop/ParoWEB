@@ -153,7 +153,7 @@ class MysekaiService:
 
     def verify_password(self, password: str) -> None:
         if not self.enabled():
-            raise MysekaiDisabled("群友入口还没有开启（未配置访问密码）")
+            raise MysekaiDisabled("入口还没有开启（未配置访问密码）")
         expected = self.settings.mysekai_password.encode("utf-8")
         actual = password.encode("utf-8")
         if not hmac.compare_digest(actual, expected):
@@ -254,19 +254,29 @@ class MysekaiService:
     ) -> bytes | None:
         suffix = "after_training" if trained else "normal"
         prefix = "cn" if server == "cn" else server
-        url = (
-            f"{self.settings.mysekai_asset_base}/{prefix}-assets/startapp/"
-            f"character/member/{assetbundle_name}/card_{suffix}.png"
+        base = f"{self.settings.mysekai_asset_base}/{prefix}-assets"
+        # Haruki-Drawing-API 的 _leader_image_path 用的是
+        # thumbnail/chara/{assetbundleName}_{normal|after_training}.png（128×128）。
+        # 整张卡面 character/member/.../card_*.png 是后备，不是首选。
+        candidates = (
+            f"{base}/startapp/thumbnail/chara/{assetbundle_name}_{suffix}.png",
+            f"{base}/ondemand/thumbnail/chara/{assetbundle_name}_{suffix}.png",
+            f"{base}/startapp/character/member/{assetbundle_name}/card_{suffix}.png",
         )
+        content = None
         try:
             async with self._client(timeout=30.0) as client:
-                response = await client.get(url)
+                for url in candidates:
+                    response = await client.get(url)
+                    if response.status_code == 200:
+                        content = response.content
+                        break
         except httpx.HTTPError:
             return None
-        if response.status_code != 200:
+        if not content:
             return None
         try:
-            image = Image.open(io.BytesIO(response.content)).convert("RGBA")
+            image = Image.open(io.BytesIO(content)).convert("RGBA")
         except OSError:
             return None
         scale = max(AVATAR_SIZE / image.width, AVATAR_SIZE / image.height)
@@ -499,7 +509,7 @@ class MysekaiService:
             "nickname": binding.get("nickname"),
             "user_id": binding["game_user_id"],
             "region": "CN",
-            "hide_uid": False,
+            "hide_uid": True,
             "source": "Haruki",
             "mode": "latest",
             "avatar_base64": avatar,

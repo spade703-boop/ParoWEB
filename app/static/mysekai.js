@@ -367,7 +367,7 @@ async function initialize() {
   try {
     const data = await api("/api/v1/mysekai/session");
     if (!data.enabled) {
-      showGate("群友入口还没有开启（未配置访问密码）");
+      showGate("入口还没有开启（未配置访问密码）");
       el.gateSubmit.disabled = true;
       return;
     }

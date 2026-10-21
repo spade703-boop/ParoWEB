@@ -51,7 +51,11 @@ def _mock_transport(*, push_ok: bool = True) -> httpx.MockTransport:
             return httpx.Response(
                 200, json=[{"id": 456, "assetbundleName": "res003_no019"}]
             )
-        if path == "/cn-assets/startapp/character/member/res003_no019/card_normal.png":
+        if path in {
+            "/cn-assets/startapp/thumbnail/chara/res003_no019_normal.png",
+            "/cn-assets/ondemand/thumbnail/chara/res003_no019_normal.png",
+            "/cn-assets/startapp/character/member/res003_no019/card_normal.png",
+        }:
             return httpx.Response(
                 200, content=TINY_PNG, headers={"content-type": "image/png"}
             )
@@ -276,7 +280,8 @@ async def test_submit_reports_push_success(tmp_path) -> None:
 async def test_page_and_hidden_entry(client: httpx.AsyncClient) -> None:
     page = await client.get("/mysekai")
     assert page.status_code == 200
-    assert "群友入口" in page.text
+    assert "神秘入口" in page.text
+    assert "输入群公告内的密码" in page.text
     assert "/static/mysekai.js" in page.text
     assert "noindex" in page.text
 
