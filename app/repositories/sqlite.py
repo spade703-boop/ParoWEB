@@ -102,6 +102,13 @@ CREATE TABLE IF NOT EXISTS mysekai_water_watches (
     qq TEXT PRIMARY KEY,
     enabled_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS mysekai_water_rounds (
+    game_user_id TEXT NOT NULL,
+    round_key TEXT NOT NULL,
+    pushed_at TEXT NOT NULL,
+    PRIMARY KEY (game_user_id, round_key)
+);
 """
 
 
@@ -771,6 +778,22 @@ class SQLiteRepository:
                 )
             ).fetchone()
         return row is not None
+
+    async def claim_mysekai_water_round(
+        self, game_user_id: str, round_key: str
+    ) -> bool:
+        """True only for the first push of one un-refreshed harvest round."""
+        async with self.connect() as connection:
+            cursor = await connection.execute(
+                """
+                INSERT OR IGNORE INTO mysekai_water_rounds(
+                    game_user_id, round_key, pushed_at
+                ) VALUES (?, ?, ?)
+                """,
+                (game_user_id, round_key, utc_now()),
+            )
+            await connection.commit()
+        return cursor.rowcount > 0
 
     async def record_mysekai_upload(
         self,

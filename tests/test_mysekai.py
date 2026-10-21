@@ -672,3 +672,13 @@ async def test_gate_endpoint_requires_internal_token(client) -> None:
         json={"game_user_id": GAME_ID, "server": "cn"},
     )
     assert response.status_code == 403
+
+
+async def test_water_round_claims_once_per_refreshed_map(tmp_path) -> None:
+    """同一刷新轮次只允许推送一次；刷新时间变了才是新一轮。"""
+    repository = SQLiteRepository(tmp_path / "test.sqlite3")
+    await repository.initialize()
+
+    assert await repository.claim_mysekai_water_round("u1", "t100") is True
+    assert await repository.claim_mysekai_water_round("u1", "t100") is False
+    assert await repository.claim_mysekai_water_round("u1", "t200") is True

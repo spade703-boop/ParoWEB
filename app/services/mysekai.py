@@ -823,16 +823,21 @@ class MysekaiService:
             upload_id, push_status
         )
         if watch_on and result.birthday and result.birthday.get("targets"):
-            rare_png = await self._render_rare(body)
-            if rare_png:
-                await self._push_rare(
-                    upload_id=upload_id,
-                    qq=qq,
-                    game_user_id=binding["game_user_id"],
-                    nickname=binding.get("nickname"),
-                    birthday=result.birthday,
-                    rare_png=rare_png,
-                )
+            round_key = str(result.birthday.get("round_key") or "")
+            if round_key:
+                # 先渲染再占位：渲染失败时不会把这一轮锁死
+                rare_png = await self._render_rare(body)
+                if rare_png and await self.repository.claim_mysekai_water_round(
+                    binding["game_user_id"], round_key
+                ):
+                    await self._push_rare(
+                        upload_id=upload_id,
+                        qq=qq,
+                        game_user_id=binding["game_user_id"],
+                        nickname=binding.get("nickname"),
+                        birthday=result.birthday,
+                        rare_png=rare_png,
+                    )
         return {
             "upload_id": upload_id,
             "profile": {
