@@ -127,6 +127,9 @@ class RenderResult:
 
 
 _CN = timezone(timedelta(hours=8))
+#: JP 7.0.0 raised the gate cap from 40 to 70; the render side reads the real cap
+#: from masterdata, this constant only decides which gate Haruki would default to.
+GATE_MAX_LEVEL = 70
 
 
 @dataclass(frozen=True)
@@ -445,10 +448,26 @@ class MysekaiService:
             raise UpstreamError("Haruki 返回了无法解析的数据")
 
         gates = [g for g in (data.get("userMysekaiGates") or []) if isinstance(g, dict)]
-        current = next((g for g in gates if g.get("isSettingAtHomeSite")), None)
-        fallback_used = current is None
-        if current is None and gates:
-            current = min(gates, key=lambda g: int(g.get("mysekaiGateId") or 0))
+        levels = {
+            int(g["mysekaiGateId"]): int(g.get("mysekaiGateLevel") or 0)
+            for g in gates
+            if g.get("mysekaiGateId")
+        }
+        # Haruki 的默认选择：等级最高但还没满级的门，并列时保留较小的 gate id
+        eligible = [
+            (gate_id, level)
+            for gate_id, level in sorted(levels.items())
+            if 0 < level < GATE_MAX_LEVEL
+        ]
+        fallback_used = not eligible
+        chosen_id = (
+            max(eligible, key=lambda item: item[1])[0]
+            if eligible
+            else (min(levels) if levels else 0)
+        )
+        current = next(
+            (g for g in gates if int(g["mysekaiGateId"]) == chosen_id), None
+        )
         if not isinstance(current, dict):
             raise UpstreamError("Haruki 没有返回大门数据")
 
