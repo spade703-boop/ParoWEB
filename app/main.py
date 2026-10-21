@@ -110,6 +110,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "/internal/v1/mysekai/bind",
                 "/internal/v1/mysekai/unbind",
                 "/internal/v1/mysekai/gate",
+                "/internal/v1/mysekai/watch",
                 "/api/v1/mysekai/ingest",
             }
             if not is_token_api:

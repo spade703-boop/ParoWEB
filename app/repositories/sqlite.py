@@ -97,6 +97,11 @@ CREATE TABLE IF NOT EXISTS mysekai_visit_baselines (
     created_at TEXT NOT NULL,
     PRIMARY KEY (qq, day)
 );
+
+CREATE TABLE IF NOT EXISTS mysekai_water_watches (
+    qq TEXT PRIMARY KEY,
+    enabled_at TEXT NOT NULL
+);
 """
 
 
@@ -739,6 +744,33 @@ class SQLiteRepository:
                 (qq, day, json.dumps(payload, ensure_ascii=False), utc_now()),
             )
             await connection.commit()
+
+    async def set_mysekai_water_watch(self, qq: str, enabled: bool) -> None:
+        """Turn the watering watch on or off for one QQ."""
+        async with self.connect() as connection:
+            if enabled:
+                await connection.execute(
+                    """
+                    INSERT INTO mysekai_water_watches(qq, enabled_at)
+                    VALUES (?, ?)
+                    ON CONFLICT(qq) DO UPDATE SET enabled_at = excluded.enabled_at
+                    """,
+                    (qq, utc_now()),
+                )
+            else:
+                await connection.execute(
+                    "DELETE FROM mysekai_water_watches WHERE qq = ?", (qq,)
+                )
+            await connection.commit()
+
+    async def is_mysekai_water_watch(self, qq: str) -> bool:
+        async with self.connect() as connection:
+            row = await (
+                await connection.execute(
+                    "SELECT 1 FROM mysekai_water_watches WHERE qq = ?", (qq,)
+                )
+            ).fetchone()
+        return row is not None
 
     async def record_mysekai_upload(
         self,

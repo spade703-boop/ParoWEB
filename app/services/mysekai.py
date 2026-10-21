@@ -675,6 +675,58 @@ class MysekaiService:
             return "sent", "已推送到群里"
         return "failed", f"推送失败（HTTP {response.status_code}）"
 
+    async def _render_rare(self, body: bytes) -> bytes | None:
+        """Ask the render service for a map that only carries the watched drops."""
+        url = f"{self.settings.mysekai_service_url}/render/rare"
+        try:
+            async with self._client(timeout=120.0) as client:
+                response = await client.post(
+                    url,
+                    content=body,
+                    headers={"Content-Type": "application/octet-stream"},
+                )
+        except httpx.HTTPError:
+            return None
+        if response.status_code != 200:
+            return None
+        return response.content
+
+    async def _push_rare(
+        self,
+        *,
+        upload_id: str,
+        qq: str,
+        game_user_id: str,
+        nickname: str | None,
+        birthday: dict,
+        rare_png: bytes,
+    ) -> tuple[str, str]:
+        """Push a watering-watch hit: one text line plus the filtered map."""
+        url = self.settings.mysekai_push_url
+        if not url:
+            return "unconfigured", "推送未配置"
+        payload = {
+            "upload_id": upload_id,
+            "qq": qq,
+            "game_user_id": game_user_id,
+            "nickname": nickname,
+            "birthday": birthday,
+            "rare_png_base64": base64.b64encode(rare_png).decode("ascii"),
+        }
+        headers = {"Content-Type": "application/json"}
+        if self.settings.mysekai_push_token:
+            headers["Authorization"] = f"Bearer {self.settings.mysekai_push_token}"
+        try:
+            async with self._client(timeout=60.0) as client:
+                response = await client.post(
+                    f"{url}/rare", json=payload, headers=headers
+                )
+        except httpx.HTTPError:
+            return "failed", "稀有掉落推送失败（网络错误）"
+        if 200 <= response.status_code < 300:
+            return "sent", "已推送稀有掉落到群里"
+        return "failed", f"稀有掉落推送失败（HTTP {response.status_code}）"
+
     async def submit(
         self,
         *,
@@ -692,6 +744,8 @@ class MysekaiService:
             )
         if binding["server"] != server:
             raise BindingMismatch("绑定的服务器与本次选择不一致")
+
+        watch_on = await self.repository.is_mysekai_water_watch(qq)
 
         try:
             refreshed = await self.fetch_haruki_profile(game_user_id, server)
@@ -768,6 +822,17 @@ class MysekaiService:
         await self.repository.update_mysekai_upload_push_status(
             upload_id, push_status
         )
+        if watch_on and result.birthday and result.birthday.get("targets"):
+            rare_png = await self._render_rare(body)
+            if rare_png:
+                await self._push_rare(
+                    upload_id=upload_id,
+                    qq=qq,
+                    game_user_id=binding["game_user_id"],
+                    nickname=binding.get("nickname"),
+                    birthday=result.birthday,
+                    rare_png=rare_png,
+                )
         return {
             "upload_id": upload_id,
             "profile": {

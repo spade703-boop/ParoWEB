@@ -51,6 +51,13 @@ class BindRequest(BaseModel):
     server: str = Field(default="cn", pattern=r"^(cn|jp|tw|kr|en)$")
 
 
+class WatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qq: str = Field(pattern=QQ_PATTERN)
+    enabled: bool
+
+
 class GateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -172,6 +179,16 @@ async def bind(payload: BindRequest, request: Request):
     except MysekaiError as exc:
         return error_response(exc.status, exc.code, str(exc), exc.details)
     return {"ok": True, "binding": _serialize_binding(binding)}
+
+
+@internal_router.post("/watch")
+async def water_watch(payload: WatchRequest, request: Request):
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    service = _mysekai(request)
+    await service.repository.set_mysekai_water_watch(payload.qq, payload.enabled)
+    return {"ok": True, "enabled": payload.enabled}
 
 
 @internal_router.post("/gate")
