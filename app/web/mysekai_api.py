@@ -51,6 +51,13 @@ class BindRequest(BaseModel):
     server: str = Field(default="cn", pattern=r"^(cn|jp|tw|kr|en)$")
 
 
+class GateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    game_user_id: str = Field(pattern=GAME_ID_PATTERN)
+    server: str = Field(default="cn", pattern=r"^(cn|jp|tw|kr|en)$")
+
+
 class SubmitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -165,6 +172,24 @@ async def bind(payload: BindRequest, request: Request):
     except MysekaiError as exc:
         return error_response(exc.status, exc.code, str(exc), exc.details)
     return {"ok": True, "binding": _serialize_binding(binding)}
+
+
+@internal_router.post("/gate")
+async def gate_image(payload: GateRequest, request: Request):
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    if payload.server != "cn":
+        return error_response(422, "unsupported_server", "第一版只支持国服")
+    try:
+        service = _mysekai(request)
+        data = await service.fetch_mysekai_gate_data(
+            payload.game_user_id, payload.server
+        )
+        png = await service.render_gate_image(data)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return Response(content=png, media_type="image/png")
 
 
 @internal_router.get("/query")

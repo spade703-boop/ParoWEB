@@ -129,6 +129,16 @@ class RenderResult:
 _CN = timezone(timedelta(hours=8))
 
 
+@dataclass(frozen=True)
+class MysekaiGateData:
+    """One gate's current level plus the player's material holdings."""
+
+    gate_id: int
+    gate_level: int
+    materials: dict[int, int]
+    fallback_used: bool
+
+
 def _today_key() -> str:
     """The game day under UTC+8, used as the baseline partition."""
     return datetime.now(_CN).strftime("%Y-%m-%d")
@@ -400,6 +410,76 @@ class MysekaiService:
             profile_image_type=user_profile.get("profileImageType"),
             avatar_png=avatar_png,
         )
+
+    async def fetch_mysekai_gate_data(
+        self, game_user_id: str, server: str = "cn"
+    ) -> MysekaiGateData:
+        """Read the gate level and material holdings from Haruki's public suite.
+
+        The public endpoint's ``key`` filter rejects ``userMysekai*`` fields
+        (404), so this asks for the whole response and keeps only what the gate
+        image needs.
+        """
+        if not game_user_id.isdigit():
+            raise AccountNotFound("游戏 ID 必须是数字")
+        url = (
+            f"{self.settings.mysekai_haruki_base}/api/public/"
+            f"{server}/suite/{game_user_id}"
+        )
+        try:
+            async with self._client(timeout=60.0) as client:
+                response = await client.get(url)
+        except httpx.HTTPError:
+            raise HarukiUnavailable("Haruki 暂时不可用，请稍后再试") from None
+        if response.status_code == 404:
+            raise AccountNotFound("游戏 ID 不存在，或还没有在 Haruki 开启公开权限")
+        if response.status_code >= 500:
+            raise HarukiUnavailable("Haruki 暂时不可用，请稍后再试")
+        if response.status_code != 200:
+            raise UpstreamError("Haruki 暂时不可用，请稍后再试")
+        try:
+            data = response.json()
+        except ValueError:
+            raise UpstreamError("Haruki 返回了无法解析的数据") from None
+        if not isinstance(data, dict):
+            raise UpstreamError("Haruki 返回了无法解析的数据")
+
+        gates = [g for g in (data.get("userMysekaiGates") or []) if isinstance(g, dict)]
+        current = next((g for g in gates if g.get("isSettingAtHomeSite")), None)
+        fallback_used = current is None
+        if current is None and gates:
+            current = min(gates, key=lambda g: int(g.get("mysekaiGateId") or 0))
+        if not isinstance(current, dict):
+            raise UpstreamError("Haruki 没有返回大门数据")
+
+        materials: dict[int, int] = {}
+        for item in data.get("userMysekaiMaterials") or []:
+            if not isinstance(item, dict):
+                continue
+            materials[int(item["mysekaiMaterialId"])] = int(item["quantity"])
+        return MysekaiGateData(
+            gate_id=int(current["mysekaiGateId"]),
+            gate_level=int(current["mysekaiGateLevel"]),
+            materials=materials,
+            fallback_used=fallback_used,
+        )
+
+    async def render_gate_image(self, data: MysekaiGateData) -> bytes:
+        """Ask the render service for the gate upgrade long image."""
+        payload = {
+            "gate_id": data.gate_id,
+            "level": data.gate_level,
+            "materials": {str(k): v for k, v in data.materials.items()},
+        }
+        url = f"{self.settings.mysekai_service_url}/render/gate"
+        try:
+            async with self._client(timeout=60.0) as client:
+                response = await client.post(url, json=payload)
+        except httpx.HTTPError:
+            raise UpstreamError("出图服务暂时不可用，请稍后再试") from None
+        if response.status_code != 200:
+            raise UpstreamError("出图服务暂时不可用，请稍后再试")
+        return response.content
 
     # ------------------------------------------------------------------ data
     async def bind(self, qq: str, game_user_id: str, server: str) -> dict:

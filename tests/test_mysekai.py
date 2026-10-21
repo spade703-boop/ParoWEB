@@ -663,3 +663,12 @@ async def test_visit_baseline_is_written_once_per_day(tmp_path) -> None:
 
     assert await repository.get_mysekai_visit_baseline(QQ, "2026-10-21") == {"1": 5}
     assert await repository.get_mysekai_visit_baseline(QQ, "2026-10-22") is None
+
+
+async def test_gate_endpoint_requires_internal_token(client) -> None:
+    """内部大门长图接口必须校验 Bot 侧 token。"""
+    response = await client.post(
+        "/internal/v1/mysekai/gate",
+        json={"game_user_id": GAME_ID, "server": "cn"},
+    )
+    assert response.status_code == 403
