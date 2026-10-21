@@ -23,6 +23,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -122,6 +123,15 @@ class RenderResult:
     drops: int
     map_png_base64: str
     card_png_base64: str
+    visit_counts: dict[str, int]
+
+
+_CN = timezone(timedelta(hours=8))
+
+
+def _today_key() -> str:
+    """The game day under UTC+8, used as the baseline partition."""
+    return datetime.now(_CN).strftime("%Y-%m-%d")
 
 
 def _b64url_encode(payload: bytes) -> str:
@@ -447,7 +457,9 @@ class MysekaiService:
         return binding
 
     # ------------------------------------------------------------------ render
-    async def _render(self, body: bytes, profile_payload: dict) -> RenderResult:
+    async def _render(
+        self, body: bytes, profile_payload: dict, visit_baseline: dict | None = None
+    ) -> RenderResult:
         header = _b64url_encode(
             json.dumps(
                 profile_payload,
@@ -455,16 +467,21 @@ class MysekaiService:
                 separators=(",", ":"),
             ).encode("utf-8")
         )
+        headers = {
+            "Content-Type": "application/octet-stream",
+            "X-Mysekai-Profile": header,
+        }
+        if visit_baseline:
+            headers["X-Mysekai-Visit-Baseline"] = _b64url_encode(
+                json.dumps(visit_baseline, separators=(",", ":")).encode("utf-8")
+            )
         url = f"{self.settings.mysekai_service_url}/submit"
         try:
             async with self._client(timeout=180.0) as client:
                 response = await client.post(
                     url,
                     content=body,
-                    headers={
-                        "Content-Type": "application/octet-stream",
-                        "X-Mysekai-Profile": header,
-                    },
+                    headers=headers,
                 )
         except httpx.HTTPError:
             raise UpstreamError("出图服务暂时不可用，请稍后再试") from None
@@ -485,6 +502,10 @@ class MysekaiService:
                 drops=int(data.get("drops") or 0),
                 map_png_base64=str(data["map_png_base64"]),
                 card_png_base64=str(data["card_png_base64"]),
+                visit_counts={
+                    str(key): int(value)
+                    for key, value in (data.get("visit_counts") or {}).items()
+                },
             )
         except (ValueError, KeyError, TypeError):
             raise UpstreamError("出图服务返回了无法解析的数据") from None
@@ -609,7 +630,13 @@ class MysekaiService:
             "mode": "latest",
             "avatar_base64": avatar,
         }
-        result = await self._render(body, profile_payload)
+        day = _today_key()
+        visit_baseline = await self.repository.get_mysekai_visit_baseline(qq, day)
+        result = await self._render(body, profile_payload, visit_baseline)
+        if visit_baseline is None and result.visit_counts:
+            await self.repository.set_mysekai_visit_baseline(
+                qq, day, result.visit_counts
+            )
         upload_id = str(uuid.uuid4())
         await self.repository.record_mysekai_upload(
             upload_id=upload_id,

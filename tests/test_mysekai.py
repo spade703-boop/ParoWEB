@@ -10,6 +10,7 @@ import pytest
 
 from app.config import Settings
 from app.main import create_app
+from app.repositories.sqlite import SQLiteRepository
 
 
 TINY_PNG = base64.b64decode(
@@ -650,3 +651,15 @@ async def test_module_link_builds_the_shadowrocket_scheme(tmp_path) -> None:
     data = response.json()
     assert data["install_url"].startswith("shadowrocket://install?module=")
     assert INGEST_TOKEN in data["download_url"]
+
+
+async def test_visit_baseline_is_written_once_per_day(tmp_path) -> None:
+    """当天首次上传留下的基线不能被后续上传覆盖。"""
+    repository = SQLiteRepository(tmp_path / "test.sqlite3")
+    await repository.initialize()
+
+    await repository.set_mysekai_visit_baseline(QQ, "2026-10-21", {"1": 5})
+    await repository.set_mysekai_visit_baseline(QQ, "2026-10-21", {"1": 9})
+
+    assert await repository.get_mysekai_visit_baseline(QQ, "2026-10-21") == {"1": 5}
+    assert await repository.get_mysekai_visit_baseline(QQ, "2026-10-22") is None

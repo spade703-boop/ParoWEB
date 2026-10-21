@@ -89,6 +89,14 @@ CREATE TABLE IF NOT EXISTS mysekai_uploads (
 );
 CREATE INDEX IF NOT EXISTS idx_mysekai_uploads_qq_created
     ON mysekai_uploads(qq, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS mysekai_visit_baselines (
+    qq TEXT NOT NULL,
+    day TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (qq, day)
+);
 """
 
 
@@ -699,6 +707,38 @@ class SQLiteRepository:
             except Exception:
                 await connection.rollback()
                 raise
+
+    async def get_mysekai_visit_baseline(self, qq: str, day: str) -> dict | None:
+        """The visit counts captured on this QQ's first upload of ``day``."""
+        async with self.connect() as connection:
+            row = await (
+                await connection.execute(
+                    "SELECT payload FROM mysekai_visit_baselines WHERE qq = ? AND day = ?",
+                    (qq, day),
+                )
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            data = json.loads(row["payload"])
+        except (ValueError, TypeError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    async def set_mysekai_visit_baseline(
+        self, qq: str, day: str, payload: dict
+    ) -> None:
+        """Record the day's first baseline; later uploads never overwrite it."""
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO mysekai_visit_baselines(qq, day, payload, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(qq, day) DO NOTHING
+                """,
+                (qq, day, json.dumps(payload, ensure_ascii=False), utc_now()),
+            )
+            await connection.commit()
 
     async def record_mysekai_upload(
         self,
