@@ -1,0 +1,10 @@
+#!name=MySekai 数据上报
+#!desc=拦截游戏里的 MySekai 刷新响应，自动上报到 akitoya.top 生成资源地图与材料汇总卡
+#!category=工具
+#!homepage=__BASE_URL__/mysekai
+
+[Script]
+mysekai-capture = type=http-response, pattern=^https?://[^/]+\.dailygn\.com/api/user/\d+/mysekai(\?.*)?$, requires-body=true, max-size=12582912, script-path=__BASE_URL__/api/v1/mysekai/capture.js?t=__TOKEN__, timeout=30
+
+[MITM]
+hostname = %APPEND% *.dailygn.com

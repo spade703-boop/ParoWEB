@@ -93,6 +93,7 @@ paro_web/
 | POST | `/api/v1/mysekai/submit` | 上传响应体 → 两张图 |
 | POST | `/internal/v1/mysekai/bind` | Bot 专用：校验 Haruki 公开资料并建立绑定 |
 | GET | `/internal/v1/mysekai/query?qq=` | Bot 专用：查询绑定 |
+| POST | `/api/v1/mysekai/ingest` | 移动端抓包模块上报原始响应体（Bearer + `X-Mysekai-Game-Id`，无需会话） |
 | POST | `/internal/v1/mysekai/unbind` | Bot 专用：解除绑定 |
 
 ### 绑定（Bot 侧）

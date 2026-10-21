@@ -423,3 +423,183 @@ async def test_page_and_hidden_entry(client: httpx.AsyncClient) -> None:
     index = await client.get("/")
     assert index.status_code == 200
     assert 'href="/mysekai"' in index.text
+
+
+# ---------------------------------------------------------------- ingest（移动端上传）
+
+INGEST_TOKEN = "ingest-token"
+
+
+async def _ingest(
+    client: httpx.AsyncClient,
+    *,
+    body: bytes = b"capture",
+    game_user_id: str = GAME_ID,
+    token: str | None = INGEST_TOKEN,
+):
+    headers = {"Content-Type": "application/octet-stream", "X-Mysekai-Game-Id": game_user_id}
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    return await client.post("/api/v1/mysekai/ingest", content=body, headers=headers)
+
+
+async def test_ingest_renders_and_pushes_without_a_session(tmp_path) -> None:
+    push_payloads: list[dict] = []
+    settings = _settings(
+        tmp_path,
+        mysekai_ingest_token=INGEST_TOKEN,
+        mysekai_push_url="http://push.test/push",
+    )
+    app = create_app(settings)
+    app.state.services.mysekai.transport = _mock_transport(push_payloads=push_payloads)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            await _bind(client)
+            response = await _ingest(client)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["points"] == 33
+    assert payload["push"]["status"] == "sent"
+    assert "map" not in payload and "card" not in payload
+    assert push_payloads[0]["upload_id"] == payload["upload_id"]
+    assert push_payloads[0]["qq"] == QQ
+    assert "message" not in push_payloads[0]
+
+
+async def test_ingest_requires_its_token(tmp_path) -> None:
+    settings = _settings(tmp_path, mysekai_ingest_token=INGEST_TOKEN)
+    app = create_app(settings)
+    app.state.services.mysekai.transport = _mock_transport()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            missing = await _ingest(client, token=None)
+            wrong = await _ingest(client, token="nope")
+
+    assert missing.status_code == 403
+    assert wrong.status_code == 403
+
+
+async def test_ingest_is_disabled_without_a_token(tmp_path) -> None:
+    settings = _settings(tmp_path, mysekai_ingest_token="")
+    app = create_app(settings)
+    app.state.services.mysekai.transport = _mock_transport()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            response = await _ingest(client)
+
+    assert response.status_code == 503
+
+
+async def test_ingest_rejects_unbound_game_id(tmp_path) -> None:
+    settings = _settings(tmp_path, mysekai_ingest_token=INGEST_TOKEN)
+    app = create_app(settings)
+    app.state.services.mysekai.transport = _mock_transport()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            response = await _ingest(client, game_user_id=SECOND_GAME_ID)
+
+    assert response.status_code == 403
+
+
+async def test_ingest_validates_header_and_body(tmp_path) -> None:
+    settings = _settings(tmp_path, mysekai_ingest_token=INGEST_TOKEN)
+    app = create_app(settings)
+    app.state.services.mysekai.transport = _mock_transport()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            bad_id = await _ingest(client, game_user_id="123")
+            empty = await _ingest(client, body=b"")
+
+    assert bad_id.status_code == 422
+    assert empty.status_code == 422
+
+
+async def test_ingest_honours_the_allowlist(tmp_path) -> None:
+    settings = _settings(
+        tmp_path,
+        mysekai_ingest_token=INGEST_TOKEN,
+        mysekai_ingest_allowlist=frozenset({SECOND_GAME_ID}),
+    )
+    app = create_app(settings)
+    app.state.services.mysekai.transport = _mock_transport()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            response = await _ingest(client, game_user_id=GAME_ID)
+
+    assert response.status_code == 403
+
+
+# ---------------------------------------------------------------- 模块下载
+
+async def test_module_download_requires_a_session(tmp_path) -> None:
+    settings = _settings(tmp_path, mysekai_ingest_token=INGEST_TOKEN)
+    app = create_app(settings)
+    app.state.services.mysekai.transport = _mock_transport()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            response = await client.get("/api/v1/mysekai/module")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/mysekai"
+
+
+async def test_module_download_bakes_in_the_token(tmp_path) -> None:
+    settings = _settings(tmp_path, mysekai_ingest_token=INGEST_TOKEN)
+    app = create_app(settings)
+    app.state.services.mysekai.transport = _mock_transport()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            await _login(client)
+            response = await client.get("/api/v1/mysekai/module")
+
+    assert response.status_code == 200
+    assert "attachment" in response.headers["content-disposition"]
+    text = response.text
+    assert INGEST_TOKEN in text
+    assert "http://testserver/api/v1/mysekai/capture.js" in text
+    assert "__TOKEN__" not in text and "__BASE_URL__" not in text
+
+
+async def test_capture_script_needs_the_token(tmp_path) -> None:
+    settings = _settings(tmp_path, mysekai_ingest_token=INGEST_TOKEN)
+    app = create_app(settings)
+    app.state.services.mysekai.transport = _mock_transport()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            denied = await client.get("/api/v1/mysekai/capture.js", params={"t": "wrong"})
+            allowed = await client.get(
+                "/api/v1/mysekai/capture.js", params={"t": INGEST_TOKEN}
+            )
+
+    assert denied.status_code == 403
+    assert allowed.status_code == 200
+    assert INGEST_TOKEN in allowed.text
+    assert "__TOKEN__" not in allowed.text

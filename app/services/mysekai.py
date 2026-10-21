@@ -489,6 +489,31 @@ class MysekaiService:
         except (ValueError, KeyError, TypeError):
             raise UpstreamError("出图服务返回了无法解析的数据") from None
 
+    async def ingest(
+        self,
+        *,
+        game_user_id: str,
+        server: str,
+        body: bytes,
+    ) -> dict:
+        """Render a response body pushed by the mobile capture path.
+
+        The body itself carries no game id, so the caller-supplied id is the
+        only link back to a bound QQ; an id with no binding is rejected before
+        any decryption or rendering happens.
+        """
+        binding = await self.repository.get_mysekai_binding_by_game(
+            server, game_user_id
+        )
+        if binding is None:
+            raise BindingNotFound("这个游戏 ID 还没有绑定 QQ，请先在群里绑定")
+        return await self.submit(
+            qq=binding["qq"],
+            game_user_id=game_user_id,
+            server=server,
+            file_base64=base64.b64encode(body).decode("ascii"),
+        )
+
     async def _push(
         self,
         *,
