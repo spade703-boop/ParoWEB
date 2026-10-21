@@ -505,6 +505,22 @@ class MysekaiService:
             raise UpstreamError("出图服务暂时不可用，请稍后再试")
         return response.content
 
+    async def fetch_birthday_state(self) -> dict | None:
+        """Ask the render service whether a birthday window is open right now."""
+        url = f"{self.settings.mysekai_service_url}/birthday/state"
+        try:
+            async with self._client(timeout=10.0) as client:
+                response = await client.get(url)
+        except httpx.HTTPError:
+            return None
+        if response.status_code != 200:
+            return None
+        try:
+            data = response.json()
+        except ValueError:
+            return None
+        return data if isinstance(data, dict) else None
+
     # ------------------------------------------------------------------ data
     async def bind(self, qq: str, game_user_id: str, server: str) -> dict:
         if await self.repository.get_mysekai_binding(qq) is not None:

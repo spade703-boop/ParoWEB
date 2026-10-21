@@ -188,7 +188,8 @@ async def water_watch(payload: WatchRequest, request: Request):
         return auth_error
     service = _mysekai(request)
     await service.repository.set_mysekai_water_watch(payload.qq, payload.enabled)
-    return {"ok": True, "enabled": payload.enabled}
+    birthday = await service.fetch_birthday_state() if payload.enabled else None
+    return {"ok": True, "enabled": payload.enabled, "birthday": birthday}
 
 
 @internal_router.post("/gate")
