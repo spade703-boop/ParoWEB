@@ -76,6 +76,7 @@ def _settings(tmp_path: Path) -> Settings:
         cookie_secure=False,
         allowed_hosts=("testserver",),
         allowed_origins=("http://testserver",),
+        public_base_url="http://testserver",
         draw_cooldown_seconds=0,
         mysekai_password="secret",
         mysekai_session_secret="session-secret",
@@ -245,3 +246,37 @@ async def test_catalog_endpoints_require_the_bot_token(harness):
     )
     # Then it is refused before touching storage
     assert response.status_code == 403
+
+
+async def test_catalog_link_is_signed_and_opens_the_card(harness):
+    # Given an uploaded capture with blueprints
+    client, _, service = harness
+    await service.repository.set_mysekai_catalog_state(
+        server="cn",
+        game_user_id=GAME_ID,
+        music_records=None,
+        blueprints=[{"mysekaiBlueprintId": 1}],
+    )
+    # When the bot asks for a link instead of an image
+    response = await client.post(
+        "/internal/v1/mysekai/catalog-link",
+        json={"game_user_id": GAME_ID, "kind": "fixture-list"},
+        headers=AUTH,
+    )
+    # Then the URL opens the same card without a session
+    assert response.status_code == 200
+    url = response.json()["url"]
+    assert url.startswith("http://testserver/api/v1/mysekai/catalog/fixture-list?t=")
+    opened = await client.get(url.split("testserver", 1)[1])
+    assert opened.status_code == 200
+    assert opened.content[:1] == bytes([0x89])
+
+
+async def test_a_forged_catalog_link_is_refused(harness):
+    # Given a token nobody signed
+    client, _, _ = harness
+    # When the browser asks for the card
+    response = await client.get("/api/v1/mysekai/catalog/fixture-list?t=abc.def")
+    # Then it is refused before any lookup
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "invalid_link"

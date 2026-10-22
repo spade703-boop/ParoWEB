@@ -175,6 +175,7 @@ Bot 固定投递到 `MYSEKAI_GROUP_ID`，不接受网页指定群号，并用 `u
 | `PARO_MYSEKAI_PASSWORD` | 空 | 群友入口共享密码；留空则功能关闭 |
 | `PARO_MYSEKAI_SESSION_SECRET` | 随机 | 会话 Cookie 的 HMAC 密钥；生产必须固定 |
 | `PARO_MYSEKAI_SERVICE_URL` | `http://127.0.0.1:8765` | MySekai 出图服务 |
+| `PARO_PUBLIC_BASE_URL` | 空 | 全量卡片链接的公网前缀，如 `https://akitoya.top`；留空则不支持全量链接 |
 | `PARO_MYSEKAI_HARUKI_BASE` | `https://toolbox-api-direct.haruki.seiunx.com` | Haruki 工具箱公开 API |
 | `PARO_MYSEKAI_ASSET_BASE` | `https://sekai-assets.haruki.seiunx.com` | 队长卡资源 CDN |
 | `PARO_MYSEKAI_MASTER_BASE` | `https://sekai-api-cdn.haruki.seiunx.com` | 卡牌主数据 CDN |

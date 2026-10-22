@@ -44,6 +44,8 @@ class Settings:
     cookie_secure: bool
     allowed_hosts: tuple[str, ...]
     allowed_origins: tuple[str, ...]
+    #: 生成全量视图链接用的公网前缀，例如 https://akitoya.top；未配置时不出链接。
+    public_base_url: str
     draw_cooldown_seconds: int
     stats_cache_seconds: int
     mysekai_password: str
@@ -81,6 +83,7 @@ class Settings:
                 "PARO_ALLOWED_ORIGINS",
                 "http://localhost:8000,http://127.0.0.1:8000,http://testserver",
             ),
+            public_base_url=os.getenv("PARO_PUBLIC_BASE_URL", "").strip().rstrip("/"),
             draw_cooldown_seconds=_int_env("PARO_DRAW_COOLDOWN_SECONDS", 5),
             stats_cache_seconds=_int_env("PARO_STATS_CACHE_SECONDS", 60),
             mysekai_password=os.getenv("PARO_MYSEKAI_PASSWORD", "").strip(),

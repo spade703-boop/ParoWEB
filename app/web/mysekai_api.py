@@ -16,6 +16,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.services.catalog_link import CatalogLinkError, issue, parse
 from app.services.mysekai import (
     COOKIE_NAME,
     MAX_BODY_BYTES,
@@ -87,6 +88,13 @@ class TalkListRequest(CatalogRequest):
 
 class MusicRecordRequest(CatalogRequest):
     show_id: bool = False
+
+
+class CatalogLinkRequest(CatalogRequest):
+    """Which card the link should open, plus the typed query for talk lists."""
+
+    kind: str = Field(pattern=r"^(fixture-list|talk-list|music-record)$")
+    query: str = Field(default="", max_length=64)
 
 
 class SubmitRequest(BaseModel):
@@ -318,6 +326,65 @@ async def music_record(payload: MusicRecordRequest, request: Request):
     return await _catalog_image(
         request, payload, _CatalogRender("music-record", {"show_id": payload.show_id})
     )
+
+
+async def _render_catalog_for(
+    service: MysekaiService, game_user_id: str, kind: str, query: str
+) -> bytes:
+    """Shared by the bot route and the public link route."""
+    if kind == "talk-list":
+        data = await service.fetch_mysekai_suite(game_user_id, kind, "cn")
+        options = {"query": query}
+    else:
+        data = await service.catalog_payload(game_user_id, kind, "cn")
+        options = {}
+    profile = await _binding_profile(service, "cn", game_user_id)
+    return await service.render_catalog_image(
+        CATALOG_ENDPOINTS[kind], data, profile, options
+    )
+
+
+@internal_router.post("/catalog-link")
+async def catalog_link(payload: CatalogLinkRequest, request: Request):
+    """Return a short-lived URL that opens one full card in a browser."""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    settings = request.app.state.settings
+    if payload.server != "cn":
+        return error_response(422, "unsupported_server", "第一版只支持国服")
+    if not settings.public_base_url:
+        return error_response(
+            503, "public_base_url_missing", "未配置公网地址，暂时无法生成全量图链接"
+        )
+    token = issue(
+        settings.mysekai_session_secret,
+        game_user_id=payload.game_user_id,
+        kind=payload.kind,
+        query=payload.query,
+    )
+    return {
+        "url": f"{settings.public_base_url}/api/v1/mysekai/catalog/{payload.kind}?t={token}"
+    }
+
+
+@router.get("/catalog/{kind}")
+async def catalog_image(kind: str, t: str, request: Request):
+    """Render the full card behind a signed link; no session required."""
+    settings = request.app.state.settings
+    try:
+        claims = parse(settings.mysekai_session_secret, t)
+    except CatalogLinkError as failure:
+        return error_response(403, "invalid_link", str(failure))
+    if claims.get("kind") != kind:
+        return error_response(403, "invalid_link", "链接与请求的卡片不一致")
+    try:
+        png = await _render_catalog_for(
+            _mysekai(request), str(claims["gid"]), kind, str(claims.get("q") or "")
+        )
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return Response(content=png, media_type="image/png")
 
 
 @internal_router.get("/query")
