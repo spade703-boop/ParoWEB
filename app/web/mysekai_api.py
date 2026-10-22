@@ -273,9 +273,16 @@ async def _catalog_image(
         return error_response(422, "unsupported_server", "第一版只支持国服")
     try:
         service = _mysekai(request)
-        data = await service.fetch_mysekai_suite(
-            payload.game_user_id, render.kind, payload.server
-        )
+        if render.kind == "talk-list":
+            # 对话在 Haruki 公开面可见，直接用实时快照。
+            data = await service.fetch_mysekai_suite(
+                payload.game_user_id, render.kind, payload.server
+            )
+        else:
+            # 唱片与蓝图公开面不可见，读用户最近一次上传留下的 id 行。
+            data = await service.catalog_payload(
+                payload.game_user_id, render.kind, payload.server
+            )
         profile = await _binding_profile(service, payload.server, payload.game_user_id)
         png = await service.render_catalog_image(
             CATALOG_ENDPOINTS[render.kind], data, profile, render.options

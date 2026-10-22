@@ -109,6 +109,15 @@ CREATE TABLE IF NOT EXISTS mysekai_water_rounds (
     pushed_at TEXT NOT NULL,
     PRIMARY KEY (game_user_id, round_key)
 );
+
+CREATE TABLE IF NOT EXISTS mysekai_catalog_state (
+    server TEXT NOT NULL,
+    game_user_id TEXT NOT NULL,
+    music_records TEXT,
+    blueprints TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (server, game_user_id)
+);
 """
 
 
@@ -794,6 +803,62 @@ class SQLiteRepository:
             )
             await connection.commit()
         return cursor.rowcount > 0
+
+    async def set_mysekai_catalog_state(
+        self,
+        *,
+        server: str,
+        game_user_id: str,
+        music_records: list | None,
+        blueprints: list | None,
+    ) -> None:
+        """Keep the id rows from the account's most recent capture.
+
+        ``None`` and ``[]`` mean different things here: ``None`` is "this capture
+        did not refresh the resource", ``[]`` is "refreshed, and the player owns
+        none". The renderer greys tiles only in the second case.
+        """
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO mysekai_catalog_state(
+                    server, game_user_id, music_records, blueprints, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(server, game_user_id) DO UPDATE SET
+                    music_records=excluded.music_records,
+                    blueprints=excluded.blueprints,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    server,
+                    game_user_id,
+                    None if music_records is None else json.dumps(music_records),
+                    None if blueprints is None else json.dumps(blueprints),
+                    utc_now(),
+                ),
+            )
+            await connection.commit()
+
+    async def get_mysekai_catalog_state(
+        self, server: str, game_user_id: str
+    ) -> dict | None:
+        async with self.connect() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT music_records, blueprints, updated_at
+                FROM mysekai_catalog_state
+                WHERE server = ? AND game_user_id = ?
+                """,
+                (server, game_user_id),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "music_records": None if row[0] is None else json.loads(row[0]),
+            "blueprints": None if row[1] is None else json.loads(row[1]),
+            "updated_at": row[2],
+        }
 
     async def record_mysekai_upload(
         self,

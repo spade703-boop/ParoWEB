@@ -1,4 +1,4 @@
-"""The three catalog endpoints: projection, version cache, and error mapping."""
+"""The three catalog endpoints: stored capture state, projections, error mapping."""
 
 from __future__ import annotations
 
@@ -50,12 +50,8 @@ class Haruki:
                     json={
                         "upload_time": self.version,
                         "userGamedata": {"userId": int(GAME_ID), "name": "测试玩家"},
-                        "userMysekaiBlueprints": [{"mysekaiBlueprintId": 1}],
                         "userMysekaiCharacterTalks": [
                             {"mysekaiCharacterTalkId": 10, "isRead": False}
-                        ],
-                        "userMysekaiMusicRecords": [
-                            {"mysekaiMusicRecordId": 184, "obtainedAt": 5}
                         ],
                     },
                 )
@@ -97,88 +93,97 @@ def _settings(tmp_path: Path) -> Settings:
 async def harness(tmp_path):
     state = Haruki()
     app = create_app(_settings(tmp_path))
-    app.state.services.mysekai.transport = state.transport()
+    service = app.state.services.mysekai
+    service.transport = state.transport()
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
             transport=transport, base_url="http://testserver", timeout=30
         ) as client:
-            yield client, state
+            yield client, state, service
 
 
-async def test_fixture_list_requests_the_projection_and_returns_a_png(harness):
-    # Given a bot call for the craftable catalog
-    client, state = harness
-    # When it hits the internal endpoint
+async def test_fixture_list_uses_the_last_capture_state(harness):
+    # Given the account uploaded a capture that carried its blueprints
+    client, state, service = harness
+    await service.repository.set_mysekai_catalog_state(
+        server="cn",
+        game_user_id=GAME_ID,
+        music_records=None,
+        blueprints=[{"mysekaiBlueprintId": 1}],
+    )
+    # When the bot asks for the craftable catalog
     response = await client.post(
         "/internal/v1/mysekai/fixture-list", json={"game_user_id": GAME_ID}, headers=AUTH
     )
-    # Then the snapshot projection carries the identity and version keys
+    # Then it renders from the stored rows without touching Haruki at all
     assert response.status_code == 200
     assert response.content.startswith(b"\x89PNG")
-    assert len(state.projections) == 1
-    projection = state.projections[0]
-    assert "userMysekaiBlueprints" in projection
-    assert "userGamedata" in projection
-    assert "upload_time" in projection
-    assert state.render_payloads[0]["user"]["userMysekaiBlueprints"]
+    assert state.projections == []
+    assert state.render_payloads[0]["user"]["userMysekaiBlueprints"] == [
+        {"mysekaiBlueprintId": 1}
+    ]
 
 
-async def test_a_second_call_reuses_the_snapshot_when_the_version_matches(harness):
-    # Given one successful call already cached the payload
-    client, state = harness
-    body = {"game_user_id": GAME_ID}
-    await client.post("/internal/v1/mysekai/fixture-list", json=body, headers=AUTH)
-    # When the same account asks again with the same upload_time
-    await client.post("/internal/v1/mysekai/fixture-list", json=body, headers=AUTH)
-    # Then only the tiny version probe runs, not a second projection fetch
-    assert len(state.projections) == 1
-    assert state.probes == 2
+async def test_fixture_list_without_a_capture_is_a_409(harness):
+    # Given an account that never uploaded anything
+    client, _, _ = harness
+    # When the catalog command runs
+    response = await client.post(
+        "/internal/v1/mysekai/fixture-list", json={"game_user_id": GAME_ID}, headers=AUTH
+    )
+    # Then the bot can tell the user to upload first
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "catalog_state_missing"
 
 
-async def test_talk_list_forwards_the_character_options(harness):
-    # Given a command with a character, a unit and the all flag
-    client, state = harness
+async def test_talk_list_reads_haruki_and_omits_the_unavailable_blueprint_field(harness):
+    # Given the public suite does not expose userMysekaiBlueprints
+    client, state, _ = harness
+    # When the talk command asks for its projection
     response = await client.post(
         "/internal/v1/mysekai/talk-list",
         json={"game_user_id": GAME_ID, "query": "初音 ln all"},
         headers=AUTH,
     )
-    # Then the render service receives exactly those options
+    # Then the read happens against Haruki without that key, and the options
+    # are forwarded verbatim
     assert response.status_code == 200
+    assert "userMysekaiCharacterTalks" in state.projections[0]
+    assert "userMysekaiBlueprints" not in state.projections[0]
     assert state.render_payloads[0]["query"] == "初音 ln all"
 
 
-async def test_talk_projection_omits_the_unavailable_blueprint_field(harness):
-    # Given the public suite does not expose userMysekaiBlueprints at all
-    client, state = harness
-    # When the talk command asks for its projection
-    await client.post(
-        "/internal/v1/mysekai/talk-list",
-        json={"game_user_id": GAME_ID, "query": "冬弥"},
-        headers=AUTH,
-    )
-    # Then the request does not include it, so the whole read does not 404
-    assert "userMysekaiCharacterTalks" in state.projections[0]
-    assert "userMysekaiBlueprints" not in state.projections[0]
+async def test_a_second_talk_call_reuses_the_snapshot_when_the_version_matches(harness):
+    # Given one talk call already cached the payload
+    client, state, _ = harness
+    body = {"game_user_id": GAME_ID, "query": "冬弥"}
+    await client.post("/internal/v1/mysekai/talk-list", json=body, headers=AUTH)
+    # When the same account asks again with the same upload_time
+    await client.post("/internal/v1/mysekai/talk-list", json=body, headers=AUTH)
+    # Then only the tiny version probe runs, not a second projection fetch
+    assert len(state.projections) == 1
+    assert state.probes == 2
 
 
 async def test_a_stale_snapshot_is_reported_as_capture_stale(harness):
     # Given Haruki rejects the projected read
-    client, state = harness
+    client, state, _ = harness
     state.suite_status = 404
-    # When the bot asks for the record list
+    # When the bot asks for the character talk list
     response = await client.post(
-        "/internal/v1/mysekai/music-record", json={"game_user_id": GAME_ID}, headers=AUTH
+        "/internal/v1/mysekai/talk-list",
+        json={"game_user_id": GAME_ID, "query": "冬弥"},
+        headers=AUTH,
     )
-    # Then the bot can tell the user to re-upload rather than showing an empty card
+    # Then the bot can tell the user the data is unavailable
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "capture_stale"
 
 
 async def test_an_unknown_character_surfaces_as_422(harness):
     # Given the render service rejects the character token
-    client, state = harness
+    client, state, _ = harness
     state.render_status = 422
     state.render_error = {"error": "character_unknown", "message": "未知角色"}
     # When the bot asks for that character
@@ -192,24 +197,51 @@ async def test_an_unknown_character_surfaces_as_422(harness):
     assert response.json()["error"]["code"] == "character_unknown"
 
 
-async def test_music_record_forwards_show_id(harness):
-    # Given the id switch typed after the command
-    client, state = harness
-    await client.post(
+async def test_music_record_uses_the_last_capture_state(harness):
+    # Given a capture that carried the record table, with show_id requested
+    client, state, service = harness
+    await service.repository.set_mysekai_catalog_state(
+        server="cn",
+        game_user_id=GAME_ID,
+        music_records=[{"mysekaiMusicRecordId": 184, "obtainedAt": 5}],
+        blueprints=None,
+    )
+    # When the bot asks for the collection card
+    response = await client.post(
         "/internal/v1/mysekai/music-record",
         json={"game_user_id": GAME_ID, "show_id": True},
         headers=AUTH,
     )
-    # Then the render payload asks for the ids
+    # Then the stored rows reach the renderer, and no Haruki call happened
+    assert response.status_code == 200
+    assert state.projections == []
     assert state.render_payloads[0]["show_id"] is True
+    assert state.render_payloads[0]["user"]["userMysekaiMusicRecords"] == [
+        {"mysekaiMusicRecordId": 184, "obtainedAt": 5}
+    ]
+
+
+async def test_music_record_without_record_rows_is_a_409(harness):
+    # Given a capture that never refreshed the record table
+    client, _, service = harness
+    await service.repository.set_mysekai_catalog_state(
+        server="cn", game_user_id=GAME_ID, music_records=None, blueprints=[]
+    )
+    # When the record command runs
+    response = await client.post(
+        "/internal/v1/mysekai/music-record", json={"game_user_id": GAME_ID}, headers=AUTH
+    )
+    # Then the user is told to upload again rather than shown an empty card
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "catalog_state_missing"
 
 
 async def test_catalog_endpoints_require_the_bot_token(harness):
     # Given a caller without the bearer token
-    client, _ = harness
+    client, _, _ = harness
     # When it tries the catalog endpoint
     response = await client.post(
         "/internal/v1/mysekai/fixture-list", json={"game_user_id": GAME_ID}
     )
-    # Then it is refused before touching Haruki
+    # Then it is refused before touching storage
     assert response.status_code == 403

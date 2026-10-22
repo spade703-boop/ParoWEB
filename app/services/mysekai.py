@@ -166,6 +166,13 @@ class UnitUnknown(MysekaiError):
     status = 422
 
 
+class CatalogStateMissing(MysekaiError):
+    """The account has no stored capture state, or it lacks the needed resource."""
+
+    code = "catalog_state_missing"
+    status = 409
+
+
 class CaptureStale(MysekaiError):
     """The account's latest snapshot does not carry the resource this needs."""
 
@@ -224,6 +231,7 @@ class RenderResult:
     card_png_base64: str
     visit_counts: dict[str, int]
     birthday: dict | None = None
+    catalog_state: dict | None = None
 
 
 _CN = timezone(timedelta(hours=8))
@@ -689,6 +697,27 @@ class MysekaiService:
         value = data.get("upload_time") if isinstance(data, dict) else data
         return value if isinstance(value, int) else None
 
+    async def catalog_payload(
+        self, game_user_id: str, kind: str, server: str = "cn"
+    ) -> dict:
+        """The ``user`` rows the renderer needs, from the last uploaded capture.
+
+        Haruki's public suite does not expose records or blueprints, so these two
+        cards read what the player already uploaded to us instead.
+        """
+        state = await self.repository.get_mysekai_catalog_state(server, game_user_id)
+        if state is None:
+            raise CatalogStateMissing("这个账号还没有上传记录，请先在网页上传一次抓包")
+        if kind == "music-record":
+            rows = state["music_records"]
+            if rows is None:
+                raise CatalogStateMissing(
+                    "最近一次抓包没有刷新唱片数据，请重新完整上传一次"
+                )
+            return {"userMysekaiMusicRecords": rows}
+        rows = state["blueprints"]
+        return {} if rows is None else {"userMysekaiBlueprints": rows}
+
     async def render_catalog_image(
         self,
         endpoint: str,
@@ -834,6 +863,11 @@ class MysekaiService:
                     for key, value in (data.get("visit_counts") or {}).items()
                 },
                 birthday=data.get("birthday"),
+                catalog_state=(
+                    data["catalog_state"]
+                    if isinstance(data.get("catalog_state"), dict)
+                    else None
+                ),
             )
         except (ValueError, KeyError, TypeError):
             raise UpstreamError("出图服务返回了无法解析的数据") from None
@@ -1017,6 +1051,13 @@ class MysekaiService:
         day = _today_key()
         visit_baseline = await self.repository.get_mysekai_visit_baseline(qq, day)
         result = await self._render(body, profile_payload, visit_baseline)
+        if result.catalog_state is not None:
+            await self.repository.set_mysekai_catalog_state(
+                server=server,
+                game_user_id=binding["game_user_id"],
+                music_records=result.catalog_state.get("music_records"),
+                blueprints=result.catalog_state.get("blueprints"),
+            )
         if visit_baseline is None and result.visit_counts:
             await self.repository.set_mysekai_visit_baseline(
                 qq, day, result.visit_counts
