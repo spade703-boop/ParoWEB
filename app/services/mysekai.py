@@ -1159,13 +1159,20 @@ def _catalog_render_error(response) -> MysekaiError:
     return UpstreamError(message or "出图服务暂时不可用，请稍后再试")
 
 
+#: Unixtime in seconds stays far below 1e11 until year 5138, while today's
+#: millisecond timestamps are ~1e12. The gap makes the unit unambiguous.
+_MILLISECONDS_FLOOR = 100_000_000_000
+
+
 def format_capture_time(value: str | int | float | None) -> str | None:
     """A capture timestamp as ``YYYY-MM-DD HH:MM`` in China time.
 
-    Accepts Haruki's ``upload_time`` (unix seconds) and the stored ISO string.
+    Accepts Haruki's ``upload_time`` (unix seconds), the pipeline's
+    ``refreshed_at_ms`` (unix milliseconds), and the stored ISO string.
     """
     if isinstance(value, (int, float)) and value > 0:
-        moment = datetime.fromtimestamp(value, _CN)
+        seconds = value / 1000 if value >= _MILLISECONDS_FLOOR else value
+        moment = datetime.fromtimestamp(seconds, _CN)
         return moment.strftime("%Y-%m-%d %H:%M")
     if isinstance(value, str) and value:
         try:

@@ -823,3 +823,15 @@ async def test_gate_endpoint_maps_max_level_to_409(tmp_path) -> None:
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "gate_max_level"
+
+
+def test_capture_time_reads_seconds_milliseconds_and_iso() -> None:
+    # Given the three timestamp shapes different producers store
+    from app.services.mysekai import format_capture_time
+
+    # Then seconds and milliseconds describe the same instant
+    assert format_capture_time(1792029476) == "2026-10-15 09:57"
+    assert format_capture_time(1792029476430) == "2026-10-15 09:57"
+    # And an ISO string is still accepted
+    assert format_capture_time("2026-10-22T07:01:00+00:00") == "2026-10-22 15:01"
+    assert format_capture_time(None) is None
