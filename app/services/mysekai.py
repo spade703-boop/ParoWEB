@@ -799,6 +799,19 @@ class MysekaiService:
         rows = state["blueprints"]
         return {} if rows is None else {"userMysekaiBlueprints": rows}
 
+    async def blueprint_payload(
+        self, game_user_id: str, server: str = "cn"
+    ) -> dict:
+        """Stored blueprint rows for the talk card's grey-out state.
+
+        Unlike :meth:`catalog_payload` this never fails: a talk card still
+        renders without an upload, it just cannot tell owned from missing.
+        """
+        state = await self.repository.get_mysekai_catalog_state(server, game_user_id)
+        if state is None or state["blueprints"] is None:
+            return {}
+        return {"userMysekaiBlueprints": state["blueprints"]}
+
     async def render_catalog_image(
         self,
         endpoint: str,

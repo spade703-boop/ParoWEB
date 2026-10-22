@@ -291,11 +291,18 @@ async def _catalog_image(
     try:
         service = _mysekai(request)
         if render.kind == "talk-list":
-            # 对话在 Haruki 公开面可见，直接用实时快照。
-            data = await service.fetch_mysekai_suite(
-                payload.game_user_id, render.kind, payload.server
+            # 对话在 Haruki 公开面可见，直接用实时快照；copy 一份再补蓝图，
+            # 避免把本地字段写进 suite 缓存。
+            data = dict(
+                await service.fetch_mysekai_suite(
+                    payload.game_user_id, render.kind, payload.server
+                )
             )
             captured_at = format_capture_time(data.get("upload_time"))
+            # 蓝图只在用户上传的抓包里；没有上传时这里为空，卡片不置灰。
+            data.update(
+                await service.blueprint_payload(payload.game_user_id, payload.server)
+            )
         else:
             # 唱片与蓝图公开面不可见，读用户最近一次上传留下的 id 行。
             data = await service.catalog_payload(
@@ -363,9 +370,10 @@ async def _render_catalog_for(
 ) -> bytes:
     """Shared by the bot route and the public link route."""
     if kind == "talk-list":
-        data = await service.fetch_mysekai_suite(game_user_id, kind, "cn")
+        data = dict(await service.fetch_mysekai_suite(game_user_id, kind, "cn"))
         options = {"query": query}
         captured_at = format_capture_time(data.get("upload_time"))
+        data.update(await service.blueprint_payload(game_user_id, "cn"))
     else:
         data = await service.catalog_payload(game_user_id, kind, "cn")
         options = {}

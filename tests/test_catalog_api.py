@@ -305,3 +305,39 @@ async def test_repeat_catalog_request_reuses_the_rendered_png(harness):
         assert response.status_code == 200
     # Then the renderer ran once and the second answer came from the cache
     assert len(state.render_payloads) == 1
+
+
+async def test_talk_list_carries_the_stored_blueprints(harness):
+    # Given a capture that recorded blueprint rows
+    client, state, service = harness
+    await service.repository.set_mysekai_catalog_state(
+        server="cn",
+        game_user_id=GAME_ID,
+        music_records=None,
+        blueprints=[{"mysekaiBlueprintId": 1}],
+    )
+    # When the character card is rendered
+    response = await client.post(
+        "/internal/v1/mysekai/talk-list",
+        json={"game_user_id": GAME_ID, "query": "一歌"},
+        headers=AUTH,
+    )
+    # Then the renderer can tell owned blueprints from missing ones
+    assert response.status_code == 200
+    assert state.render_payloads[0]["user"]["userMysekaiBlueprints"] == [
+        {"mysekaiBlueprintId": 1}
+    ]
+
+
+async def test_talk_list_without_an_upload_still_renders(harness):
+    # Given an account that never uploaded a capture
+    client, state, _ = harness
+    # When the character card is rendered
+    response = await client.post(
+        "/internal/v1/mysekai/talk-list",
+        json={"game_user_id": GAME_ID, "query": "一歌"},
+        headers=AUTH,
+    )
+    # Then it still works, just without a grey-out state
+    assert response.status_code == 200
+    assert "userMysekaiBlueprints" not in state.render_payloads[0]["user"]
