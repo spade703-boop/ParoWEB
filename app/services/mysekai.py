@@ -799,18 +799,25 @@ class MysekaiService:
         rows = state["blueprints"]
         return {} if rows is None else {"userMysekaiBlueprints": rows}
 
-    async def blueprint_payload(
+    async def catalog_hint_payload(
         self, game_user_id: str, server: str = "cn"
     ) -> dict:
-        """Stored blueprint rows for the talk card's grey-out state.
+        """Stored rows the talk card needs to decide grey-out state.
 
-        Unlike :meth:`catalog_payload` this never fails: a talk card still
-        renders without an upload, it just cannot tell owned from missing.
+        Blueprints cover craftable furniture; owned fixtures cover eggs and
+        event models, which have no blueprint at all. Unlike
+        :meth:`catalog_payload` this never fails: a talk card still renders
+        without an upload, it just cannot tell owned from missing.
         """
         state = await self.repository.get_mysekai_catalog_state(server, game_user_id)
-        if state is None or state["blueprints"] is None:
+        if state is None:
             return {}
-        return {"userMysekaiBlueprints": state["blueprints"]}
+        payload: dict = {}
+        if state.get("blueprints") is not None:
+            payload["userMysekaiBlueprints"] = state["blueprints"]
+        if state.get("fixtures") is not None:
+            payload["userMysekaiFixtures"] = state["fixtures"]
+        return payload
 
     async def render_catalog_image(
         self,
@@ -1198,6 +1205,7 @@ class MysekaiService:
                 game_user_id=binding["game_user_id"],
                 music_records=result.catalog_state.get("music_records"),
                 blueprints=result.catalog_state.get("blueprints"),
+                fixtures=result.catalog_state.get("fixtures"),
                 mysekai_rank=result.catalog_state.get("mysekai_rank"),
                 refreshed_at_ms=result.catalog_state.get("refreshed_at_ms"),
             )

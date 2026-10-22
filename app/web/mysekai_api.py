@@ -307,9 +307,9 @@ async def _catalog_image(
                 )
             )
             captured_at = format_capture_time(data.get("upload_time"))
-            # 蓝图只在用户上传的抓包里；没有上传时这里为空，卡片不置灰。
+            # 蓝图与已拥有家具只在用户上传的抓包里；没有上传时这里为空，卡片不置灰。
             data.update(
-                await service.blueprint_payload(payload.game_user_id, payload.server)
+                await service.catalog_hint_payload(payload.game_user_id, payload.server)
             )
         else:
             # 唱片与蓝图公开面不可见，读用户最近一次上传留下的 id 行。
@@ -381,7 +381,7 @@ async def _render_catalog_for(
         data = dict(await service.fetch_mysekai_suite(game_user_id, kind, "cn"))
         options = {"query": query}
         captured_at = format_capture_time(data.get("upload_time"))
-        data.update(await service.blueprint_payload(game_user_id, "cn"))
+        data.update(await service.catalog_hint_payload(game_user_id, "cn"))
     else:
         data = await service.catalog_payload(game_user_id, kind, "cn")
         options = {}

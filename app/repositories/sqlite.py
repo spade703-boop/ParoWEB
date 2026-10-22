@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS mysekai_catalog_state (
     game_user_id TEXT NOT NULL,
     music_records TEXT,
     blueprints TEXT,
+    fixtures TEXT,
     mysekai_rank INTEGER,
     refreshed_at_ms INTEGER,
     updated_at TEXT NOT NULL,
@@ -223,6 +224,7 @@ class SQLiteRepository:
             for name, sql_type in (
                 ("mysekai_rank", "INTEGER"),
                 ("refreshed_at_ms", "INTEGER"),
+                ("fixtures", "TEXT"),
             ):
                 if name not in state_columns:
                     await connection.execute(
@@ -831,6 +833,7 @@ class SQLiteRepository:
         game_user_id: str,
         music_records: list | None,
         blueprints: list | None,
+        fixtures: list | None = None,
         mysekai_rank: int | None = None,
         refreshed_at_ms: int | None = None,
     ) -> None:
@@ -844,12 +847,13 @@ class SQLiteRepository:
             await connection.execute(
                 """
                 INSERT INTO mysekai_catalog_state(
-                    server, game_user_id, music_records, blueprints,
+                    server, game_user_id, music_records, blueprints, fixtures,
                     mysekai_rank, refreshed_at_ms, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(server, game_user_id) DO UPDATE SET
                     music_records=excluded.music_records,
                     blueprints=excluded.blueprints,
+                    fixtures=excluded.fixtures,
                     mysekai_rank=excluded.mysekai_rank,
                     refreshed_at_ms=excluded.refreshed_at_ms,
                     updated_at=excluded.updated_at
@@ -859,6 +863,7 @@ class SQLiteRepository:
                     game_user_id,
                     None if music_records is None else json.dumps(music_records),
                     None if blueprints is None else json.dumps(blueprints),
+                    None if fixtures is None else json.dumps(fixtures),
                     mysekai_rank,
                     refreshed_at_ms,
                     utc_now(),
@@ -872,7 +877,8 @@ class SQLiteRepository:
         async with self.connect() as connection:
             cursor = await connection.execute(
                 """
-                SELECT music_records, blueprints, mysekai_rank, refreshed_at_ms, updated_at
+                SELECT music_records, blueprints, fixtures,
+                       mysekai_rank, refreshed_at_ms, updated_at
                 FROM mysekai_catalog_state
                 WHERE server = ? AND game_user_id = ?
                 """,
@@ -884,9 +890,10 @@ class SQLiteRepository:
         return {
             "music_records": None if row[0] is None else json.loads(row[0]),
             "blueprints": None if row[1] is None else json.loads(row[1]),
-            "mysekai_rank": row[2],
-            "refreshed_at_ms": row[3],
-            "updated_at": row[4],
+            "fixtures": None if row[2] is None else json.loads(row[2]),
+            "mysekai_rank": row[3],
+            "refreshed_at_ms": row[4],
+            "updated_at": row[5],
         }
 
     async def record_mysekai_upload(
