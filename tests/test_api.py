@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from dataclasses import replace
 from datetime import UTC, datetime
 import json
 import re
 import sys
+from pathlib import Path
 from urllib.parse import unquote
 
 import aiosqlite
@@ -18,9 +20,35 @@ from app.main import create_app
 from app.repositories.sqlite import SCHEMA, SQLiteRepository
 
 
+_CONTENT = Path(__file__).resolve().parents[1] / "content"
+#: 1x1 transparent PNG: the artwork itself is gitignored, so tests stub it.
+_PIXEL_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+    "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
+
+
+def _stub_content(root: Path) -> Path:
+    """Copy the tracked content JSON and stand in for the gitignored artwork.
+
+    The real ``content/images/paro_avatars`` tree is not committed, so a clean
+    checkout would otherwise render empty asset lists.
+    """
+    content = root / "content"
+    content.mkdir(parents=True, exist_ok=True)
+    for name in ("paro_pools.json", "paro_config.json"):
+        (content / name).write_bytes((_CONTENT / name).read_bytes())
+    fox = content / "images" / "paro_avatars" / "fox&rabbit"
+    fox.mkdir(parents=True, exist_ok=True)
+    for stem in ("狐&兔", "狐&兔_2"):
+        (fox / f"{stem}.png").write_bytes(_PIXEL_PNG)
+    return content
+
+
 @pytest.fixture
 def settings(tmp_path) -> Settings:
     base = Settings.from_env()
+    content = _stub_content(tmp_path)
     announcements_path = tmp_path / "announcements.json"
     announcements_path.write_text(
         json.dumps([
@@ -39,6 +67,8 @@ def settings(tmp_path) -> Settings:
     return replace(
         base,
         announcements_path=announcements_path,
+        content_dir=content,
+        images_dir=content / "images",
         database_path=tmp_path / "test.sqlite3",
         cookie_secure=False,
         allowed_hosts=("testserver",),
