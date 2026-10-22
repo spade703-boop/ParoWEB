@@ -61,6 +61,11 @@ services:
       MYSEKAI_HOST: 0.0.0.0
       MYSEKAI_PORT: "8765"
       MYSEKAI_REGION: sc
+      # 群指令「更新国服MD / 更新日服MD」的共享口令；未配置时接口关闭。
+      MYSEKAI_ADMIN_TOKEN: ${PARO_MYSEKAI_INTERNAL_TOKEN}
+    volumes:
+      # master 必须落在宿主机，否则容器重建会把更新覆盖回镜像里的旧版。
+      - ${PARO_MYSEKAI_PIPELINE_DIR:-../mysekai-re-pipeline}/master:/app/master
     expose:
       - "8765"
     security_opt:

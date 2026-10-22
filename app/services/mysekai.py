@@ -845,6 +845,38 @@ class MysekaiService:
             return response.content
         raise _catalog_render_error(response)
 
+    async def update_master(self, region: str) -> dict:
+        """Ask the render service to install the newest upstream snapshot.
+
+        The render service writes into the host's ``master/`` directory; this
+        method only forwards and relays the diff. It never commits anything.
+        """
+        token = self.settings.mysekai_internal_token
+        if not token:
+            raise UpstreamError("内部接口未配置，无法更新主数据")
+        url = f"{self.settings.mysekai_service_url}/master/update"
+        try:
+            async with self._client(timeout=180.0) as client:
+                response = await client.post(
+                    url, json={"region": region}, headers={"X-Mysekai-Admin": token}
+                )
+        except httpx.HTTPError:
+            raise UpstreamError("出图服务暂时不可用，请稍后再试") from None
+        if response.status_code != 200:
+            message = "主数据更新失败"
+            try:
+                body = response.json()
+                if isinstance(body, dict):
+                    message = str(body.get("error") or message)
+            except ValueError:
+                pass
+            raise UpstreamError(message)
+        try:
+            result = response.json()
+        except ValueError:
+            raise UpstreamError("出图服务返回了无效数据") from None
+        return result if isinstance(result, dict) else {}
+
     async def fetch_birthday_state(self) -> dict | None:
         """Ask the render service whether a birthday window is open right now."""
         url = f"{self.settings.mysekai_service_url}/birthday/state"

@@ -33,6 +33,14 @@ class Haruki:
         self.render_payloads: list[dict] = []
         self.render_status = 200
         self.render_error: dict | None = None
+        self.master_updates: list[dict] = []
+        self.master_update_result: dict = {
+            "ok": True,
+            "region": "sc",
+            "up_to_date": True,
+            "commit": "abc123",
+            "changed": [],
+        }
 
     def transport(self) -> httpx.MockTransport:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -62,6 +70,10 @@ class Haruki:
                 return httpx.Response(
                     200, content=TINY_PNG, headers={"content-type": "image/png"}
                 )
+            if path == "/master/update":
+                self.master_updates.append(json.loads(request.content))
+                assert request.headers.get("X-Mysekai-Admin") == BOT_TOKEN
+                return httpx.Response(200, json=self.master_update_result)
             return httpx.Response(404, json={"error": "not found"})
 
         return httpx.MockTransport(handler)
@@ -341,3 +353,37 @@ async def test_talk_list_without_an_upload_still_renders(harness):
     # Then it still works, just without a grey-out state
     assert response.status_code == 200
     assert "userMysekaiBlueprints" not in state.render_payloads[0]["user"]
+
+
+async def test_master_update_forwards_the_region_with_the_admin_token(harness):
+    # Given the render service will report an update
+    client, state, _ = harness
+    state.master_update_result = {
+        "ok": True,
+        "region": "jp",
+        "up_to_date": False,
+        "from_commit": "aaa",
+        "to_commit": "bbb",
+        "changed": [{"file": "mysekaiGates.json", "before": 5, "after": 6}],
+        "counts": {"craftable_fixtures": 0, "talk_chain_fixtures": 0,
+                   "visible_music_records": 0},
+    }
+    # When the bot asks for a JP refresh
+    response = await client.post(
+        "/internal/v1/mysekai/master-update",
+        json={"region": "jp"},
+        headers=AUTH,
+    )
+    # Then the region and the shared admin token reach the render service
+    assert response.status_code == 200
+    assert state.master_updates == [{"region": "jp"}]
+    assert response.json()["to_commit"] == "bbb"
+
+
+async def test_master_update_requires_the_bot_token(harness):
+    client, state, _ = harness
+    response = await client.post(
+        "/internal/v1/mysekai/master-update", json={"region": "sc"}
+    )
+    assert response.status_code == 403
+    assert state.master_updates == []

@@ -98,6 +98,14 @@ class CatalogLinkRequest(CatalogRequest):
     query: str = Field(default="", max_length=64)
 
 
+class MasterUpdateRequest(BaseModel):
+    """Which region's master snapshot to refresh."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    region: str = Field(default="sc", pattern=r"^(sc|jp|tc)$")
+
+
 class SubmitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -411,6 +419,18 @@ async def catalog_link(payload: CatalogLinkRequest, request: Request):
     return {
         "url": f"{settings.public_base_url}/api/v1/mysekai/catalog/{payload.kind}?t={token}"
     }
+
+
+@internal_router.post("/master-update")
+async def master_update(payload: MasterUpdateRequest, request: Request):
+    """Install the newest upstream master snapshot for one region."""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        return await _mysekai(request).update_master(payload.region)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc))
 
 
 @router.get("/catalog/{kind}")
