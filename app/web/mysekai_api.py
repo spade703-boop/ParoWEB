@@ -295,18 +295,20 @@ async def _catalog_image(
             data = await service.fetch_mysekai_suite(
                 payload.game_user_id, render.kind, payload.server
             )
-            updated_at = format_capture_time(data.get("upload_time"))
+            captured_at = format_capture_time(data.get("upload_time"))
         else:
             # 唱片与蓝图公开面不可见，读用户最近一次上传留下的 id 行。
             data = await service.catalog_payload(
                 payload.game_user_id, render.kind, payload.server
             )
-            updated_at = await service.catalog_state_updated_at(
-                payload.game_user_id, payload.server
-            )
+            captured_at = None
+        meta = await service.catalog_state_meta(payload.game_user_id, payload.server)
         profile = await _binding_profile(
-            service, payload.server, payload.game_user_id, updated_at
+            service, payload.server, payload.game_user_id,
+            captured_at or meta.get("updated_at"),
         )
+        if profile is not None:
+            profile.update(_profile_extras(data, meta))
         png = await service.render_catalog_image(
             CATALOG_ENDPOINTS[render.kind], data, profile, render.options
         )
@@ -343,6 +345,19 @@ async def music_record(payload: MusicRecordRequest, request: Request):
     )
 
 
+def _profile_extras(data: dict, meta: dict) -> dict:
+    """Levels and the 烤森 snapshot time the profile strip shows."""
+    extras: dict = {}
+    gamedata = data.get("userGamedata")
+    if isinstance(gamedata, dict) and isinstance(gamedata.get("rank"), int):
+        extras["game_rank"] = gamedata["rank"]
+    if meta.get("mysekai_rank") is not None:
+        extras["mysekai_rank"] = meta["mysekai_rank"]
+    if meta.get("mysekai_at"):
+        extras["mysekai_at"] = meta["mysekai_at"]
+    return extras
+
+
 async def _render_catalog_for(
     service: MysekaiService, game_user_id: str, kind: str, query: str
 ) -> bytes:
@@ -350,12 +365,17 @@ async def _render_catalog_for(
     if kind == "talk-list":
         data = await service.fetch_mysekai_suite(game_user_id, kind, "cn")
         options = {"query": query}
-        updated_at = format_capture_time(data.get("upload_time"))
+        captured_at = format_capture_time(data.get("upload_time"))
     else:
         data = await service.catalog_payload(game_user_id, kind, "cn")
         options = {}
-        updated_at = await service.catalog_state_updated_at(game_user_id, "cn")
-    profile = await _binding_profile(service, "cn", game_user_id, updated_at)
+        captured_at = None
+    meta = await service.catalog_state_meta(game_user_id, "cn")
+    profile = await _binding_profile(
+        service, "cn", game_user_id, captured_at or meta.get("updated_at")
+    )
+    if profile is not None:
+        profile.update(_profile_extras(data, meta))
     return await service.render_catalog_image(
         CATALOG_ENDPOINTS[kind], data, profile, options
     )

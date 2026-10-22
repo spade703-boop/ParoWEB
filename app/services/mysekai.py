@@ -697,12 +697,18 @@ class MysekaiService:
         value = data.get("upload_time") if isinstance(data, dict) else data
         return value if isinstance(value, int) else None
 
-    async def catalog_state_updated_at(
+    async def catalog_state_meta(
         self, game_user_id: str, server: str = "cn"
-    ) -> str | None:
-        """When the stored catalog state was captured, as a display string."""
+    ) -> dict:
+        """Display-ready facts from the last capture: times and 烤森 level."""
         state = await self.repository.get_mysekai_catalog_state(server, game_user_id)
-        return None if state is None else format_capture_time(state.get("updated_at"))
+        if state is None:
+            return {}
+        return {
+            "updated_at": format_capture_time(state.get("updated_at")),
+            "mysekai_at": format_capture_time(state.get("refreshed_at_ms")),
+            "mysekai_rank": state.get("mysekai_rank"),
+        }
 
     async def catalog_payload(
         self, game_user_id: str, kind: str, server: str = "cn"
@@ -1064,6 +1070,8 @@ class MysekaiService:
                 game_user_id=binding["game_user_id"],
                 music_records=result.catalog_state.get("music_records"),
                 blueprints=result.catalog_state.get("blueprints"),
+                mysekai_rank=result.catalog_state.get("mysekai_rank"),
+                refreshed_at_ms=result.catalog_state.get("refreshed_at_ms"),
             )
         if visit_baseline is None and result.visit_counts:
             await self.repository.set_mysekai_visit_baseline(

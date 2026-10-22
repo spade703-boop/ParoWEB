@@ -115,6 +115,8 @@ CREATE TABLE IF NOT EXISTS mysekai_catalog_state (
     game_user_id TEXT NOT NULL,
     music_records TEXT,
     blueprints TEXT,
+    mysekai_rank INTEGER,
+    refreshed_at_ms INTEGER,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (server, game_user_id)
 );
@@ -208,6 +210,24 @@ class SQLiteRepository:
                 await connection.execute(
                     "ALTER TABLE draw_results ADD COLUMN special_asset TEXT"
                 )
+            state_columns = {
+                row["name"]
+                for row in (
+                    await (
+                        await connection.execute(
+                            "PRAGMA table_info(mysekai_catalog_state)"
+                        )
+                    ).fetchall()
+                )
+            }
+            for name, sql_type in (
+                ("mysekai_rank", "INTEGER"),
+                ("refreshed_at_ms", "INTEGER"),
+            ):
+                if name not in state_columns:
+                    await connection.execute(
+                        f"ALTER TABLE mysekai_catalog_state ADD COLUMN {name} {sql_type}"
+                    )
             await connection.commit()
 
     async def healthcheck(self) -> bool:
@@ -811,6 +831,8 @@ class SQLiteRepository:
         game_user_id: str,
         music_records: list | None,
         blueprints: list | None,
+        mysekai_rank: int | None = None,
+        refreshed_at_ms: int | None = None,
     ) -> None:
         """Keep the id rows from the account's most recent capture.
 
@@ -822,11 +844,14 @@ class SQLiteRepository:
             await connection.execute(
                 """
                 INSERT INTO mysekai_catalog_state(
-                    server, game_user_id, music_records, blueprints, updated_at
-                ) VALUES (?, ?, ?, ?, ?)
+                    server, game_user_id, music_records, blueprints,
+                    mysekai_rank, refreshed_at_ms, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(server, game_user_id) DO UPDATE SET
                     music_records=excluded.music_records,
                     blueprints=excluded.blueprints,
+                    mysekai_rank=excluded.mysekai_rank,
+                    refreshed_at_ms=excluded.refreshed_at_ms,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -834,6 +859,8 @@ class SQLiteRepository:
                     game_user_id,
                     None if music_records is None else json.dumps(music_records),
                     None if blueprints is None else json.dumps(blueprints),
+                    mysekai_rank,
+                    refreshed_at_ms,
                     utc_now(),
                 ),
             )
@@ -845,7 +872,7 @@ class SQLiteRepository:
         async with self.connect() as connection:
             cursor = await connection.execute(
                 """
-                SELECT music_records, blueprints, updated_at
+                SELECT music_records, blueprints, mysekai_rank, refreshed_at_ms, updated_at
                 FROM mysekai_catalog_state
                 WHERE server = ? AND game_user_id = ?
                 """,
@@ -857,7 +884,9 @@ class SQLiteRepository:
         return {
             "music_records": None if row[0] is None else json.loads(row[0]),
             "blueprints": None if row[1] is None else json.loads(row[1]),
-            "updated_at": row[2],
+            "mysekai_rank": row[2],
+            "refreshed_at_ms": row[3],
+            "updated_at": row[4],
         }
 
     async def record_mysekai_upload(
