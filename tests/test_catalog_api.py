@@ -149,6 +149,20 @@ async def test_talk_list_forwards_the_character_options(harness):
     assert state.render_payloads[0]["query"] == "初音 ln all"
 
 
+async def test_talk_projection_omits_the_unavailable_blueprint_field(harness):
+    # Given the public suite does not expose userMysekaiBlueprints at all
+    client, state = harness
+    # When the talk command asks for its projection
+    await client.post(
+        "/internal/v1/mysekai/talk-list",
+        json={"game_user_id": GAME_ID, "query": "冬弥"},
+        headers=AUTH,
+    )
+    # Then the request does not include it, so the whole read does not 404
+    assert "userMysekaiCharacterTalks" in state.projections[0]
+    assert "userMysekaiBlueprints" not in state.projections[0]
+
+
 async def test_a_stale_snapshot_is_reported_as_capture_stale(harness):
     # Given Haruki rejects the projected read
     client, state = harness

@@ -44,10 +44,9 @@ CARDS_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 #: ``render/snapshot/suite_fields.go``）。
 SUITE_PROJECTIONS: dict[str, str] = {
     "fixture-list": "userMysekaiBlueprints,userGamedata,upload_time",
-    "talk-list": (
-        "userMysekaiCharacterTalks,userMysekaiBlueprints,"
-        "userMysekaiGamedata,userGamedata,upload_time"
-    ),
+    # 不含 userMysekaiBlueprints：公开接口未开放该字段，带上会让整个请求 404；
+    # 出图侧已支持「蓝图状态未知」，不再据此置灰。
+    "talk-list": "userMysekaiCharacterTalks,userMysekaiGamedata,userGamedata,upload_time",
     "music-record": "userMysekaiMusicRecords,userGamedata,upload_time",
 }
 
@@ -656,7 +655,7 @@ class MysekaiService:
             raise HarukiUnavailable("Haruki 暂时不可用，请稍后再试") from None
         if response.status_code == 404:
             raise CaptureStale(
-                "该账号最近一次抓包没有刷新这项数据，请重新上传后再试"
+                "这项数据在 Haruki 公开接口不可用（或该账号最近一次抓包没有刷新它）"
             )
         if response.status_code >= 500:
             raise HarukiUnavailable("Haruki 暂时不可用，请稍后再试")
