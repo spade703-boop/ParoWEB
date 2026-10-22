@@ -63,9 +63,13 @@ services:
       MYSEKAI_REGION: sc
       # 群指令「更新国服MD / 更新日服MD」的共享口令；未配置时接口关闭。
       MYSEKAI_ADMIN_TOKEN: ${PARO_MYSEKAI_INTERNAL_TOKEN}
+      # 运行时的 master 数据目录；镜像里的 master/ 只作首次启动的 seed。
+      MYSEKAI_MASTER_DIR: /app/data/master
     volumes:
-      # master 必须落在宿主机，否则容器重建会把更新覆盖回镜像里的旧版。
-      - ${PARO_MYSEKAI_PIPELINE_DIR:-../mysekai-re-pipeline}/master:/app/master
+      # seed：只读，镜像自带的快照。
+      - ${PARO_MYSEKAI_PIPELINE_DIR:-../mysekai-re-pipeline}/master:/app/master:ro
+      # 运行时数据：宿主机持久化，更新后无需 commit 或重建容器。
+      - ${PARO_MYSEKAI_DATA_DIR:-/opt/mysekai-data}/master:/app/data/master
     expose:
       - "8765"
     security_opt:
