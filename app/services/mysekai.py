@@ -44,9 +44,9 @@ CARDS_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 #: ``render/snapshot/suite_fields.go``）。
 SUITE_PROJECTIONS: dict[str, str] = {
     "fixture-list": "userMysekaiBlueprints,userGamedata,upload_time",
-    # 不含 userMysekaiBlueprints：公开接口未开放该字段，带上会让整个请求 404；
-    # 出图侧已支持「蓝图状态未知」，不再据此置灰。
-    "talk-list": "userMysekaiCharacterTalks,userMysekaiGamedata,userGamedata,upload_time",
+    # 只放实测可用的键：userMysekaiBlueprints 与 userMysekaiGamedata 都不在公开
+    # 白名单里，带上任何一个都会让整组 key 404。出图侧已支持蓝图状态未知。
+    "talk-list": "userMysekaiCharacterTalks,userGamedata,upload_time",
     "music-record": "userMysekaiMusicRecords,userGamedata,upload_time",
 }
 

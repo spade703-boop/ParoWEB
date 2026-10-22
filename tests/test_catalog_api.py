@@ -153,7 +153,9 @@ async def test_talk_list_reads_haruki_and_omits_the_unavailable_blueprint_field(
     # are forwarded verbatim
     assert response.status_code == 200
     assert "userMysekaiCharacterTalks" in state.projections[0]
+    # 这两个字段都不在公开白名单里，带任何一个都会让整组请求 404
     assert "userMysekaiBlueprints" not in state.projections[0]
+    assert "userMysekaiGamedata" not in state.projections[0]
     assert state.render_payloads[0]["query"] == "初音 ln all"
 
 
