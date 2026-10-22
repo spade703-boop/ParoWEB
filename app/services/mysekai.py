@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -22,9 +23,11 @@ import io
 import json
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from weakref import WeakValueDictionary
 
 import httpx
 from PIL import Image
@@ -240,6 +243,69 @@ _CN = timezone(timedelta(hours=8))
 GATE_MAX_LEVEL = 70
 
 
+class RenderCache:
+    """Rendered PNGs keyed by the exact render body, bounded by total bytes.
+
+    The body already carries the player's data version (``upload_time`` and the
+    profile fields), so a re-upload changes the key; no TTL is needed. A repeat
+    command becomes a dict lookup instead of a full re-render, and concurrent
+    requests for the same body share one render.
+    """
+
+    def __init__(self, max_bytes: int = 128 * 1024 * 1024) -> None:
+        self.max_bytes = max_bytes
+        self._entries: OrderedDict[str, bytes] = OrderedDict()
+        #: Locks are weak: the dict shrinks once no request holds one.
+        self._inflight: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+        self._size = 0
+
+    @staticmethod
+    def key(payload: dict) -> str:
+        """A stable digest of one render body, independent of dict order."""
+        canonical = json.dumps(
+            payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def get(self, key: str) -> bytes | None:
+        png = self._entries.get(key)
+        if png is not None:
+            self._entries.move_to_end(key)
+        return png
+
+    async def get_or_render(self, key: str, render) -> bytes:
+        """Return the cached PNG, or render it once for every waiter."""
+        cached = self.get(key)
+        if cached is not None:
+            return cached
+        lock = self._inflight.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._inflight[key] = lock
+        async with lock:
+            cached = self.get(key)
+            if cached is not None:
+                return cached
+            png = await render()
+            self._store(key, png)
+            return png
+
+    def _store(self, key: str, png: bytes) -> None:
+        dropped = self._entries.pop(key, None)
+        if dropped is not None:
+            self._size -= len(dropped)
+        self._entries[key] = png
+        self._size += len(png)
+        # Keep at least the entry just written, even if it alone exceeds the cap.
+        while self._size > self.max_bytes and len(self._entries) > 1:
+            _, evicted = self._entries.popitem(last=False)
+            self._size -= len(evicted)
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self._size = 0
+
+
 @dataclass(frozen=True)
 class MysekaiGateData:
     """One gate's current level plus the player's material holdings."""
@@ -290,6 +356,8 @@ class MysekaiService:
         #: (server, game_id, projection) -> (upload_time, payload); the version
         #: is what makes a repeat command a one-hop probe instead of a refetch.
         self._suite_cache: dict[tuple[str, str, str], tuple[int | None, dict]] = {}
+        #: Rendered catalog PNGs; a repeat command never reaches the renderer.
+        self.render_cache = RenderCache()
 
     # ------------------------------------------------------------------ session
     def enabled(self) -> bool:
@@ -738,13 +806,23 @@ class MysekaiService:
         profile: dict | None = None,
         options: dict | None = None,
     ) -> bytes:
-        """Send one player payload to the render service and return its PNG."""
+        """Send one player payload to the render service and return its PNG.
+
+        The body is the cache key: it already includes the player's data
+        version, so a repeat command returns the stored PNG without a render.
+        """
         payload: dict = {"user": data}
         if profile:
             payload["profile"] = profile
         if options:
             payload.update(options)
         url = f"{self.settings.mysekai_service_url}{endpoint}"
+        return await self.render_cache.get_or_render(
+            RenderCache.key(payload), lambda: self._render_catalog_once(url, payload)
+        )
+
+    async def _render_catalog_once(self, url: str, payload: dict) -> bytes:
+        """One render-service call; failures are raised, never cached."""
         try:
             async with self._client(timeout=180.0) as client:
                 response = await client.post(url, json=payload)

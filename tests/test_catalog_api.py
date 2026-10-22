@@ -284,3 +284,24 @@ async def test_a_forged_catalog_link_is_refused(harness):
     # Then it is refused before any lookup
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "invalid_link"
+
+
+async def test_repeat_catalog_request_reuses_the_rendered_png(harness):
+    # Given an uploaded capture with record rows
+    client, state, service = harness
+    await service.repository.set_mysekai_catalog_state(
+        server="cn",
+        game_user_id=GAME_ID,
+        music_records=[{"mysekaiMusicRecordId": 184, "obtainedAt": 5}],
+        blueprints=None,
+    )
+    # When the same command runs twice
+    for _ in range(2):
+        response = await client.post(
+            "/internal/v1/mysekai/music-record",
+            json={"game_user_id": GAME_ID},
+            headers=AUTH,
+        )
+        assert response.status_code == 200
+    # Then the renderer ran once and the second answer came from the cache
+    assert len(state.render_payloads) == 1
