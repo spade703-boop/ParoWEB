@@ -875,7 +875,12 @@ class MysekaiService:
             result = response.json()
         except ValueError:
             raise UpstreamError("出图服务返回了无效数据") from None
-        return result if isinstance(result, dict) else {}
+        if not isinstance(result, dict):
+            return {}
+        # The render service reloaded its master tables; every cached PNG was
+        # drawn from the previous snapshot, so drop them before the next query.
+        self.render_cache.clear()
+        return result
 
     async def fetch_birthday_state(self) -> dict | None:
         """Ask the render service whether a birthday window is open right now."""

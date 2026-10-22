@@ -387,3 +387,35 @@ async def test_master_update_requires_the_bot_token(harness):
     )
     assert response.status_code == 403
     assert state.master_updates == []
+
+
+async def test_master_update_drops_cached_cards(harness):
+    # Given one rendered card is cached
+    client, state, service = harness
+    await service.repository.set_mysekai_catalog_state(
+        server="cn",
+        game_user_id=GAME_ID,
+        music_records=[{"mysekaiMusicRecordId": 184, "obtainedAt": 5}],
+        blueprints=None,
+    )
+    for _ in range(2):
+        await client.post(
+            "/internal/v1/mysekai/music-record",
+            json={"game_user_id": GAME_ID},
+            headers=AUTH,
+        )
+    assert len(state.render_payloads) == 1
+
+    # When the master snapshot is refreshed
+    response = await client.post(
+        "/internal/v1/mysekai/master-update", json={"region": "sc"}, headers=AUTH
+    )
+    assert response.status_code == 200
+
+    # Then the next query renders again instead of replaying the old PNG
+    await client.post(
+        "/internal/v1/mysekai/music-record",
+        json={"game_user_id": GAME_ID},
+        headers=AUTH,
+    )
+    assert len(state.render_payloads) == 2
