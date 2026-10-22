@@ -697,6 +697,13 @@ class MysekaiService:
         value = data.get("upload_time") if isinstance(data, dict) else data
         return value if isinstance(value, int) else None
 
+    async def catalog_state_updated_at(
+        self, game_user_id: str, server: str = "cn"
+    ) -> str | None:
+        """When the stored catalog state was captured, as a display string."""
+        state = await self.repository.get_mysekai_catalog_state(server, game_user_id)
+        return None if state is None else format_capture_time(state.get("updated_at"))
+
     async def catalog_payload(
         self, game_user_id: str, kind: str, server: str = "cn"
     ) -> dict:
@@ -1142,3 +1149,20 @@ def _catalog_render_error(response) -> MysekaiError:
     if response.status_code == 422 and typed is not None:
         return typed(message or "参数不正确")
     return UpstreamError(message or "出图服务暂时不可用，请稍后再试")
+
+
+def format_capture_time(value: str | int | float | None) -> str | None:
+    """A capture timestamp as ``YYYY-MM-DD HH:MM`` in China time.
+
+    Accepts Haruki's ``upload_time`` (unix seconds) and the stored ISO string.
+    """
+    if isinstance(value, (int, float)) and value > 0:
+        moment = datetime.fromtimestamp(value, _CN)
+        return moment.strftime("%Y-%m-%d %H:%M")
+    if isinstance(value, str) and value:
+        try:
+            moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return moment.astimezone(_CN).strftime("%Y-%m-%d %H:%M")
+    return None

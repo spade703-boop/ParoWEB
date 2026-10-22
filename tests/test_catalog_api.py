@@ -124,6 +124,8 @@ async def test_fixture_list_uses_the_last_capture_state(harness):
     assert state.render_payloads[0]["user"]["userMysekaiBlueprints"] == [
         {"mysekaiBlueprintId": 1}
     ]
+    # 资料卡第二行展示数据更新时间，由存储时间格式化而来
+    assert state.render_payloads[0]["profile"]["updated_at"]
 
 
 async def test_fixture_list_without_a_capture_is_a_409(harness):

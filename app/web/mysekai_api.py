@@ -25,6 +25,7 @@ from app.services.mysekai import (
     MysekaiError,
     MysekaiService,
     SessionInvalid,
+    format_capture_time,
     resolve_gate_unit,
 )
 from app.web.errors import error_response
@@ -261,16 +262,24 @@ class _CatalogRender:
     options: dict
 
 
-async def _binding_profile(service: MysekaiService, server: str, game_user_id: str) -> dict | None:
-    """The account strip, when this game id is bound to a QQ in our database."""
+async def _binding_profile(
+    service: MysekaiService,
+    server: str,
+    game_user_id: str,
+    updated_at: str | None = None,
+) -> dict | None:
+    """The account strip: bound profile fields plus when the data was captured."""
     binding = await service.repository.get_mysekai_binding_by_game(server, game_user_id)
-    if not binding:
+    if not binding and not updated_at:
         return None
-    return {
-        "nickname": binding.get("nickname"),
-        "user_id": binding.get("game_user_id"),
-        "avatar_base64": binding.get("leader_avatar"),
+    profile: dict = {
+        "nickname": (binding or {}).get("nickname"),
+        "user_id": (binding or {}).get("game_user_id") or game_user_id,
+        "avatar_base64": (binding or {}).get("leader_avatar"),
     }
+    if updated_at:
+        profile["updated_at"] = updated_at
+    return profile
 
 
 async def _catalog_image(
@@ -286,12 +295,18 @@ async def _catalog_image(
             data = await service.fetch_mysekai_suite(
                 payload.game_user_id, render.kind, payload.server
             )
+            updated_at = format_capture_time(data.get("upload_time"))
         else:
             # 唱片与蓝图公开面不可见，读用户最近一次上传留下的 id 行。
             data = await service.catalog_payload(
                 payload.game_user_id, render.kind, payload.server
             )
-        profile = await _binding_profile(service, payload.server, payload.game_user_id)
+            updated_at = await service.catalog_state_updated_at(
+                payload.game_user_id, payload.server
+            )
+        profile = await _binding_profile(
+            service, payload.server, payload.game_user_id, updated_at
+        )
         png = await service.render_catalog_image(
             CATALOG_ENDPOINTS[render.kind], data, profile, render.options
         )
@@ -335,10 +350,12 @@ async def _render_catalog_for(
     if kind == "talk-list":
         data = await service.fetch_mysekai_suite(game_user_id, kind, "cn")
         options = {"query": query}
+        updated_at = format_capture_time(data.get("upload_time"))
     else:
         data = await service.catalog_payload(game_user_id, kind, "cn")
         options = {}
-    profile = await _binding_profile(service, "cn", game_user_id)
+        updated_at = await service.catalog_state_updated_at(game_user_id, "cn")
+    profile = await _binding_profile(service, "cn", game_user_id, updated_at)
     return await service.render_catalog_image(
         CATALOG_ENDPOINTS[kind], data, profile, options
     )
