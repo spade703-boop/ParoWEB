@@ -39,6 +39,25 @@ MAX_BODY_BYTES = 4 * 1024 * 1024
 AVATAR_SIZE = 96
 CARDS_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 
+#: 每条指令实际请求的 suite 字段。``userGamedata`` 与 ``upload_time`` 必须存在：
+#: 单 key 读不保证返回对象，且版本号是缓存失效的唯一依据（见 Haruki-Cloud
+#: ``render/snapshot/suite_fields.go``）。
+SUITE_PROJECTIONS: dict[str, str] = {
+    "fixture-list": "userMysekaiBlueprints,userGamedata,upload_time",
+    "talk-list": (
+        "userMysekaiCharacterTalks,userMysekaiBlueprints,"
+        "userMysekaiGamedata,userGamedata,upload_time"
+    ),
+    "music-record": "userMysekaiMusicRecords,userGamedata,upload_time",
+}
+
+#: 出图服务的新路由；与 ``/render/gate`` 同为「JSON 进、PNG 出」。
+CATALOG_ENDPOINTS: dict[str, str] = {
+    "fixture-list": "/render/mysekai/fixture-list",
+    "talk-list": "/render/mysekai/talk-list",
+    "music-record": "/render/mysekai/music-record",
+}
+
 
 class MysekaiError(Exception):
     """A user-facing MySekai failure; the API layer turns it into JSON."""
@@ -124,6 +143,34 @@ class GateMaxLevel(MysekaiError):
     """The requested gate has no level left to upgrade."""
 
     code = "gate_max_level"
+    status = 409
+
+
+class CharacterUnknown(MysekaiError):
+    """The typed character alias is not in the nickname table."""
+
+    code = "character_unknown"
+    status = 422
+
+
+class VirtualSingerUnitRequired(MysekaiError):
+    """A virtual singer was typed without the unit that picks its version."""
+
+    code = "virtual_singer_unit_required"
+    status = 422
+
+
+class UnitUnknown(MysekaiError):
+    """The character has no version for the typed unit token."""
+
+    code = "unit_unknown"
+    status = 422
+
+
+class CaptureStale(MysekaiError):
+    """The account's latest snapshot does not carry the resource this needs."""
+
+    code = "capture_stale"
     status = 409
 
 
@@ -233,6 +280,9 @@ class MysekaiService:
         self.repository = repository
         self.transport = transport
         self._card_master: dict[str, dict[int, str]] = {}
+        #: (server, game_id, projection) -> (upload_time, payload); the version
+        #: is what makes a repeat command a one-hop probe instead of a refetch.
+        self._suite_cache: dict[tuple[str, str, str], tuple[int | None, dict]] = {}
 
     # ------------------------------------------------------------------ session
     def enabled(self) -> bool:
@@ -576,6 +626,92 @@ class MysekaiService:
         if response.status_code != 200:
             raise UpstreamError("出图服务暂时不可用，请稍后再试")
         return response.content
+
+    async def fetch_mysekai_suite(
+        self, game_user_id: str, kind: str, server: str = "cn"
+    ) -> dict:
+        """Read one projected suite slice, refetching only when the version moved.
+
+        The ``upload_time`` probe costs a few hundred bytes; the projection is
+        fetched only when it disagrees with the cached version. A 404 means the
+        account's snapshot lacks the requested resource -- it does not fall back
+        to the whole suite, because that is megabytes and would fail the same way.
+        """
+        if not game_user_id.isdigit():
+            raise AccountNotFound("游戏 ID 必须是数字")
+        projection = SUITE_PROJECTIONS[kind]
+        cache_key = (server, game_user_id, projection)
+        base = (
+            f"{self.settings.mysekai_haruki_base}/api/public/"
+            f"{server}/suite/{game_user_id}"
+        )
+        cached = self._suite_cache.get(cache_key)
+        try:
+            async with self._client(timeout=60.0) as client:
+                version = await self._probe_upload_time(client, base)
+                if cached is not None and version is not None and cached[0] == version:
+                    return cached[1]
+                response = await client.get(base, params={"key": projection})
+        except httpx.HTTPError:
+            raise HarukiUnavailable("Haruki 暂时不可用，请稍后再试") from None
+        if response.status_code == 404:
+            raise CaptureStale(
+                "该账号最近一次抓包没有刷新这项数据，请重新上传后再试"
+            )
+        if response.status_code >= 500:
+            raise HarukiUnavailable("Haruki 暂时不可用，请稍后再试")
+        if response.status_code != 200:
+            raise UpstreamError("Haruki 暂时不可用，请稍后再试")
+        try:
+            data = response.json()
+        except ValueError:
+            raise UpstreamError("Haruki 返回了无法解析的数据") from None
+        if not isinstance(data, dict):
+            raise UpstreamError("Haruki 返回了无法解析的数据")
+        upload_time = data.get("upload_time")
+        self._suite_cache[cache_key] = (
+            upload_time if isinstance(upload_time, int) else version,
+            data,
+        )
+        return data
+
+    async def _probe_upload_time(self, client, base: str) -> int | None:
+        """The snapshot version, or ``None`` when the probe itself fails."""
+        try:
+            response = await client.get(base, params={"key": "upload_time"})
+        except httpx.HTTPError:
+            return None
+        if response.status_code != 200:
+            return None
+        try:
+            data = response.json()
+        except ValueError:
+            return None
+        value = data.get("upload_time") if isinstance(data, dict) else data
+        return value if isinstance(value, int) else None
+
+    async def render_catalog_image(
+        self,
+        endpoint: str,
+        data: dict,
+        profile: dict | None = None,
+        options: dict | None = None,
+    ) -> bytes:
+        """Send one player payload to the render service and return its PNG."""
+        payload: dict = {"user": data}
+        if profile:
+            payload["profile"] = profile
+        if options:
+            payload.update(options)
+        url = f"{self.settings.mysekai_service_url}{endpoint}"
+        try:
+            async with self._client(timeout=180.0) as client:
+                response = await client.post(url, json=payload)
+        except httpx.HTTPError:
+            raise UpstreamError("出图服务暂时不可用，请稍后再试") from None
+        if response.status_code == 200:
+            return response.content
+        raise _catalog_render_error(response)
 
     async def fetch_birthday_state(self) -> dict | None:
         """Ask the render service whether a birthday window is open right now."""
@@ -943,3 +1079,26 @@ class MysekaiService:
             "card": f"data:image/png;base64,{result.card_png_base64}",
             "push": {"status": push_status, "message": push_message},
         }
+
+
+def _catalog_render_error(response) -> MysekaiError:
+    """Map the render service's typed error body back to a domain error."""
+    code = ""
+    message = ""
+    try:
+        body = response.json()
+        if isinstance(body, dict):
+            code = str(body.get("error") or "")
+            message = str(body.get("message") or "")
+    except ValueError:
+        body = None
+    if response.status_code == 409 or code == "capture_stale":
+        return CaptureStale(message or "该账号最近一次抓包没有刷新这项数据，请重新上传后再试")
+    typed = {
+        "character_unknown": CharacterUnknown,
+        "virtual_singer_unit_required": VirtualSingerUnitRequired,
+        "unit_unknown": UnitUnknown,
+    }.get(code)
+    if response.status_code == 422 and typed is not None:
+        return typed(message or "参数不正确")
+    return UpstreamError(message or "出图服务暂时不可用，请稍后再试")

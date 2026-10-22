@@ -9,6 +9,7 @@ from __future__ import annotations
 import hmac
 import logging
 import re
+from dataclasses import dataclass
 from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Response
@@ -19,6 +20,7 @@ from app.services.mysekai import (
     COOKIE_NAME,
     MAX_BODY_BYTES,
     SESSION_TTL_SECONDS,
+    CATALOG_ENDPOINTS,
     MysekaiError,
     MysekaiService,
     SessionInvalid,
@@ -66,6 +68,25 @@ class GateRequest(BaseModel):
     server: str = Field(default="cn", pattern=r"^(cn|jp|tw|kr|en)$")
     #: Team token typed after the command; empty keeps the default gate choice.
     unit: str | None = Field(default=None, max_length=16)
+
+
+class CatalogRequest(BaseModel):
+    """Common body for the three catalog commands."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    game_user_id: str = Field(pattern=GAME_ID_PATTERN)
+    server: str = Field(default="cn", pattern=r"^(cn|jp|tw|kr|en)$")
+
+
+class TalkListRequest(CatalogRequest):
+    """The raw text typed after the command; the render service owns the grammar."""
+
+    query: str = Field(min_length=1, max_length=64)
+
+
+class MusicRecordRequest(CatalogRequest):
+    show_id: bool = False
 
 
 class SubmitRequest(BaseModel):
@@ -222,6 +243,74 @@ async def gate_image(payload: GateRequest, request: Request):
     except MysekaiError as exc:
         return error_response(exc.status, exc.code, str(exc), exc.details)
     return Response(content=png, media_type="image/png")
+
+
+@dataclass(frozen=True, slots=True)
+class _CatalogRender:
+    """Which projection to read and which extra options the card needs."""
+
+    kind: str
+    options: dict
+
+
+async def _binding_profile(service: MysekaiService, server: str, game_user_id: str) -> dict | None:
+    """The account strip, when this game id is bound to a QQ in our database."""
+    binding = await service.repository.get_mysekai_binding_by_game(server, game_user_id)
+    if not binding:
+        return None
+    return {
+        "nickname": binding.get("nickname"),
+        "user_id": binding.get("game_user_id"),
+        "avatar_base64": binding.get("leader_avatar"),
+    }
+
+
+async def _catalog_image(
+    request: Request, payload: CatalogRequest, render: _CatalogRender
+) -> Response:
+    """Fetch the projected snapshot and ask the render service for the card."""
+    if payload.server != "cn":
+        return error_response(422, "unsupported_server", "第一版只支持国服")
+    try:
+        service = _mysekai(request)
+        data = await service.fetch_mysekai_suite(
+            payload.game_user_id, render.kind, payload.server
+        )
+        profile = await _binding_profile(service, payload.server, payload.game_user_id)
+        png = await service.render_catalog_image(
+            CATALOG_ENDPOINTS[render.kind], data, profile, render.options
+        )
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return Response(content=png, media_type="image/png")
+
+
+@internal_router.post("/fixture-list")
+async def fixture_list(payload: CatalogRequest, request: Request):
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    return await _catalog_image(request, payload, _CatalogRender("fixture-list", {}))
+
+
+@internal_router.post("/talk-list")
+async def talk_list(payload: TalkListRequest, request: Request):
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    return await _catalog_image(
+        request, payload, _CatalogRender("talk-list", {"query": payload.query})
+    )
+
+
+@internal_router.post("/music-record")
+async def music_record(payload: MusicRecordRequest, request: Request):
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    return await _catalog_image(
+        request, payload, _CatalogRender("music-record", {"show_id": payload.show_id})
+    )
 
 
 @internal_router.get("/query")
