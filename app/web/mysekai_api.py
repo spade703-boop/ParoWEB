@@ -22,6 +22,7 @@ from app.services.mysekai import (
     MysekaiError,
     MysekaiService,
     SessionInvalid,
+    resolve_gate_unit,
 )
 from app.web.errors import error_response
 
@@ -63,6 +64,8 @@ class GateRequest(BaseModel):
 
     game_user_id: str = Field(pattern=GAME_ID_PATTERN)
     server: str = Field(default="cn", pattern=r"^(cn|jp|tw|kr|en)$")
+    #: Team token typed after the command; empty keeps the default gate choice.
+    unit: str | None = Field(default=None, max_length=16)
 
 
 class SubmitRequest(BaseModel):
@@ -201,8 +204,9 @@ async def gate_image(payload: GateRequest, request: Request):
         return error_response(422, "unsupported_server", "第一版只支持国服")
     try:
         service = _mysekai(request)
+        requested_gate_id = resolve_gate_unit(payload.unit)
         data = await service.fetch_mysekai_gate_data(
-            payload.game_user_id, payload.server
+            payload.game_user_id, payload.server, requested_gate_id=requested_gate_id
         )
         binding = await service.repository.get_mysekai_binding_by_game(
             payload.server, payload.game_user_id

@@ -106,6 +106,59 @@ class HarukiUnavailable(UpstreamError):
     code = "haruki_unavailable"
 
 
+class GateUnitUnknown(MysekaiError):
+    """The requested team token is not one of the gate aliases."""
+
+    code = "gate_unit_unknown"
+    status = 422
+
+
+class GateNotFound(MysekaiError):
+    """The account has no row for the requested gate."""
+
+    code = "gate_not_found"
+    status = 404
+
+
+class GateMaxLevel(MysekaiError):
+    """The requested gate has no level left to upgrade."""
+
+    code = "gate_max_level"
+    status = 409
+
+
+#: Gate id per team. Latin tokens match case-insensitively; the official
+#: short Chinese names are accepted alongside them.
+GATE_UNIT_ALIASES: dict[str, int] = {
+    "ln": 1,
+    "教室": 1,
+    "mmj": 2,
+    "舞台": 2,
+    "vbs": 3,
+    "街头": 3,
+    "ws": 4,
+    "奇幻乐园": 4,
+    "25": 5,
+    "25h": 5,
+    "25时": 5,
+    "无人": 5,
+}
+GATE_UNIT_HINT = "可用写法：ln / mmj / vbs / ws / 25时，或教室、舞台、街头、奇幻乐园、无人"
+
+
+def resolve_gate_unit(token: str | None) -> int | None:
+    """Map a command token to a gate id; ``None`` when no token was given."""
+    if token is None:
+        return None
+    key = token.strip().casefold()
+    if not key:
+        return None
+    gate_id = GATE_UNIT_ALIASES.get(key)
+    if gate_id is None:
+        raise GateUnitUnknown(f"不认识这个团队：{token}。{GATE_UNIT_HINT}")
+    return gate_id
+
+
 @dataclass(frozen=True, slots=True)
 class HarukiProfile:
     game_user_id: str
@@ -416,13 +469,18 @@ class MysekaiService:
         )
 
     async def fetch_mysekai_gate_data(
-        self, game_user_id: str, server: str = "cn"
+        self,
+        game_user_id: str,
+        server: str = "cn",
+        *,
+        requested_gate_id: int | None = None,
     ) -> MysekaiGateData:
         """Read the gate level and material holdings from Haruki's public suite.
 
-        The public endpoint's ``key`` filter rejects ``userMysekai*`` fields
-        (404), so this asks for the whole response and keeps only what the gate
-        image needs.
+        Only the two arrays the gate image needs are requested. ``userMysekai``
+        as a parent key is rejected with 404, but the concrete field names are
+        allowed; if a server's allow-list rejects them anyway, this falls back
+        to the whole suite once.
         """
         if not game_user_id.isdigit():
             raise AccountNotFound("游戏 ID 必须是数字")
@@ -430,9 +488,12 @@ class MysekaiService:
             f"{self.settings.mysekai_haruki_base}/api/public/"
             f"{server}/suite/{game_user_id}"
         )
+        params = {"key": "userMysekaiGates,userMysekaiMaterials"}
         try:
             async with self._client(timeout=60.0) as client:
-                response = await client.get(url)
+                response = await client.get(url, params=params)
+                if response.status_code == 404:
+                    response = await client.get(url)
         except httpx.HTTPError:
             raise HarukiUnavailable("Haruki 暂时不可用，请稍后再试") from None
         if response.status_code == 404:
@@ -455,17 +516,25 @@ class MysekaiService:
             if g.get("mysekaiGateId")
         }
         # Haruki 的默认选择：等级最高但还没满级的门，并列时保留较小的 gate id
-        eligible = [
-            (gate_id, level)
-            for gate_id, level in sorted(levels.items())
-            if 0 < level < GATE_MAX_LEVEL
-        ]
-        fallback_used = not eligible
-        chosen_id = (
-            max(eligible, key=lambda item: item[1])[0]
-            if eligible
-            else (min(levels) if levels else 0)
-        )
+        if requested_gate_id is not None:
+            if requested_gate_id not in levels:
+                raise GateNotFound(
+                    "你的账号里还没有这个门的数据，先确认选的是哪个团队"
+                )
+            chosen_id = requested_gate_id
+            fallback_used = False
+        else:
+            eligible = [
+                (gate_id, level)
+                for gate_id, level in sorted(levels.items())
+                if 0 < level < GATE_MAX_LEVEL
+            ]
+            fallback_used = not eligible
+            chosen_id = (
+                max(eligible, key=lambda item: item[1])[0]
+                if eligible
+                else (min(levels) if levels else 0)
+            )
         current = next(
             (g for g in gates if int(g["mysekaiGateId"]) == chosen_id), None
         )
@@ -501,6 +570,9 @@ class MysekaiService:
                 response = await client.post(url, json=payload)
         except httpx.HTTPError:
             raise UpstreamError("出图服务暂时不可用，请稍后再试") from None
+        if response.status_code == 409:
+            # The render service reports an empty plan (already at the master cap).
+            raise GateMaxLevel("这个门已经满级了，没有可升级的等级")
         if response.status_code != 200:
             raise UpstreamError("出图服务暂时不可用，请稍后再试")
         return response.content

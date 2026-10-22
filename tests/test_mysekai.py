@@ -42,6 +42,14 @@ def _suite_payload(game_user_id: str = GAME_ID, nickname: str = "测试玩家") 
             {"deckId": 3, "leader": 456},
         ],
         "userCards": [{"cardId": 456, "defaultImage": "original"}],
+        "userMysekaiGates": [
+            {"mysekaiGateId": gate_id, "mysekaiGateLevel": 10 + gate_id}
+            for gate_id in range(1, 6)
+        ],
+        "userMysekaiMaterials": [
+            {"mysekaiMaterialId": 1, "quantity": 5},
+            {"mysekaiMaterialId": 6, "quantity": 2},
+        ],
     }
 
 
@@ -51,6 +59,10 @@ def _mock_transport(
     haruki_statuses: list[int] | None = None,
     nicknames: list[str] | None = None,
     push_payloads: list[dict] | None = None,
+    suite_requests: list[dict] | None = None,
+    suite_rejects_key: bool = False,
+    render_payloads: list[dict] | None = None,
+    render_status: int = 200,
 ) -> httpx.MockTransport:
     suite_calls = 0
 
@@ -58,6 +70,10 @@ def _mock_transport(
         nonlocal suite_calls
         path = request.url.path
         if path.startswith("/api/public/cn/suite/"):
+            if suite_requests is not None:
+                suite_requests.append(dict(request.url.params))
+            if suite_rejects_key and "key" in request.url.params:
+                return httpx.Response(404, json={"error": "key not allowed"})
             game_user_id = path.rsplit("/", 1)[-1]
             index = suite_calls
             suite_calls += 1
@@ -85,6 +101,14 @@ def _mock_transport(
             "/cn-assets/ondemand/thumbnail/chara/res003_no019_normal.png",
             "/cn-assets/startapp/character/member/res003_no019/card_normal.png",
         }:
+            return httpx.Response(
+                200, content=TINY_PNG, headers={"content-type": "image/png"}
+            )
+        if path == "/render/gate":
+            if render_payloads is not None:
+                render_payloads.append(json.loads(request.content))
+            if render_status != 200:
+                return httpx.Response(render_status, json={"error": "gate_max_level"})
             return httpx.Response(
                 200, content=TINY_PNG, headers={"content-type": "image/png"}
             )
@@ -682,3 +706,120 @@ async def test_water_round_claims_once_per_refreshed_map(tmp_path) -> None:
     assert await repository.claim_mysekai_water_round("u1", "t100") is True
     assert await repository.claim_mysekai_water_round("u1", "t100") is False
     assert await repository.claim_mysekai_water_round("u1", "t200") is True
+
+
+def test_gate_unit_aliases_are_case_insensitive() -> None:
+    from app.services.mysekai import GateUnitUnknown, resolve_gate_unit
+
+    assert resolve_gate_unit(None) is None
+    assert resolve_gate_unit("  ") is None
+    for token in ("LN", "Ln", "ln"):
+        assert resolve_gate_unit(token) == 1
+    for token in ("MMJ", "mmj"):
+        assert resolve_gate_unit(token) == 2
+    for token in ("VBS", "vbs"):
+        assert resolve_gate_unit(token) == 3
+    for token in ("WS", "ws"):
+        assert resolve_gate_unit(token) == 4
+    for token in ("25", "25H", "25时", "无人"):
+        assert resolve_gate_unit(token) == 5
+    assert resolve_gate_unit("教室") == 1
+    with pytest.raises(GateUnitUnknown):
+        resolve_gate_unit("乱写")
+
+
+async def _gate(client: httpx.AsyncClient, **payload) -> httpx.Response:
+    body = {"game_user_id": GAME_ID, "server": "cn", **payload}
+    return await client.post(
+        "/internal/v1/mysekai/gate",
+        json=body,
+        headers={"Authorization": f"Bearer {BOT_TOKEN}"},
+    )
+
+
+async def test_gate_fetch_requests_only_the_two_arrays(tmp_path) -> None:
+    suite_requests: list[dict] = []
+    render_payloads: list[dict] = []
+    app = create_app(_settings(tmp_path))
+    app.state.services.mysekai.transport = _mock_transport(
+        suite_requests=suite_requests, render_payloads=render_payloads
+    )
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            response = await _gate(client)
+
+    assert response.status_code == 200
+    assert suite_requests[0]["key"] == "userMysekaiGates,userMysekaiMaterials"
+    # 没有 unit 时仍是「等级最高且未满级」：门 5 的等级最高
+    assert render_payloads[0]["gate_id"] == 5
+
+
+async def test_gate_fetch_falls_back_when_the_key_filter_is_rejected(tmp_path) -> None:
+    suite_requests: list[dict] = []
+    render_payloads: list[dict] = []
+    app = create_app(_settings(tmp_path))
+    app.state.services.mysekai.transport = _mock_transport(
+        suite_requests=suite_requests,
+        suite_rejects_key=True,
+        render_payloads=render_payloads,
+    )
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            response = await _gate(client)
+
+    assert response.status_code == 200
+    assert "key" in suite_requests[0]
+    assert "key" not in suite_requests[1]
+    assert render_payloads[0]["gate_id"] == 5
+
+
+async def test_gate_endpoint_explicit_unit_selects_that_gate(tmp_path) -> None:
+    render_payloads: list[dict] = []
+    app = create_app(_settings(tmp_path))
+    app.state.services.mysekai.transport = _mock_transport(
+        render_payloads=render_payloads
+    )
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            response = await _gate(client, unit="Ln")
+
+    assert response.status_code == 200
+    # 等级更低的门 1 也被选中，说明 unit 覆盖了默认选门
+    assert render_payloads[0]["gate_id"] == 1
+
+
+async def test_gate_endpoint_unknown_unit_returns_422(tmp_path) -> None:
+    app = create_app(_settings(tmp_path))
+    app.state.services.mysekai.transport = _mock_transport()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            response = await _gate(client, unit="乱写")
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "gate_unit_unknown"
+
+
+async def test_gate_endpoint_maps_max_level_to_409(tmp_path) -> None:
+    app = create_app(_settings(tmp_path))
+    app.state.services.mysekai.transport = _mock_transport(render_status=409)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            response = await _gate(client)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "gate_max_level"
