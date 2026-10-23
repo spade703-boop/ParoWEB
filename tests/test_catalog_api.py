@@ -439,3 +439,39 @@ async def test_master_update_drops_cached_cards(harness):
         headers=AUTH,
     )
     assert len(state.render_payloads) == 2
+
+
+async def test_convert_payload_carries_owned_records_and_blueprints(harness) -> None:
+    """转换机卡片要判「重复」，payload 必须带已拥有的唱片与设计图。"""
+    _, _, service = harness
+    await service.repository.set_mysekai_catalog_state(
+        server="cn",
+        game_user_id=GAME_ID,
+        music_records=[{"mysekaiMusicRecordId": 11, "obtainedAt": 1}],
+        blueprints=[{"mysekaiBlueprintId": 1}],
+        convert_slots=[{"slotId": 2}],
+    )
+
+    payload = await service.catalog_payload(GAME_ID, "convert")
+
+    assert payload["userMysekaiMusicRecords"] == [
+        {"mysekaiMusicRecordId": 11, "obtainedAt": 1}
+    ]
+    assert payload["userMysekaiBlueprints"] == [{"mysekaiBlueprintId": 1}]
+
+
+async def test_convert_payload_omits_unknown_owned_tables(harness) -> None:
+    """没带所有权表时不要编一个空列表，那会被读成「一个都没有」。"""
+    _, _, service = harness
+    await service.repository.set_mysekai_catalog_state(
+        server="cn",
+        game_user_id=GAME_ID,
+        music_records=None,
+        blueprints=None,
+        convert_slots=[{"slotId": 2}],
+    )
+
+    payload = await service.catalog_payload(GAME_ID, "convert")
+
+    assert "userMysekaiMusicRecords" not in payload
+    assert "userMysekaiBlueprints" not in payload

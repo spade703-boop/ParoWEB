@@ -821,6 +821,11 @@ class MysekaiService:
                 payload["userMysekaiConvertSlots"] = slots
             if histories is not None:
                 payload["userMysekaiConvertItemHistories"] = histories
+            # 判「重复」要靠所有权表；没有就整张不传，让卡片按「未知」处理。
+            if state.get("music_records") is not None:
+                payload["userMysekaiMusicRecords"] = state["music_records"]
+            if state.get("blueprints") is not None:
+                payload["userMysekaiBlueprints"] = state["blueprints"]
             return payload
         rows = state["blueprints"]
         return {} if rows is None else {"userMysekaiBlueprints": rows}
