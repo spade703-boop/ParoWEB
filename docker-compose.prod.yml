@@ -68,6 +68,8 @@ services:
     volumes:
       # seed：只读，镜像自带的快照。
       - ${PARO_MYSEKAI_PIPELINE_DIR:-../mysekai-re-pipeline}/master:/app/master:ro
+      # 静态资产同理挂载：不进镜像，补图后重启即可，重建也快得多。
+      - ${PARO_MYSEKAI_PIPELINE_DIR:-../mysekai-re-pipeline}/assets:/app/assets:ro
       # 运行时数据：宿主机持久化，更新后无需 commit 或重建容器。
       - ${PARO_MYSEKAI_DATA_DIR:-/opt/mysekai-data}/master:/app/data/master
     expose:
