@@ -891,9 +891,17 @@ class MysekaiService:
                 code="convert_state_missing",
                 status=409,
             )
+        # ``None`` here means the capture never carried that table, which the
+        # renderer must tell apart from "owns none": an unknown set marks
+        # nothing rather than calling every reward a duplicate.
         return await self.render_catalog_image(
             "/render/mysekai/convert-done",
-            {"userMysekaiConvertSlots": slots, "slot_ids": slot_ids},
+            {
+                "userMysekaiConvertSlots": slots,
+                "userMysekaiBlueprints": state.get("blueprints"),
+                "userMysekaiMusicRecords": state.get("music_records"),
+                "slot_ids": slot_ids,
+            },
             cache=False,
         )
 
