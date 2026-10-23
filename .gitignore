@@ -13,3 +13,6 @@ SECURITY_DEPLOYMENT_LOG.md
 content/images/
 .obsidian/
 .workbuddy/
+
+# 离线 wheel 由部署机放入仓库的 wheels/，不入库
+wheels/*.whl
