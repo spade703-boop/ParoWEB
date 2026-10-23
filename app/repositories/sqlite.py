@@ -1157,13 +1157,19 @@ class SQLiteRepository:
                     mysekai_rank, refreshed_at_ms, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(server, game_user_id) DO UPDATE SET
-                    music_records=excluded.music_records,
-                    blueprints=excluded.blueprints,
-                    fixtures=excluded.fixtures,
-                    convert_slots=excluded.convert_slots,
-                    convert_histories=excluded.convert_histories,
-                    mysekai_rank=excluded.mysekai_rank,
-                    refreshed_at_ms=excluded.refreshed_at_ms,
+                    -- 抓包只带变化的子表；NULL 表示「这次没刷新」，必须保留旧值。
+                    -- 空列表是「刷新了、一个都没有」，会正常覆盖。
+                    music_records=COALESCE(excluded.music_records, music_records),
+                    blueprints=COALESCE(excluded.blueprints, blueprints),
+                    fixtures=COALESCE(excluded.fixtures, fixtures),
+                    convert_slots=COALESCE(excluded.convert_slots, convert_slots),
+                    convert_histories=COALESCE(
+                        excluded.convert_histories, convert_histories
+                    ),
+                    mysekai_rank=COALESCE(excluded.mysekai_rank, mysekai_rank),
+                    refreshed_at_ms=COALESCE(
+                        excluded.refreshed_at_ms, refreshed_at_ms
+                    ),
                     updated_at=excluded.updated_at
                 """,
                 (

@@ -1168,6 +1168,9 @@ class MysekaiService:
         except ValueError:
             raise UpstreamError("转换机数据返回了无效内容") from None
         if not isinstance(payload, dict) or not payload.get("present"):
+            logger.info(
+                "我的世界转换机上报 game_id=%s present=false", game_user_id
+            )
             return {"ok": True, "updated": False}
         slots = payload.get("slots") or []
         state = await self.repository.get_mysekai_catalog_state(
@@ -1188,6 +1191,11 @@ class MysekaiService:
             await self.repository.record_mysekai_convert_slots(
                 game_user_id, slots
             )
+        logger.info(
+            "我的世界转换机上报 game_id=%s present=true slots=%d",
+            game_user_id,
+            len(slots),
+        )
         return {"ok": True, "updated": True, "slots": len(slots)}
 
     async def _push(
