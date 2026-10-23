@@ -1394,6 +1394,7 @@ class MysekaiService:
                 captured_at_ms=(
                     (result.catalog_state or {}).get("refreshed_at_ms")
                 ),
+                uploaded_at_ms=int(time.time() * 1000),
                 map_png=base64.b64decode(result.map_png_base64),
                 card_png=base64.b64decode(result.card_png_base64),
             )

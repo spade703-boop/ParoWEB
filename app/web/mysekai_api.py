@@ -290,6 +290,7 @@ async def latest_capture(payload: QqRequest, request: Request):
     return {
         "ok": True,
         "captured_at_ms": row["captured_at_ms"],
+        "uploaded_at_ms": row["uploaded_at_ms"],
         "map": base64.b64encode(row["map_png"]).decode("ascii"),
         "card": base64.b64encode(row["card_png"]).decode("ascii"),
     }

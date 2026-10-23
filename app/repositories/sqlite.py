@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS mysekai_latest_capture (
     game_user_id TEXT NOT NULL,
     upload_id TEXT NOT NULL,
     captured_at_ms INTEGER,
+    uploaded_at_ms INTEGER,
     map_png BLOB NOT NULL,
     card_png BLOB NOT NULL,
     updated_at TEXT NOT NULL
@@ -269,6 +270,20 @@ class SQLiteRepository:
                     await connection.execute(
                         f"ALTER TABLE mysekai_catalog_state ADD COLUMN {name} {sql_type}"
                     )
+            capture_columns = {
+                row["name"]
+                for row in (
+                    await (
+                        await connection.execute(
+                            "PRAGMA table_info(mysekai_latest_capture)"
+                        )
+                    ).fetchall()
+                )
+            }
+            if "uploaded_at_ms" not in capture_columns:
+                await connection.execute(
+                    "ALTER TABLE mysekai_latest_capture ADD COLUMN uploaded_at_ms INTEGER"
+                )
             await connection.commit()
 
     async def healthcheck(self) -> bool:
@@ -906,6 +921,7 @@ class SQLiteRepository:
         game_user_id: str,
         upload_id: str,
         captured_at_ms: int | None,
+        uploaded_at_ms: int | None,
         map_png: bytes,
         card_png: bytes,
     ) -> None:
@@ -914,13 +930,14 @@ class SQLiteRepository:
             await connection.execute(
                 """
                 INSERT INTO mysekai_latest_capture(
-                    qq, game_user_id, upload_id, captured_at_ms,
+                    qq, game_user_id, upload_id, captured_at_ms, uploaded_at_ms,
                     map_png, card_png, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(qq) DO UPDATE SET
                     game_user_id = excluded.game_user_id,
                     upload_id = excluded.upload_id,
                     captured_at_ms = excluded.captured_at_ms,
+                    uploaded_at_ms = excluded.uploaded_at_ms,
                     map_png = excluded.map_png,
                     card_png = excluded.card_png,
                     updated_at = excluded.updated_at
@@ -930,6 +947,7 @@ class SQLiteRepository:
                     game_user_id,
                     upload_id,
                     captured_at_ms,
+                    uploaded_at_ms,
                     map_png,
                     card_png,
                     utc_now(),
@@ -942,7 +960,7 @@ class SQLiteRepository:
             row = await (
                 await connection.execute(
                     """
-                    SELECT captured_at_ms, map_png, card_png
+                    SELECT captured_at_ms, uploaded_at_ms, map_png, card_png
                       FROM mysekai_latest_capture
                      WHERE qq = ?
                     """,
@@ -953,8 +971,9 @@ class SQLiteRepository:
             return None
         return {
             "captured_at_ms": row[0],
-            "map_png": bytes(row[1]),
-            "card_png": bytes(row[2]),
+            "uploaded_at_ms": row[1],
+            "map_png": bytes(row[2]),
+            "card_png": bytes(row[3]),
         }
 
     async def claim_mysekai_push_window(

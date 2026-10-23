@@ -50,12 +50,14 @@ async def test_latest_capture_roundtrip(tmp_path) -> None:
         game_user_id=GAME_ID,
         upload_id="u1",
         captured_at_ms=1792723215029,
+        uploaded_at_ms=1792725000000,
         map_png=MAP_PNG,
         card_png=CARD_PNG,
     )
     first = await repository.get_mysekai_latest_capture(QQ)
     assert first is not None
     assert first["captured_at_ms"] == 1792723215029
+    assert first["uploaded_at_ms"] == 1792725000000
     assert first["map_png"] == MAP_PNG
     assert first["card_png"] == CARD_PNG
 
@@ -65,12 +67,14 @@ async def test_latest_capture_roundtrip(tmp_path) -> None:
         game_user_id=GAME_ID,
         upload_id="u2",
         captured_at_ms=None,
+        uploaded_at_ms=1792728000000,
         map_png=b"map2",
         card_png=b"card2",
     )
     second = await repository.get_mysekai_latest_capture(QQ)
     assert second is not None
     assert second["captured_at_ms"] is None
+    assert second["uploaded_at_ms"] == 1792728000000
     assert second["map_png"] == b"map2"
 
 
@@ -106,5 +110,6 @@ async def test_submit_stores_the_latest_capture(tmp_path) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
+    assert payload["uploaded_at_ms"] > 0
     assert base64.b64decode(payload["map"]) == TINY_PNG
     assert base64.b64decode(payload["card"]) == TINY_PNG
