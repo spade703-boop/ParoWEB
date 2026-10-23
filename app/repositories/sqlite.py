@@ -872,9 +872,16 @@ class SQLiteRepository:
         return row is not None
 
     async def record_mysekai_convert_slots(
-        self, game_user_id: str, slots: list
+        self, game_user_id: str, slots: list, *, quiet_past: bool = False
     ) -> None:
-        """Store each slot's finish time; a new batch resets its notification."""
+        """Store each slot's finish time; a new batch resets its notification.
+
+        ``quiet_past`` marks already-finished slots as notified at insert time.
+        Subscribing uses it: a player who uploaded a capture before opting in
+        can be reminded about the runs still going, but should not be told
+        about batches that ended before they subscribed.
+        """
+        now_ms = int(time.time() * 1000)
         async with self.connect() as connection:
             for slot in slots:
                 try:
@@ -891,17 +898,18 @@ class SQLiteRepository:
                     )
                 except (KeyError, TypeError, ValueError):
                     continue
+                notified = 1 if quiet_past and finish_at <= now_ms else 0
                 await connection.execute(
                     """
                     INSERT INTO mysekai_convert_slots(
                         game_user_id, slot_id, item_id, finish_at_ms,
                         outcome_count, notified, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, 0, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(game_user_id, slot_id) DO UPDATE SET
                         notified = CASE
                             WHEN excluded.item_id != mysekai_convert_slots.item_id
                               OR excluded.finish_at_ms != mysekai_convert_slots.finish_at_ms
-                            THEN 0
+                            THEN excluded.notified
                             ELSE mysekai_convert_slots.notified
                         END,
                         item_id = excluded.item_id,
@@ -909,7 +917,15 @@ class SQLiteRepository:
                         outcome_count = excluded.outcome_count,
                         updated_at = excluded.updated_at
                     """,
-                    (game_user_id, slot_id, item_id, finish_at, outcome_count, utc_now()),
+                    (
+                        game_user_id,
+                        slot_id,
+                        item_id,
+                        finish_at,
+                        outcome_count,
+                        notified,
+                        utc_now(),
+                    ),
                 )
             await connection.commit()
 

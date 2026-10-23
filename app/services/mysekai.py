@@ -927,6 +927,33 @@ class MysekaiService:
         return data if isinstance(data, dict) else None
 
     # ------------------------------------------------------------------ data
+    async def set_convert_watch(self, qq: str, enabled: bool) -> None:
+        """订阅或取消转换机完成提醒。
+
+        订阅时顺手把最近一次抓包里的槽位写进提醒表：玩家完全可能是先上传
+        抓包、看到槽位在转，才决定订阅，这批数据已经在
+        ``mysekai_catalog_state`` 里，不该要求他再传一次。订阅之前就已走完
+        的槽不补推，只提醒还在转的。
+        """
+        binding = await self.repository.get_mysekai_binding(qq)
+        if enabled and binding is None:
+            raise MysekaiError(
+                "请先绑定游戏账号，再订阅转换机提醒。",
+                code="not_bound",
+                status=409,
+            )
+        await self.repository.set_mysekai_convert_watch(qq, enabled)
+        if not enabled or binding is None:
+            return
+        state = await self.repository.get_mysekai_catalog_state(
+            binding["server"], binding["game_user_id"]
+        )
+        slots = (state or {}).get("convert_slots") or []
+        if slots:
+            await self.repository.record_mysekai_convert_slots(
+                binding["game_user_id"], slots, quiet_past=True
+            )
+
     async def bind(self, qq: str, game_user_id: str, server: str) -> dict:
         if await self.repository.get_mysekai_binding(qq) is not None:
             raise BindingConflict(

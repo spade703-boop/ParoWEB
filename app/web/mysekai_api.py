@@ -248,7 +248,10 @@ async def convert_watch(payload: WatchRequest, request: Request):
     if auth_error is not None:
         return auth_error
     service = _mysekai(request)
-    await service.repository.set_mysekai_convert_watch(payload.qq, payload.enabled)
+    try:
+        await service.set_convert_watch(payload.qq, payload.enabled)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
     return {"ok": True, "enabled": payload.enabled}
 
 
