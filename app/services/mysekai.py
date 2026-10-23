@@ -227,6 +227,8 @@ class HarukiProfile:
     leader_card_id: int | None
     profile_image_type: str | None
     avatar_png: bytes | None
+    #: Haruki 上这份 suite 的更新时间（响应里的 upload_time）
+    suite_uploaded_at_ms: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -550,6 +552,7 @@ class MysekaiService:
         )
         if returned_id != game_user_id:
             raise UpstreamError("Haruki 返回的账号与请求不一致")
+        suite_uploaded_at = _capture_ms(data.get("upload_time"))
         nickname = str(gamedata.get("name") or "").strip() or None
         deck_id = gamedata.get("deck")
         decks = data.get("userDecks") or []
@@ -595,6 +598,7 @@ class MysekaiService:
             leader_card_id=leader_card_id,
             profile_image_type=user_profile.get("profileImageType"),
             avatar_png=avatar_png,
+            suite_uploaded_at_ms=suite_uploaded_at,
         )
 
     async def fetch_mysekai_gate_data(
@@ -777,8 +781,13 @@ class MysekaiService:
         if state is None:
             return {}
         return {
-            "updated_at": format_capture_time(state.get("updated_at")),
-            "mysekai_at": format_capture_time(state.get("refreshed_at_ms")),
+            # Suite 数据：Haruki 上这份 suite 的更新时间。
+            "updated_at": format_capture_time(state.get("suite_uploaded_at_ms")),
+            # MySekai 数据：这份烤森抓包到达我们的时间。
+            "mysekai_at": format_capture_time(
+                state.get("mysekai_uploaded_at_ms")
+                or state.get("refreshed_at_ms")
+            ),
             "mysekai_rank": state.get("mysekai_rank"),
         }
 
@@ -1013,6 +1022,11 @@ class MysekaiService:
                 code="game_id_already_bound",
             )
         profile = await self.fetch_haruki_profile(game_user_id, server)
+        await self.repository.set_mysekai_data_times(
+            server=server,
+            game_user_id=profile.game_user_id,
+            suite_uploaded_at_ms=profile.suite_uploaded_at_ms,
+        )
         avatar = (
             base64.b64encode(profile.avatar_png).decode("ascii")
             if profile.avatar_png
@@ -1375,6 +1389,11 @@ class MysekaiService:
                 qq, day, result.visit_counts
             )
         upload_id = str(uuid.uuid4())
+        await self.repository.set_mysekai_data_times(
+            server=server,
+            game_user_id=binding["game_user_id"],
+            mysekai_uploaded_at_ms=int(time.time() * 1000),
+        )
         await self.repository.record_mysekai_upload(
             upload_id=upload_id,
             qq=qq,
@@ -1497,6 +1516,25 @@ def _catalog_render_error(response) -> MysekaiError:
 #: Unixtime in seconds stays far below 1e11 until year 5138, while today's
 #: millisecond timestamps are ~1e12. The gap makes the unit unambiguous.
 _MILLISECONDS_FLOOR = 100_000_000_000
+
+
+def _capture_ms(value: object) -> int | None:
+    """A game/Haruki timestamp as milliseconds, accepting seconds too."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and value > 0:
+        raw = int(value)
+        return raw if raw >= _MILLISECONDS_FLOOR else raw * 1000
+    if isinstance(value, str) and value.strip():
+        text = value.strip()
+        if text.isdigit():
+            return _capture_ms(int(text))
+        try:
+            moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return int(moment.timestamp() * 1000)
+    return None
 
 
 def format_capture_time(value: str | int | float | None) -> str | None:

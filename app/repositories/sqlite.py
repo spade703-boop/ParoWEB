@@ -265,6 +265,8 @@ class SQLiteRepository:
                 ("fixtures", "TEXT"),
                 ("convert_slots", "TEXT"),
                 ("convert_histories", "TEXT"),
+                ("suite_uploaded_at_ms", "INTEGER"),
+                ("mysekai_uploaded_at_ms", "INTEGER"),
             ):
                 if name not in state_columns:
                     await connection.execute(
@@ -976,6 +978,46 @@ class SQLiteRepository:
             "card_png": bytes(row[3]),
         }
 
+    async def set_mysekai_data_times(
+        self,
+        *,
+        server: str,
+        game_user_id: str,
+        suite_uploaded_at_ms: int | None = None,
+        mysekai_uploaded_at_ms: int | None = None,
+    ) -> None:
+        """Record when each kind of data last reached us.
+
+        ``suite`` is Haruki's own upload time for the published suite;
+        ``mysekai`` is when the capture carrying the MySekai data arrived.
+        Either may be omitted, and omitting one keeps the stored value.
+        """
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO mysekai_catalog_state(
+                    server, game_user_id, suite_uploaded_at_ms,
+                    mysekai_uploaded_at_ms, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(server, game_user_id) DO UPDATE SET
+                    suite_uploaded_at_ms=COALESCE(
+                        excluded.suite_uploaded_at_ms, suite_uploaded_at_ms
+                    ),
+                    mysekai_uploaded_at_ms=COALESCE(
+                        excluded.mysekai_uploaded_at_ms, mysekai_uploaded_at_ms
+                    ),
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    server,
+                    game_user_id,
+                    suite_uploaded_at_ms,
+                    mysekai_uploaded_at_ms,
+                    utc_now(),
+                ),
+            )
+            await connection.commit()
+
     async def claim_mysekai_push_window(
         self, game_user_id: str, window_key: str, upload_id: str
     ) -> bool:
@@ -1214,7 +1256,8 @@ class SQLiteRepository:
                 """
                 SELECT music_records, blueprints, fixtures,
                        convert_slots, convert_histories,
-                       mysekai_rank, refreshed_at_ms, updated_at
+                       mysekai_rank, refreshed_at_ms, updated_at,
+                       suite_uploaded_at_ms, mysekai_uploaded_at_ms
                 FROM mysekai_catalog_state
                 WHERE server = ? AND game_user_id = ?
                 """,
@@ -1232,6 +1275,8 @@ class SQLiteRepository:
             "mysekai_rank": row[5],
             "refreshed_at_ms": row[6],
             "updated_at": row[7],
+            "suite_uploaded_at_ms": row[8],
+            "mysekai_uploaded_at_ms": row[9],
         }
 
     async def record_mysekai_upload(

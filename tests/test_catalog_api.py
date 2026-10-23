@@ -125,6 +125,12 @@ async def test_fixture_list_uses_the_last_capture_state(harness):
         music_records=None,
         blueprints=[{"mysekaiBlueprintId": 1}],
     )
+    await service.repository.set_mysekai_data_times(
+        server="cn",
+        game_user_id=GAME_ID,
+        suite_uploaded_at_ms=1792725000000,
+        mysekai_uploaded_at_ms=1792726800000,
+    )
     # When the bot asks for the craftable catalog
     response = await client.post(
         "/internal/v1/mysekai/fixture-list", json={"game_user_id": GAME_ID}, headers=AUTH
@@ -136,8 +142,10 @@ async def test_fixture_list_uses_the_last_capture_state(harness):
     assert state.render_payloads[0]["user"]["userMysekaiBlueprints"] == [
         {"mysekaiBlueprintId": 1}
     ]
-    # 资料卡第二行展示数据更新时间，由存储时间格式化而来
-    assert state.render_payloads[0]["profile"]["updated_at"]
+    # 资料卡两行时间：Suite 取 Haruki 的上传时间，MySekai 取抓包到达时间
+    profile = state.render_payloads[0]["profile"]
+    assert profile["updated_at"]
+    assert profile["mysekai_at"]
 
 
 async def test_fixture_list_without_a_capture_is_a_409(harness):
@@ -273,6 +281,12 @@ async def test_catalog_link_is_signed_and_opens_the_card(harness):
         music_records=None,
         blueprints=[{"mysekaiBlueprintId": 1}],
     )
+    await service.repository.set_mysekai_data_times(
+        server="cn",
+        game_user_id=GAME_ID,
+        suite_uploaded_at_ms=1792725000000,
+        mysekai_uploaded_at_ms=1792726800000,
+    )
     # When the bot asks for a link instead of an image
     response = await client.post(
         "/internal/v1/mysekai/catalog-link",
@@ -327,6 +341,12 @@ async def test_talk_list_carries_the_stored_blueprints(harness):
         game_user_id=GAME_ID,
         music_records=None,
         blueprints=[{"mysekaiBlueprintId": 1}],
+    )
+    await service.repository.set_mysekai_data_times(
+        server="cn",
+        game_user_id=GAME_ID,
+        suite_uploaded_at_ms=1792725000000,
+        mysekai_uploaded_at_ms=1792726800000,
     )
     # When the character card is rendered
     response = await client.post(
