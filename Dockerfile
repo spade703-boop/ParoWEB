@@ -14,10 +14,10 @@ WORKDIR /app
 RUN groupadd --system --gid 10001 paro \
     && useradd --system --uid 10001 --gid 10001 --home-dir /app --no-create-home paro
 # 依赖层只依赖这三个入口：改 app/ 里的代码不会让它失效。
-# wheels/ 用来放离线 wheel，有就优先用，没有则回退到索引。
+# wheels/ 放离线 wheel；--no-index 保证只认本地，不会回联索引拉新版本。
 COPY --chown=paro:paro pyproject.toml requirements.txt ./
 COPY --chown=paro:paro wheels/ /wheels/
-RUN pip install --no-cache-dir --find-links=/wheels -r requirements.txt
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt
 COPY --chown=paro:paro app ./app
 COPY --chown=paro:paro content ./content
 # 不再 pip install 本项目：uvicorn 在 /app 下直接 import app.main。
