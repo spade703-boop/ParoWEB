@@ -123,13 +123,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "/internal/v1/mysekai/catalog-link",
                 "/internal/v1/mysekai/master-update",
                 "/api/v1/mysekai/ingest",
+                "/api/v1/mysekai/ingest-convert",
             }
             if not is_token_api:
                 origin = request.headers.get("origin")
                 if origin not in settings.allowed_origins:
                     return error_response(403, "invalid_origin", "请求来源不被允许")
             # The capture module posts the encrypted response body as-is.
-            is_binary_upload = request.url.path == "/api/v1/mysekai/ingest"
+            is_binary_upload = request.url.path in {
+                "/api/v1/mysekai/ingest",
+                "/api/v1/mysekai/ingest-convert",
+            }
             if (
                 request.method in {"POST", "PUT", "PATCH"}
                 and not is_binary_upload

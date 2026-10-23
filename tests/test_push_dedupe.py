@@ -44,15 +44,21 @@ async def _app(
     submit_birthday: dict | None = None,
     watch_on: bool = False,
     bind: bool = True,
+    convert_state: dict | None = None,
 ):
     """一个开着推送的应用；yield (client, push_payloads)。"""
     push_payloads: list[dict] = []
-    settings = _settings(tmp_path, mysekai_push_url="http://push.test/push")
+    settings = _settings(
+        tmp_path,
+        mysekai_push_url="http://push.test/push",
+        mysekai_ingest_token="ingest-token",
+    )
     app = create_app(settings)
     app.state.services.mysekai.transport = _mock_transport(
         push_ok=push_ok,
         push_payloads=push_payloads,
         submit_birthday=submit_birthday,
+        convert_state=convert_state,
     )
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)

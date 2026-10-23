@@ -64,6 +64,7 @@ def _mock_transport(
     render_payloads: list[dict] | None = None,
     render_status: int = 200,
     submit_birthday: dict | None = None,
+    convert_state: dict | None = None,
 ) -> httpx.MockTransport:
     suite_calls = 0
 
@@ -125,6 +126,10 @@ def _mock_transport(
             if submit_birthday is not None:
                 body["birthday"] = submit_birthday
             return httpx.Response(200, json=body)
+        if path == "/convert-state":
+            if convert_state is None:
+                return httpx.Response(422, json={"error": "no convert state"})
+            return httpx.Response(200, json=convert_state)
         if path == "/push":
             if push_payloads is not None:
                 push_payloads.append(json.loads(request.content))

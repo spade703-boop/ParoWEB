@@ -689,8 +689,35 @@ async def ingest(request: Request):
     }
 
 
-# ---------------------------------------------------------------- 模块下载
+@router.post("/ingest-convert")
+async def ingest_convert(request: Request):
+    """转换机动作的局部响应：只更新槽位，不出图、不推送。"""
+    auth_error = _ingest_auth_error(request)
+    if auth_error is not None:
+        return auth_error
 
+    game_user_id = (request.headers.get("X-Mysekai-Game-Id") or "").strip()
+    if not GAME_ID_RE.fullmatch(game_user_id):
+        return error_response(422, "invalid_game_id", "游戏 ID 格式不正确")
+    if not _ingest_allowed(request, game_user_id):
+        return error_response(403, "not_allowlisted", "这个游戏 ID 不在上报白名单内")
+
+    body = await request.body()
+    if not body:
+        return error_response(422, "empty_body", "响应体为空")
+    if len(body) > MAX_BODY_BYTES:
+        return error_response(413, "body_too_large", "响应体超过 4 MB")
+
+    try:
+        result = await _mysekai(request).ingest_convert(
+            game_user_id=game_user_id, server="cn", body=body
+        )
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return result
+
+
+# ---------------------------------------------------------------- 模块下载
 TEMPLATE_DIR = "app/templates"
 
 

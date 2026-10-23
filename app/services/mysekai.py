@@ -1134,6 +1134,59 @@ class MysekaiService:
             file_base64=base64.b64encode(body).decode("ascii"),
         )
 
+    async def ingest_convert(
+        self, *, game_user_id: str, server: str, body: bytes
+    ) -> dict:
+        """Refresh a player's converter slots from a converter-action response.
+
+        These responses are partial documents, so this path never renders,
+        never pushes and never records an upload: it only replaces
+        ``convert_slots`` when the response actually carried the table.
+        """
+        binding = await self.repository.get_mysekai_binding_by_game(
+            server, game_user_id
+        )
+        if binding is None:
+            raise BindingNotFound("这个游戏 ID 还没有绑定 QQ，请先在群里绑定")
+        url = f"{self.settings.mysekai_service_url}/convert-state"
+        try:
+            async with self._client(timeout=60.0) as client:
+                response = await client.post(
+                    url,
+                    content=body,
+                    headers={"Content-Type": "application/octet-stream"},
+                )
+        except httpx.HTTPError:
+            raise UpstreamError("出图服务暂时不可用，请稍后再试") from None
+        if response.status_code != 200:
+            raise UpstreamError("转换机数据暂时无法解析，请稍后再试")
+        try:
+            payload = response.json()
+        except ValueError:
+            raise UpstreamError("转换机数据返回了无效内容") from None
+        if not isinstance(payload, dict) or not payload.get("present"):
+            return {"ok": True, "updated": False}
+        slots = payload.get("slots") or []
+        state = await self.repository.get_mysekai_catalog_state(
+            server, game_user_id
+        ) or {}
+        await self.repository.set_mysekai_catalog_state(
+            server=server,
+            game_user_id=game_user_id,
+            music_records=state.get("music_records"),
+            blueprints=state.get("blueprints"),
+            fixtures=state.get("fixtures"),
+            convert_slots=slots,
+            convert_histories=state.get("convert_histories"),
+            mysekai_rank=state.get("mysekai_rank"),
+            refreshed_at_ms=state.get("refreshed_at_ms"),
+        )
+        if await self.repository.is_mysekai_convert_watch(binding["qq"]):
+            await self.repository.record_mysekai_convert_slots(
+                game_user_id, slots
+            )
+        return {"ok": True, "updated": True, "slots": len(slots)}
+
     async def _push(
         self,
         *,
