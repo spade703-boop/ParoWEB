@@ -9,6 +9,7 @@ from __future__ import annotations
 import hmac
 import logging
 import re
+import time
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -61,6 +62,13 @@ class WatchRequest(BaseModel):
 
     qq: str = Field(pattern=QQ_PATTERN)
     enabled: bool
+
+
+class ConvertAckRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    game_user_id: str = Field(pattern=GAME_ID_PATTERN)
+    slot_ids: list[int] = Field(min_length=1, max_length=8)
 
 
 class GateRequest(BaseModel):
@@ -233,6 +241,41 @@ async def water_watch(payload: WatchRequest, request: Request):
     return {"ok": True, "enabled": payload.enabled, "birthday": birthday}
 
 
+@internal_router.post("/convert-watch")
+async def convert_watch(payload: WatchRequest, request: Request):
+    """订阅/取消订阅转换机完成提醒。"""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    service = _mysekai(request)
+    await service.repository.set_mysekai_convert_watch(payload.qq, payload.enabled)
+    return {"ok": True, "enabled": payload.enabled}
+
+
+@internal_router.get("/convert-due")
+async def convert_due(request: Request):
+    """Bot 轮询：已走完、尚未通知、且主人仍订阅的槽位。"""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    service = _mysekai(request)
+    now_ms = int(time.time() * 1000)
+    slots = await service.repository.due_mysekai_convert_slots(now_ms)
+    return {"ok": True, "now_ms": now_ms, "slots": slots}
+
+
+@internal_router.post("/convert-ack")
+async def convert_ack(payload: ConvertAckRequest, request: Request):
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    service = _mysekai(request)
+    await service.repository.ack_mysekai_convert_slots(
+        payload.game_user_id, payload.slot_ids
+    )
+    return {"ok": True}
+
+
 @internal_router.post("/gate")
 async def gate_image(payload: GateRequest, request: Request):
     auth_error = _internal_auth_error(request)
@@ -358,6 +401,14 @@ async def music_record(payload: MusicRecordRequest, request: Request):
     return await _catalog_image(
         request, payload, _CatalogRender("music-record", {"show_id": payload.show_id})
     )
+
+
+@internal_router.post("/convert")
+async def convert(payload: CatalogRequest, request: Request):
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    return await _catalog_image(request, payload, _CatalogRender("convert", {}))
 
 
 def _profile_extras(data: dict, meta: dict) -> dict:

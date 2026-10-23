@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta, timezone
 import json
 import math
 from pathlib import Path
+import time
 import uuid
 
 import aiosqlite
@@ -110,12 +111,30 @@ CREATE TABLE IF NOT EXISTS mysekai_water_rounds (
     PRIMARY KEY (game_user_id, round_key)
 );
 
+CREATE TABLE IF NOT EXISTS mysekai_convert_watches (
+    qq TEXT PRIMARY KEY,
+    enabled_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mysekai_convert_slots (
+    game_user_id TEXT NOT NULL,
+    slot_id INTEGER NOT NULL,
+    item_id INTEGER NOT NULL,
+    finish_at_ms INTEGER NOT NULL,
+    outcome_count INTEGER NOT NULL DEFAULT 0,
+    notified INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (game_user_id, slot_id)
+);
+
 CREATE TABLE IF NOT EXISTS mysekai_catalog_state (
     server TEXT NOT NULL,
     game_user_id TEXT NOT NULL,
     music_records TEXT,
     blueprints TEXT,
     fixtures TEXT,
+    convert_slots TEXT,
+    convert_histories TEXT,
     mysekai_rank INTEGER,
     refreshed_at_ms INTEGER,
     updated_at TEXT NOT NULL,
@@ -225,6 +244,8 @@ class SQLiteRepository:
                 ("mysekai_rank", "INTEGER"),
                 ("refreshed_at_ms", "INTEGER"),
                 ("fixtures", "TEXT"),
+                ("convert_slots", "TEXT"),
+                ("convert_histories", "TEXT"),
             ):
                 if name not in state_columns:
                     await connection.execute(
@@ -810,6 +831,132 @@ class SQLiteRepository:
             ).fetchone()
         return row is not None
 
+    async def set_mysekai_convert_watch(self, qq: str, enabled: bool) -> None:
+        """Turn the converter-completion watch on or off for one QQ."""
+        async with self.connect() as connection:
+            if enabled:
+                await connection.execute(
+                    """
+                    INSERT INTO mysekai_convert_watches(qq, enabled_at)
+                    VALUES (?, ?)
+                    ON CONFLICT(qq) DO UPDATE SET enabled_at = excluded.enabled_at
+                    """,
+                    (qq, utc_now()),
+                )
+                # 订阅这一刻之前就已完成（甚至已领取）的槽不再补推，
+                # 否则刚订阅就被历史槽刷屏。
+                await connection.execute(
+                    """
+                    UPDATE mysekai_convert_slots
+                       SET notified = 1
+                     WHERE finish_at_ms <= ?
+                       AND game_user_id IN (
+                             SELECT game_user_id FROM mysekai_bindings WHERE qq = ?
+                       )
+                    """,
+                    (int(time.time() * 1000), qq),
+                )
+            else:
+                await connection.execute(
+                    "DELETE FROM mysekai_convert_watches WHERE qq = ?", (qq,)
+                )
+            await connection.commit()
+
+    async def is_mysekai_convert_watch(self, qq: str) -> bool:
+        async with self.connect() as connection:
+            row = await (
+                await connection.execute(
+                    "SELECT 1 FROM mysekai_convert_watches WHERE qq = ?", (qq,)
+                )
+            ).fetchone()
+        return row is not None
+
+    async def record_mysekai_convert_slots(
+        self, game_user_id: str, slots: list
+    ) -> None:
+        """Store each slot's finish time; a new batch resets its notification."""
+        async with self.connect() as connection:
+            for slot in slots:
+                try:
+                    finish_at = (
+                        int(slot["convertStartAt"])
+                        + int(slot["convertCount"])
+                        * int(slot["onceConvertMinutes"])
+                        * 60_000
+                    )
+                    item_id = int(slot["mysekaiConvertItemId"])
+                    slot_id = int(slot["slotId"])
+                    outcome_count = len(
+                        slot.get("userMysekaiConvertObtainResources") or []
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+                await connection.execute(
+                    """
+                    INSERT INTO mysekai_convert_slots(
+                        game_user_id, slot_id, item_id, finish_at_ms,
+                        outcome_count, notified, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 0, ?)
+                    ON CONFLICT(game_user_id, slot_id) DO UPDATE SET
+                        notified = CASE
+                            WHEN excluded.item_id != mysekai_convert_slots.item_id
+                              OR excluded.finish_at_ms != mysekai_convert_slots.finish_at_ms
+                            THEN 0
+                            ELSE mysekai_convert_slots.notified
+                        END,
+                        item_id = excluded.item_id,
+                        finish_at_ms = excluded.finish_at_ms,
+                        outcome_count = excluded.outcome_count,
+                        updated_at = excluded.updated_at
+                    """,
+                    (game_user_id, slot_id, item_id, finish_at, outcome_count, utc_now()),
+                )
+            await connection.commit()
+
+    async def due_mysekai_convert_slots(self, now_ms: int) -> list[dict]:
+        """Finished slots of subscribed players, oldest finish first."""
+        async with self.connect() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT s.game_user_id, s.slot_id, s.item_id, s.finish_at_ms,
+                       s.outcome_count, b.qq
+                  FROM mysekai_convert_slots s
+                  JOIN mysekai_bindings b
+                    ON b.game_user_id = s.game_user_id AND b.server = 'cn'
+                  JOIN mysekai_convert_watches w ON w.qq = b.qq
+                 WHERE s.notified = 0 AND s.finish_at_ms <= ?
+                 ORDER BY s.finish_at_ms
+                """,
+                (now_ms,),
+            )
+            rows = await cursor.fetchall()
+        return [
+            {
+                "game_user_id": row[0],
+                "slot_id": row[1],
+                "item_id": row[2],
+                "finish_at_ms": row[3],
+                "outcome_count": row[4],
+                "qq": row[5],
+            }
+            for row in rows
+        ]
+
+    async def ack_mysekai_convert_slots(self, game_user_id: str, slot_ids: list[int]) -> None:
+        if not slot_ids:
+            return
+        placeholders = ",".join("?" for _ in slot_ids)
+        async with self.connect() as connection:
+            await connection.execute(
+                f"""
+                UPDATE mysekai_convert_slots
+                   SET notified = 1
+                 WHERE game_user_id = ? AND slot_id IN ({placeholders})
+                """,
+                (game_user_id, *slot_ids),
+            )
+            await connection.commit()
+
     async def claim_mysekai_water_round(
         self, game_user_id: str, round_key: str
     ) -> bool:
@@ -834,6 +981,8 @@ class SQLiteRepository:
         music_records: list | None,
         blueprints: list | None,
         fixtures: list | None = None,
+        convert_slots: list | None = None,
+        convert_histories: list | None = None,
         mysekai_rank: int | None = None,
         refreshed_at_ms: int | None = None,
     ) -> None:
@@ -848,12 +997,15 @@ class SQLiteRepository:
                 """
                 INSERT INTO mysekai_catalog_state(
                     server, game_user_id, music_records, blueprints, fixtures,
+                    convert_slots, convert_histories,
                     mysekai_rank, refreshed_at_ms, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(server, game_user_id) DO UPDATE SET
                     music_records=excluded.music_records,
                     blueprints=excluded.blueprints,
                     fixtures=excluded.fixtures,
+                    convert_slots=excluded.convert_slots,
+                    convert_histories=excluded.convert_histories,
                     mysekai_rank=excluded.mysekai_rank,
                     refreshed_at_ms=excluded.refreshed_at_ms,
                     updated_at=excluded.updated_at
@@ -864,6 +1016,8 @@ class SQLiteRepository:
                     None if music_records is None else json.dumps(music_records),
                     None if blueprints is None else json.dumps(blueprints),
                     None if fixtures is None else json.dumps(fixtures),
+                    None if convert_slots is None else json.dumps(convert_slots),
+                    None if convert_histories is None else json.dumps(convert_histories),
                     mysekai_rank,
                     refreshed_at_ms,
                     utc_now(),
@@ -878,6 +1032,7 @@ class SQLiteRepository:
             cursor = await connection.execute(
                 """
                 SELECT music_records, blueprints, fixtures,
+                       convert_slots, convert_histories,
                        mysekai_rank, refreshed_at_ms, updated_at
                 FROM mysekai_catalog_state
                 WHERE server = ? AND game_user_id = ?
@@ -891,9 +1046,11 @@ class SQLiteRepository:
             "music_records": None if row[0] is None else json.loads(row[0]),
             "blueprints": None if row[1] is None else json.loads(row[1]),
             "fixtures": None if row[2] is None else json.loads(row[2]),
-            "mysekai_rank": row[3],
-            "refreshed_at_ms": row[4],
-            "updated_at": row[5],
+            "convert_slots": None if row[3] is None else json.loads(row[3]),
+            "convert_histories": None if row[4] is None else json.loads(row[4]),
+            "mysekai_rank": row[5],
+            "refreshed_at_ms": row[6],
+            "updated_at": row[7],
         }
 
     async def record_mysekai_upload(

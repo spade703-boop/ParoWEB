@@ -58,6 +58,7 @@ CATALOG_ENDPOINTS: dict[str, str] = {
     "fixture-list": "/render/mysekai/fixture-list",
     "talk-list": "/render/mysekai/talk-list",
     "music-record": "/render/mysekai/music-record",
+    "convert": "/render/mysekai/convert",
 }
 
 
@@ -796,6 +797,19 @@ class MysekaiService:
                     "最近一次抓包没有刷新唱片数据，请重新完整上传一次"
                 )
             return {"userMysekaiMusicRecords": rows}
+        if kind == "convert":
+            slots = state.get("convert_slots")
+            histories = state.get("convert_histories")
+            if slots is None and histories is None:
+                raise CatalogStateMissing(
+                    "最近一次抓包没有刷新转换机数据，请重新完整上传一次"
+                )
+            payload: dict = {}
+            if slots is not None:
+                payload["userMysekaiConvertSlots"] = slots
+            if histories is not None:
+                payload["userMysekaiConvertItemHistories"] = histories
+            return payload
         rows = state["blueprints"]
         return {} if rows is None else {"userMysekaiBlueprints": rows}
 
@@ -1206,9 +1220,17 @@ class MysekaiService:
                 music_records=result.catalog_state.get("music_records"),
                 blueprints=result.catalog_state.get("blueprints"),
                 fixtures=result.catalog_state.get("fixtures"),
+                convert_slots=result.catalog_state.get("convert_slots"),
+                convert_histories=result.catalog_state.get("convert_histories"),
                 mysekai_rank=result.catalog_state.get("mysekai_rank"),
                 refreshed_at_ms=result.catalog_state.get("refreshed_at_ms"),
             )
+        if await self.repository.is_mysekai_convert_watch(qq):
+            slots = result.catalog_state.get("convert_slots")
+            if slots:
+                await self.repository.record_mysekai_convert_slots(
+                    binding["game_user_id"], slots
+                )
         if visit_baseline is None and result.visit_counts:
             await self.repository.set_mysekai_visit_baseline(
                 qq, day, result.visit_counts
