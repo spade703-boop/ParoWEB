@@ -55,7 +55,8 @@ services:
         ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
         WORKDIR /app
         COPY requirements.txt ./
-        RUN pip install --no-cache-dir --index-url ${PIP_INDEX_URL} -r requirements.txt
+        COPY wheels/ /wheels/
+        RUN pip install --no-cache-dir --index-url ${PIP_INDEX_URL} --find-links=/wheels -r requirements.txt
         COPY . .
         CMD ["python", "service/server.py"]
     image: mysekai-re-pipeline:local
