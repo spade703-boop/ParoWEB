@@ -1,0 +1,89 @@
+from __future__ import annotations
+
+from datetime import date, datetime
+
+from app.services.mysekai_window import (
+    BIRTHDAYS,
+    CN,
+    birthday_dates,
+    is_exempt,
+    window_key,
+)
+
+
+def test_morning_before_five_belongs_to_previous_evening() -> None:
+    assert (
+        window_key(datetime(2026, 10, 23, 4, 59, tzinfo=CN), birthdays=frozenset())
+        == "2026-10-22-17"
+    )
+
+
+def test_five_starts_the_day_window() -> None:
+    assert (
+        window_key(datetime(2026, 10, 23, 5, 0, tzinfo=CN), birthdays=frozenset())
+        == "2026-10-23-05"
+    )
+
+
+def test_seventeen_starts_the_evening_window() -> None:
+    assert (
+        window_key(datetime(2026, 10, 23, 16, 59, tzinfo=CN), birthdays=frozenset())
+        == "2026-10-23-05"
+    )
+    assert (
+        window_key(datetime(2026, 10, 23, 17, 0, tzinfo=CN), birthdays=frozenset())
+        == "2026-10-23-17"
+    )
+
+
+def test_birthday_midnight_splits_a_new_window() -> None:
+    birthdays = frozenset({date(2026, 11, 12)})
+    assert (
+        window_key(datetime(2026, 11, 12, 0, 0, tzinfo=CN), birthdays=birthdays)
+        == "2026-11-12-00"
+    )
+    assert (
+        window_key(datetime(2026, 11, 12, 3, 0, tzinfo=CN), birthdays=birthdays)
+        == "2026-11-12-00"
+    )
+
+
+def test_birthday_after_five_falls_back_to_the_day_window() -> None:
+    birthdays = frozenset({date(2026, 11, 12)})
+    assert (
+        window_key(datetime(2026, 11, 12, 5, 0, tzinfo=CN), birthdays=birthdays)
+        == "2026-11-12-05"
+    )
+
+
+def test_birthday_day_has_three_windows() -> None:
+    """生日 00:00 下生日花并刷新全图，是独立窗口，不能并进前一天 17:00。"""
+    birthdays = frozenset({date(2026, 11, 12)})
+    assert (
+        window_key(datetime(2026, 11, 11, 23, 50, tzinfo=CN), birthdays=birthdays)
+        == "2026-11-11-17"
+    )
+    assert (
+        window_key(datetime(2026, 11, 12, 0, 10, tzinfo=CN), birthdays=birthdays)
+        == "2026-11-12-00"
+    )
+    assert (
+        window_key(datetime(2026, 11, 12, 5, 0, tzinfo=CN), birthdays=birthdays)
+        == "2026-11-12-05"
+    )
+    assert (
+        window_key(datetime(2026, 11, 12, 17, 0, tzinfo=CN), birthdays=birthdays)
+        == "2026-11-12-17"
+    )
+
+
+def test_birthday_calendar_is_complete() -> None:
+    assert len(BIRTHDAYS) == 26
+    assert date(2026, 11, 12) in birthday_dates(2026)
+    assert date(2026, 12, 27) in birthday_dates(2026)
+
+
+def test_only_watched_users_during_a_birthday_are_exempt() -> None:
+    assert is_exempt(True, {"targets": []}) is True
+    assert is_exempt(True, None) is False
+    assert is_exempt(False, {"targets": []}) is False
