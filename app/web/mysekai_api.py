@@ -71,6 +71,15 @@ class ConvertAckRequest(BaseModel):
     slot_ids: list[int] = Field(min_length=1, max_length=8)
 
 
+class ConvertDoneRequest(BaseModel):
+    """One completion notice: which finished slots to draw."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    game_user_id: str = Field(pattern=GAME_ID_PATTERN)
+    slot_ids: list[int] = Field(min_length=1, max_length=8)
+
+
 class GateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -265,6 +274,20 @@ async def convert_due(request: Request):
     now_ms = int(time.time() * 1000)
     slots = await service.repository.due_mysekai_convert_slots(now_ms)
     return {"ok": True, "now_ms": now_ms, "slots": slots}
+
+
+@internal_router.post("/convert-done")
+async def convert_done(payload: ConvertDoneRequest, request: Request):
+    """提醒附带的完成小卡；取不到槽位时由调用方退回纯文字。"""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    service = _mysekai(request)
+    try:
+        image = await service.convert_done_image(payload.game_user_id, payload.slot_ids)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return Response(content=image, media_type="image/png")
 
 
 @internal_router.post("/convert-reset")

@@ -873,6 +873,30 @@ class MysekaiService:
             return response.content
         raise _catalog_render_error(response)
 
+    async def convert_done_image(
+        self, game_user_id: str, slot_ids: list[int]
+    ) -> bytes:
+        """提醒用的小卡：只画刚完成的槽位和它们的产出。
+
+        产出取自最近一次抓包的 ``convert_slots``。槽位的 ``obtainResources``
+        在批次开始时就已摇好，所以即使玩家之后没有再上传，这里依然准确。
+        缓存必须关闭——同一批槽位的数据不会变，但它们是按槽位 id 取的，
+        用请求体做 key 会把不同时机的请求混在一起。
+        """
+        state = await self.repository.get_mysekai_catalog_state("cn", game_user_id)
+        slots = (state or {}).get("convert_slots")
+        if not slots:
+            raise MysekaiError(
+                "最近一次抓包里没有转换机数据。",
+                code="convert_state_missing",
+                status=409,
+            )
+        return await self.render_catalog_image(
+            "/render/mysekai/convert-done",
+            {"userMysekaiConvertSlots": slots, "slot_ids": slot_ids},
+            cache=False,
+        )
+
     async def update_master(self, region: str) -> dict:
         """Ask the render service to install the newest upstream snapshot.
 
