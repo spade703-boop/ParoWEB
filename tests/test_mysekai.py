@@ -63,6 +63,7 @@ def _mock_transport(
     suite_rejects_key: bool = False,
     render_payloads: list[dict] | None = None,
     render_status: int = 200,
+    submit_birthday: dict | None = None,
 ) -> httpx.MockTransport:
     suite_calls = 0
 
@@ -113,17 +114,17 @@ def _mock_transport(
                 200, content=TINY_PNG, headers={"content-type": "image/png"}
             )
         if path == "/submit":
-            return httpx.Response(
-                200,
-                json={
-                    "ok": True,
-                    "sites": [{"site_id": 5, "points": 33, "drops": 177}],
-                    "points": 33,
-                    "drops": 177,
-                    "map_png_base64": base64.b64encode(TINY_PNG).decode(),
-                    "card_png_base64": base64.b64encode(TINY_PNG).decode(),
-                },
-            )
+            body = {
+                "ok": True,
+                "sites": [{"site_id": 5, "points": 33, "drops": 177}],
+                "points": 33,
+                "drops": 177,
+                "map_png_base64": base64.b64encode(TINY_PNG).decode(),
+                "card_png_base64": base64.b64encode(TINY_PNG).decode(),
+            }
+            if submit_birthday is not None:
+                body["birthday"] = submit_birthday
+            return httpx.Response(200, json=body)
         if path == "/push":
             if push_payloads is not None:
                 push_payloads.append(json.loads(request.content))

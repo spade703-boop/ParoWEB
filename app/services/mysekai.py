@@ -34,7 +34,7 @@ from PIL import Image
 
 from app.config import Settings
 from app.repositories.sqlite import SQLiteRepository
-
+from app.services.mysekai_window import birthday_dates, is_exempt, window_key
 
 COOKIE_NAME = "paro_mysekai"
 SESSION_TTL_SECONDS = 12 * 60 * 60
@@ -1322,15 +1322,30 @@ class MysekaiService:
             drops=result.drops,
             push_status="pending",
         )
-        push_status, push_message = await self._push(
-            upload_id=upload_id,
-            qq=qq,
-            game_user_id=binding["game_user_id"],
-            nickname=binding.get("nickname"),
-            map_png_base64=result.map_png_base64,
-            card_png_base64=result.card_png_base64,
-            birthday=result.birthday,
+        moment = datetime.now(_CN)
+        window = window_key(moment, birthdays=birthday_dates(moment.year))
+        claimed = is_exempt(watch_on, result.birthday) or (
+            await self.repository.claim_mysekai_push_window(
+                binding["game_user_id"], window, upload_id
+            )
         )
+        if claimed:
+            push_status, push_message = await self._push(
+                upload_id=upload_id,
+                qq=qq,
+                game_user_id=binding["game_user_id"],
+                nickname=binding.get("nickname"),
+                map_png_base64=result.map_png_base64,
+                card_png_base64=result.card_png_base64,
+                birthday=result.birthday,
+            )
+            if push_status != "sent":
+                # 推失败不能占着窗口，否则本时段后续上传会被静音。
+                await self.repository.release_mysekai_push_window(
+                    binding["game_user_id"], window, upload_id
+                )
+        else:
+            push_status, push_message = "skipped", "本时段已推送过，本次仅更新数据"
         await self.repository.update_mysekai_upload_push_status(
             upload_id, push_status
         )
