@@ -925,6 +925,22 @@ class SQLiteRepository:
                 )
             await connection.commit()
 
+    async def clear_mysekai_water_watches(self) -> int:
+        """Turn the watering watch off for every QQ.
+
+        Used by the superuser command after a logic change that old
+        subscriptions would misrepresent; players opt in again themselves.
+        Round history is kept, but counting restarts from each player's
+        next ``开启浇水监听``.
+        """
+        async with self.connect() as connection:
+            row = await (
+                await connection.execute("SELECT COUNT(*) FROM mysekai_water_watches")
+            ).fetchone()
+            await connection.execute("DELETE FROM mysekai_water_watches")
+            await connection.commit()
+        return int(row[0]) if row else 0
+
     async def clear_mysekai_convert_watches(self) -> tuple[int, int]:
         """Drop every converter subscription together with its slot rows.
 

@@ -346,6 +346,16 @@ async def convert_done(payload: ConvertDoneRequest, request: Request):
     return Response(content=image, media_type="image/png")
 
 
+@internal_router.post("/watch-reset")
+async def water_watch_reset(request: Request):
+    """超管一键关闭全群浇水监听。"""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    result = await _mysekai(request).reset_water_watches()
+    return {"ok": True, **result}
+
+
 @internal_router.post("/convert-reset")
 async def convert_reset(request: Request):
     """超管一键清空转换机订阅，群友重新订阅后按新逻辑回填。"""

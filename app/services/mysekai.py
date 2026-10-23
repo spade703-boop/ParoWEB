@@ -1014,6 +1014,11 @@ class MysekaiService:
                 binding["game_user_id"], slots, quiet_past=True
             )
 
+    async def reset_water_watches(self) -> dict:
+        """关闭全群浇水监听；轮次历史保留，重新开启后从头计数。"""
+        cleared = await self.repository.clear_mysekai_water_watches()
+        return {"watches": cleared}
+
     async def reset_convert_watches(self) -> dict:
         """清空所有转换机订阅与槽位记录。
 

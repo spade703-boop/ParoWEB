@@ -103,6 +103,24 @@ async def test_failed_rare_push_can_retry_same_round(tmp_path, monkeypatch) -> N
     assert attempts[0] == attempts[1]
 
 
+async def test_superuser_reset_turns_off_every_watch(tmp_path) -> None:
+    from tests.test_mysekai import BOT_TOKEN
+
+    async with _app(tmp_path, watch_on=True) as (client, _):
+        repository = client._transport.app.state.services.repository
+        await repository.set_mysekai_water_watch("100000001", True)
+        response = await client.post(
+            "/internal/v1/mysekai/watch-reset", json={},
+            headers={"Authorization": f"Bearer {BOT_TOKEN}"},
+        )
+        mine = await repository.is_mysekai_water_watch(QQ)
+        other = await repository.is_mysekai_water_watch("100000001")
+    assert response.status_code == 200
+    assert response.json()["watches"] == 2
+    assert mine is False
+    assert other is False
+
+
 async def test_web_submit_reports_watch_state(tmp_path) -> None:
     birthday = {"party_id": 2, "round_key": "party:2:progress:8", "targets": []}
     async with _app(tmp_path, submit_birthday=birthday, watch_on=True) as (client, _):
