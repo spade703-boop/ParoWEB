@@ -1322,6 +1322,16 @@ class MysekaiService:
             drops=result.drops,
             push_status="pending",
         )
+        await self.repository.save_mysekai_latest_capture(
+            qq=qq,
+            game_user_id=binding["game_user_id"],
+            upload_id=upload_id,
+            captured_at_ms=(
+                (result.catalog_state or {}).get("refreshed_at_ms")
+            ),
+            map_png=base64.b64decode(result.map_png_base64),
+            card_png=base64.b64decode(result.card_png_base64),
+        )
         moment = datetime.now(_CN)
         window = window_key(moment, birthdays=birthday_dates(moment.year))
         claimed = is_exempt(watch_on, result.birthday) or (

@@ -6,6 +6,7 @@ MySekai service stays on loopback: this backend is the only thing that calls it.
 
 from __future__ import annotations
 
+import base64
 import hmac
 import logging
 import re
@@ -274,6 +275,24 @@ async def convert_due(request: Request):
     now_ms = int(time.time() * 1000)
     slots = await service.repository.due_mysekai_convert_slots(now_ms)
     return {"ok": True, "now_ms": now_ms, "slots": slots}
+
+
+@internal_router.post("/latest-capture")
+async def latest_capture(payload: QqRequest, request: Request):
+    """Bot 指令：取这个 QQ 最近一次抓包的地图与结算卡。"""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    service = _mysekai(request)
+    row = await service.repository.get_mysekai_latest_capture(payload.qq)
+    if row is None:
+        return error_response(404, "no_capture", "还没有上传过烤森抓包")
+    return {
+        "ok": True,
+        "captured_at_ms": row["captured_at_ms"],
+        "map": base64.b64encode(row["map_png"]).decode("ascii"),
+        "card": base64.b64encode(row["card_png"]).decode("ascii"),
+    }
 
 
 @internal_router.post("/convert-done")

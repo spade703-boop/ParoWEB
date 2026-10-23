@@ -127,6 +127,16 @@ CREATE TABLE IF NOT EXISTS mysekai_convert_slots (
     PRIMARY KEY (game_user_id, slot_id)
 );
 
+CREATE TABLE IF NOT EXISTS mysekai_latest_capture (
+    qq TEXT PRIMARY KEY,
+    game_user_id TEXT NOT NULL,
+    upload_id TEXT NOT NULL,
+    captured_at_ms INTEGER,
+    map_png BLOB NOT NULL,
+    card_png BLOB NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mysekai_push_windows (
     game_user_id TEXT NOT NULL,
     window_key TEXT NOT NULL,
@@ -888,6 +898,64 @@ class SQLiteRepository:
             await connection.execute("DELETE FROM mysekai_convert_slots")
             await connection.commit()
         return (int(watched[0]) if watched else 0, int(slotted[0]) if slotted else 0)
+
+    async def save_mysekai_latest_capture(
+        self,
+        *,
+        qq: str,
+        game_user_id: str,
+        upload_id: str,
+        captured_at_ms: int | None,
+        map_png: bytes,
+        card_png: bytes,
+    ) -> None:
+        """Keep the newest upload's two images so the bot can show them on demand."""
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO mysekai_latest_capture(
+                    qq, game_user_id, upload_id, captured_at_ms,
+                    map_png, card_png, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(qq) DO UPDATE SET
+                    game_user_id = excluded.game_user_id,
+                    upload_id = excluded.upload_id,
+                    captured_at_ms = excluded.captured_at_ms,
+                    map_png = excluded.map_png,
+                    card_png = excluded.card_png,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    qq,
+                    game_user_id,
+                    upload_id,
+                    captured_at_ms,
+                    map_png,
+                    card_png,
+                    utc_now(),
+                ),
+            )
+            await connection.commit()
+
+    async def get_mysekai_latest_capture(self, qq: str) -> dict | None:
+        async with self.connect() as connection:
+            row = await (
+                await connection.execute(
+                    """
+                    SELECT captured_at_ms, map_png, card_png
+                      FROM mysekai_latest_capture
+                     WHERE qq = ?
+                    """,
+                    (qq,),
+                )
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "captured_at_ms": row[0],
+            "map_png": bytes(row[1]),
+            "card_png": bytes(row[2]),
+        }
 
     async def claim_mysekai_push_window(
         self, game_user_id: str, window_key: str, upload_id: str
