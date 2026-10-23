@@ -839,11 +839,16 @@ class MysekaiService:
         data: dict,
         profile: dict | None = None,
         options: dict | None = None,
+        *,
+        cache: bool = True,
     ) -> bytes:
         """Send one player payload to the render service and return its PNG.
 
         The body is the cache key: it already includes the player's data
         version, so a repeat command returns the stored PNG without a render.
+        Cards whose content depends on the current time (the converter
+        countdown) must pass ``cache=False`` -- the body carries no clock, so a
+        cached image would freeze the timer.
         """
         payload: dict = {"user": data}
         if profile:
@@ -851,6 +856,8 @@ class MysekaiService:
         if options:
             payload.update(options)
         url = f"{self.settings.mysekai_service_url}{endpoint}"
+        if not cache:
+            return await self._render_catalog_once(url, payload)
         return await self.render_cache.get_or_render(
             RenderCache.key(payload), lambda: self._render_catalog_once(url, payload)
         )

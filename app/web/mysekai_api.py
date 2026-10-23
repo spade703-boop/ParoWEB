@@ -368,7 +368,8 @@ async def _catalog_image(
         if profile is not None:
             profile.update(_profile_extras(data, meta))
         png = await service.render_catalog_image(
-            CATALOG_ENDPOINTS[render.kind], data, profile, render.options
+            CATALOG_ENDPOINTS[render.kind], data, profile, render.options,
+            cache=render.kind != "convert",
         )
     except MysekaiError as exc:
         return error_response(exc.status, exc.code, str(exc), exc.details)
@@ -444,7 +445,8 @@ async def _render_catalog_for(
     if profile is not None:
         profile.update(_profile_extras(data, meta))
     return await service.render_catalog_image(
-        CATALOG_ENDPOINTS[kind], data, profile, options
+        CATALOG_ENDPOINTS[kind], data, profile, options,
+        cache=kind != "convert",
     )
 
 
