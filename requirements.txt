@@ -1,0 +1,8 @@
+# 构建期依赖清单，必须与 pyproject.toml 的 [project].dependencies 保持一致。
+# Dockerfile 先按这份装依赖、再 COPY 代码，这样改代码不会让依赖层失效。
+aiosqlite>=0.20,<1
+fastapi>=0.115,<1
+httpx>=0.28,<1
+Pillow>=10,<13
+pydantic>=2.10,<3
+uvicorn[standard]>=0.34,<1
