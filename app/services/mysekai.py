@@ -954,6 +954,15 @@ class MysekaiService:
                 binding["game_user_id"], slots, quiet_past=True
             )
 
+    async def reset_convert_watches(self) -> dict:
+        """清空所有转换机订阅与槽位记录。
+
+        供超管在提醒逻辑变化后重来一次：老记录按旧口径排队，留着只会误导。
+        清空后群友重新订阅，订阅流程会按新逻辑从最近一次抓包回填。
+        """
+        watches, slots = await self.repository.clear_mysekai_convert_watches()
+        return {"watches": watches, "slots": slots}
+
     async def bind(self, qq: str, game_user_id: str, server: str) -> dict:
         if await self.repository.get_mysekai_binding(qq) is not None:
             raise BindingConflict(

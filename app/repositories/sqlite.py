@@ -862,6 +862,25 @@ class SQLiteRepository:
                 )
             await connection.commit()
 
+    async def clear_mysekai_convert_watches(self) -> tuple[int, int]:
+        """Drop every converter subscription together with its slot rows.
+
+        Used by the superuser command after a change the old rows would
+        misrepresent: players subscribe again, and subscribing re-reads their
+        latest capture.
+        """
+        async with self.connect() as connection:
+            watched = await (
+                await connection.execute("SELECT COUNT(*) FROM mysekai_convert_watches")
+            ).fetchone()
+            slotted = await (
+                await connection.execute("SELECT COUNT(*) FROM mysekai_convert_slots")
+            ).fetchone()
+            await connection.execute("DELETE FROM mysekai_convert_watches")
+            await connection.execute("DELETE FROM mysekai_convert_slots")
+            await connection.commit()
+        return (int(watched[0]) if watched else 0, int(slotted[0]) if slotted else 0)
+
     async def is_mysekai_convert_watch(self, qq: str) -> bool:
         async with self.connect() as connection:
             row = await (

@@ -267,6 +267,17 @@ async def convert_due(request: Request):
     return {"ok": True, "now_ms": now_ms, "slots": slots}
 
 
+@internal_router.post("/convert-reset")
+async def convert_reset(request: Request):
+    """超管一键清空转换机订阅，群友重新订阅后按新逻辑回填。"""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    service = _mysekai(request)
+    result = await service.reset_convert_watches()
+    return {"ok": True, **result}
+
+
 @internal_router.post("/convert-ack")
 async def convert_ack(payload: ConvertAckRequest, request: Request):
     auth_error = _internal_auth_error(request)
