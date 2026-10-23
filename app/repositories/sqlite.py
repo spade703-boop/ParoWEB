@@ -893,7 +893,15 @@ class SQLiteRepository:
     async def record_mysekai_convert_slots(
         self, game_user_id: str, slots: list, *, quiet_past: bool = False
     ) -> None:
-        """Store each slot's finish time; a new batch resets its notification.
+        """Store each slot's finish time; only a new batch resets its notification.
+
+        A batch is "new" when its finish time moves **later** than the stored
+        one. Finishing earlier means the same run was sped up (a shortcut item
+        or a shorter per-item time), not a new batch, so an already-sent
+        notice stays sent. Every notified row keeps a past finish time — it
+        only becomes notified once it has finished — while a new batch starts
+        now and therefore always ends later, which is what makes the
+        comparison safe.
 
         ``quiet_past`` marks already-finished slots as notified at insert time.
         Subscribing uses it: a player who uploaded a capture before opting in
@@ -926,9 +934,9 @@ class SQLiteRepository:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(game_user_id, slot_id) DO UPDATE SET
                         notified = CASE
-                            WHEN excluded.item_id != mysekai_convert_slots.item_id
-                              OR excluded.finish_at_ms != mysekai_convert_slots.finish_at_ms
-                            THEN excluded.notified
+                            WHEN excluded.notified = 1 THEN 1
+                            WHEN excluded.finish_at_ms
+                                 > mysekai_convert_slots.finish_at_ms THEN 0
                             ELSE mysekai_convert_slots.notified
                         END,
                         item_id = excluded.item_id,
