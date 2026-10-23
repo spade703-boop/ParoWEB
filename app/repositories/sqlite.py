@@ -155,6 +155,7 @@ CREATE TABLE IF NOT EXISTS mysekai_catalog_state (
     convert_slots TEXT,
     convert_histories TEXT,
     mysekai_rank INTEGER,
+    game_rank INTEGER,
     refreshed_at_ms INTEGER,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (server, game_user_id)
@@ -261,6 +262,7 @@ class SQLiteRepository:
             }
             for name, sql_type in (
                 ("mysekai_rank", "INTEGER"),
+                ("game_rank", "INTEGER"),
                 ("refreshed_at_ms", "INTEGER"),
                 ("fixtures", "TEXT"),
                 ("convert_slots", "TEXT"),
@@ -1257,7 +1259,7 @@ class SQLiteRepository:
                 SELECT music_records, blueprints, fixtures,
                        convert_slots, convert_histories,
                        mysekai_rank, refreshed_at_ms, updated_at,
-                       suite_uploaded_at_ms, mysekai_uploaded_at_ms
+                       suite_uploaded_at_ms, mysekai_uploaded_at_ms, game_rank
                 FROM mysekai_catalog_state
                 WHERE server = ? AND game_user_id = ?
                 """,
@@ -1277,7 +1279,30 @@ class SQLiteRepository:
             "updated_at": row[7],
             "suite_uploaded_at_ms": row[8],
             "mysekai_uploaded_at_ms": row[9],
+            "game_rank": row[10],
         }
+
+    async def set_mysekai_game_rank(
+        self, server: str, game_user_id: str, rank: int
+    ) -> None:
+        """Cache the account's game level.
+
+        The capture carries only the 烤森 level, so this is the one value that
+        has to come from Haruki. Cached here so the cards do not pay an extra
+        request on every command.
+        """
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO mysekai_catalog_state(
+                    server, game_user_id, game_rank, updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(server, game_user_id) DO UPDATE SET
+                    game_rank = excluded.game_rank
+                """,
+                (server, game_user_id, rank, utc_now()),
+            )
+            await connection.commit()
 
     async def record_mysekai_upload(
         self,

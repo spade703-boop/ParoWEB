@@ -545,6 +545,8 @@ class MysekaiService:
             raise UpstreamError("Haruki 返回了无法解析的数据")
         gamedata = data.get("userGamedata") or {}
         user_profile = data.get("userProfile") or {}
+        # 顺手把游戏等级落库：抓包只有烤森等级，卡片的 Lv chip 靠这一次。
+        await self.remember_game_rank(server, game_user_id, gamedata.get("rank"))
         returned_id = str(
             gamedata.get("userId")
             or user_profile.get("userId")
@@ -789,7 +791,16 @@ class MysekaiService:
                 or state.get("refreshed_at_ms")
             ),
             "mysekai_rank": state.get("mysekai_rank"),
+            # 游戏等级：抓包里没有，来自 Haruki 并缓存。
+            "game_rank": state.get("game_rank"),
         }
+
+    async def remember_game_rank(
+        self, server: str, game_user_id: str, rank: int | None
+    ) -> None:
+        """Persist a level we just saw in a Haruki response."""
+        if isinstance(rank, int):
+            await self.repository.set_mysekai_game_rank(server, game_user_id, rank)
 
     async def catalog_payload(
         self, game_user_id: str, kind: str, server: str = "cn"
@@ -1359,14 +1370,19 @@ class MysekaiService:
         if len(body) > MAX_BODY_BYTES:
             raise MysekaiError("响应体超过 4 MB")
         avatar = binding.get("leader_avatar")
+        meta = await self.catalog_state_meta(server, game_user_id)
         profile_payload = {
             "nickname": binding.get("nickname"),
             "user_id": binding["game_user_id"],
             "region": "CN",
             "hide_uid": True,
+            # 缓存下来的游戏等级；抓包本身只有烤森等级。
+            "game_rank": meta.get("game_rank"),
             "source": "Haruki",
             "mode": "latest",
             "avatar_base64": avatar,
+            # 这份抓包到达我们的时间；资料卡的「MySekai 数据」行。
+            "mysekai_at": format_capture_time(int(time.time() * 1000)),
         }
         day = _today_key()
         visit_baseline = await self.repository.get_mysekai_visit_baseline(qq, day)

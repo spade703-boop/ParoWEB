@@ -349,13 +349,25 @@ async def gate_image(payload: GateRequest, request: Request):
         binding = await service.repository.get_mysekai_binding_by_game(
             payload.server, payload.game_user_id
         )
+        meta = await service.catalog_state_meta(payload.game_user_id, payload.server)
         profile = None
-        if binding:
+        if binding or meta:
+            # 与其余模板共用同一块资料卡：等级和两次数据时间都来自本地库。
             profile = {
-                "nickname": binding.get("nickname"),
-                "user_id": binding.get("game_user_id"),
-                "avatar_base64": binding.get("leader_avatar"),
+                "nickname": (binding or {}).get("nickname"),
+                "user_id": (binding or {}).get("game_user_id")
+                or payload.game_user_id,
+                "avatar_base64": (binding or {}).get("leader_avatar"),
             }
+            if meta.get("updated_at"):
+                profile["updated_at"] = meta["updated_at"]
+            if meta.get("mysekai_at"):
+                profile["mysekai_at"] = meta["mysekai_at"]
+            if meta.get("mysekai_rank") is not None:
+                profile["mysekai_rank"] = meta["mysekai_rank"]
+            game_rank = meta.get("game_rank")
+            if isinstance(game_rank, int):
+                profile["game_rank"] = game_rank
         png = await service.render_gate_image(data, profile)
     except MysekaiError as exc:
         return error_response(exc.status, exc.code, str(exc), exc.details)
@@ -424,6 +436,11 @@ async def _catalog_image(
         )
         if profile is not None:
             profile.update(_profile_extras(data, meta))
+            game_rank = await _game_rank_for(
+                service, payload.server, payload.game_user_id, data, meta
+            )
+            if game_rank is not None:
+                profile["game_rank"] = game_rank
         png = await service.render_catalog_image(
             CATALOG_ENDPOINTS[render.kind], data, profile, render.options,
             cache=render.kind != "convert",
@@ -469,6 +486,34 @@ async def convert(payload: CatalogRequest, request: Request):
     return await _catalog_image(request, payload, _CatalogRender("convert", {}))
 
 
+def _suite_game_rank(data: dict) -> int | None:
+    """The game level carried by a Haruki suite, when it was fetched at all."""
+    gamedata = data.get("userGamedata")
+    rank = gamedata.get("rank") if isinstance(gamedata, dict) else None
+    return rank if isinstance(rank, int) else None
+
+
+async def _game_rank_for(
+    service: MysekaiService,
+    server: str,
+    game_user_id: str,
+    data: dict,
+    meta: dict,
+) -> int | None:
+    """游戏等级：本次快照带了就顺手落库，否则用绑定/上传时缓存的等级。
+
+    抓包只有烤森等级，所以这个值来自 Haruki 快照；目录卡不额外请求 Haruki。
+    """
+    stored = meta.get("game_rank")
+    if isinstance(stored, int):
+        return stored
+    suite_rank = _suite_game_rank(data)
+    if suite_rank is not None:
+        await service.repository.set_mysekai_game_rank(server, game_user_id, suite_rank)
+        return suite_rank
+    return None
+
+
 def _profile_extras(data: dict, meta: dict) -> dict:
     """Levels and the 烤森 snapshot time the profile strip shows."""
     extras: dict = {}
@@ -501,6 +546,9 @@ async def _render_catalog_for(
     )
     if profile is not None:
         profile.update(_profile_extras(data, meta))
+        game_rank = await _game_rank_for(service, "cn", game_user_id, data, meta)
+        if game_rank is not None:
+            profile["game_rank"] = game_rank
     return await service.render_catalog_image(
         CATALOG_ENDPOINTS[kind], data, profile, options,
         cache=kind != "convert",
