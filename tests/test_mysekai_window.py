@@ -6,6 +6,7 @@ from app.services.mysekai_window import (
     BIRTHDAYS,
     CN,
     birthday_dates,
+    flower_start_dates,
     is_exempt,
     window_key,
 )
@@ -87,3 +88,25 @@ def test_only_watched_users_during_a_birthday_are_exempt() -> None:
     assert is_exempt(True, {"targets": []}) is True
     assert is_exempt(True, None) is False
     assert is_exempt(False, {"targets": []}) is False
+
+
+def test_flower_start_day_also_gets_a_midnight_window() -> None:
+    """生日花在生日前 72 小时的 00:00 开始，那天也会整图刷新。"""
+    birthdays = frozenset({date(2026, 10, 27)})
+    assert (
+        window_key(datetime(2026, 10, 23, 23, 50, tzinfo=CN), birthdays=birthdays)
+        == "2026-10-23-17"
+    )
+    assert (
+        window_key(datetime(2026, 10, 24, 0, 10, tzinfo=CN), birthdays=birthdays)
+        == "2026-10-24-00"
+    )
+    assert (
+        window_key(datetime(2026, 10, 24, 6, 0, tzinfo=CN), birthdays=birthdays)
+        == "2026-10-24-05"
+    )
+
+
+def test_flower_start_is_derived_from_the_birthday() -> None:
+    assert date(2026, 10, 24) in flower_start_dates(2026)
+    assert date(2026, 10, 27) in birthday_dates(2026)

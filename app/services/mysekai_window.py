@@ -28,9 +28,26 @@ BIRTHDAYS: dict[int, tuple[int, int]] = {
 REFRESH_HOURS: tuple[int, ...] = (5, 17)
 
 
+#: 生日花开放时长：生日前 72 小时开始，生日当天 00:00 下掉。
+FLOWER_WINDOW = timedelta(hours=72)
+
+
 def birthday_dates(year: int) -> frozenset[date]:
     """Every character birthday in ``year`` as calendar dates."""
     return frozenset(date(year, month, day) for month, day in BIRTHDAYS.values())
+
+
+def flower_start_dates(year: int) -> frozenset[date]:
+    """The dates birthday flowers appear: three days before each birthday."""
+    return frozenset(moment - FLOWER_WINDOW for moment in birthday_dates(year))
+
+
+def _midnight_boundary_dates(year: int) -> frozenset[date]:
+    """Days that get an extra 00:00 refresh.
+
+    生日花在开始那天 00:00 出现、在生日当天 00:00 下掉，两次都会重刷整图。
+    """
+    return birthday_dates(year) | flower_start_dates(year)
 
 
 def window_key(
@@ -39,13 +56,23 @@ def window_key(
     """The refresh window ``now`` falls in, as ``YYYY-MM-DD-HH``.
 
     05:00–16:59 → today's 05; 17:00–23:59 → today's 17; 00:00–04:59 → the
-    00 window when a birthday starts today, otherwise the previous day's 17.
+    00 window on a birthday-flower boundary day (flowers appear, or are taken
+    down on the birthday), otherwise the previous day's 17.
+
+    ``birthdays`` are character birthday dates; the flower-window start
+    (three days earlier) is derived here, because that 00:00 refresh also
+    rebuilds the whole map.
     """
     if birthdays is None:
-        birthdays = birthday_dates(now.year)
+        boundaries = _midnight_boundary_dates(now.year)
+    else:
+        # 调用方传的是生日日期；生日花开始那天同样要切窗口，这里一并推导。
+        boundaries = frozenset(birthdays) | {
+            moment - FLOWER_WINDOW for moment in birthdays
+        }
     today = now.date()
     if now.hour < REFRESH_HOURS[0]:
-        if today in birthdays:
+        if today in boundaries:
             return f"{today.isoformat()}-00"
         return f"{(today - timedelta(days=1)).isoformat()}-{REFRESH_HOURS[1]:02d}"
     if now.hour < REFRESH_HOURS[1]:
