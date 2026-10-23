@@ -127,6 +127,14 @@ CREATE TABLE IF NOT EXISTS mysekai_convert_slots (
     PRIMARY KEY (game_user_id, slot_id)
 );
 
+CREATE TABLE IF NOT EXISTS mysekai_push_windows (
+    game_user_id TEXT NOT NULL,
+    window_key TEXT NOT NULL,
+    upload_id TEXT NOT NULL,
+    pushed_at TEXT NOT NULL,
+    PRIMARY KEY (game_user_id, window_key)
+);
+
 CREATE TABLE IF NOT EXISTS mysekai_catalog_state (
     server TEXT NOT NULL,
     game_user_id TEXT NOT NULL,
@@ -880,6 +888,43 @@ class SQLiteRepository:
             await connection.execute("DELETE FROM mysekai_convert_slots")
             await connection.commit()
         return (int(watched[0]) if watched else 0, int(slotted[0]) if slotted else 0)
+
+    async def claim_mysekai_push_window(
+        self, game_user_id: str, window_key: str, upload_id: str
+    ) -> bool:
+        """Take this player's one push slot for the refresh window.
+
+        Returns ``True`` only for the first upload in the window, so the
+        caller pushes then and stays silent for the rest of it. A failed
+        push releases the slot again (see ``release_mysekai_push_window``).
+        """
+        async with self.connect() as connection:
+            cursor = await connection.execute(
+                """
+                INSERT OR IGNORE INTO mysekai_push_windows(
+                    game_user_id, window_key, upload_id, pushed_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (game_user_id, window_key, upload_id, utc_now()),
+            )
+            await connection.commit()
+            claimed = cursor.rowcount == 1
+            await cursor.close()
+        return claimed
+
+    async def release_mysekai_push_window(
+        self, game_user_id: str, window_key: str, upload_id: str
+    ) -> None:
+        """Give the window back after a failed push so a retry can still send."""
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                DELETE FROM mysekai_push_windows
+                 WHERE game_user_id = ? AND window_key = ? AND upload_id = ?
+                """,
+                (game_user_id, window_key, upload_id),
+            )
+            await connection.commit()
 
     async def is_mysekai_convert_watch(self, qq: str) -> bool:
         async with self.connect() as connection:
