@@ -65,6 +65,12 @@ class WatchRequest(BaseModel):
     enabled: bool
 
 
+class WatchQueryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qq: str = Field(pattern=QQ_PATTERN)
+
+
 class ConvertAckRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -249,6 +255,36 @@ async def water_watch(payload: WatchRequest, request: Request):
     await service.repository.set_mysekai_water_watch(payload.qq, payload.enabled)
     birthday = await service.fetch_birthday_state() if payload.enabled else None
     return {"ok": True, "enabled": payload.enabled, "birthday": birthday}
+
+
+@internal_router.post("/watch-status")
+async def water_watch_status(payload: WatchQueryRequest, request: Request):
+    """How many watering rounds this account has seen, and the latest time."""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    service = _mysekai(request)
+    binding = await service.repository.get_mysekai_binding(payload.qq)
+    if binding is None:
+        return {
+            "ok": True,
+            "enabled": False,
+            "bound": False,
+            "message": "这个 QQ 还没有绑定游戏 ID",
+        }
+    enabled = await service.repository.is_mysekai_water_watch(payload.qq)
+    enabled_at = await service.repository.mysekai_water_watch_enabled_at(payload.qq)
+    stats = await service.repository.mysekai_water_round_stats(
+        binding["game_user_id"], since=enabled_at
+    )
+    return {
+        "ok": True,
+        "bound": True,
+        "enabled": enabled,
+        "enabled_at": enabled_at,
+        "game_user_id": binding["game_user_id"],
+        **stats,
+    }
 
 
 @internal_router.post("/convert-watch")
@@ -706,11 +742,26 @@ async def ingest(request: Request):
     if len(body) > MAX_BODY_BYTES:
         return error_response(413, "body_too_large", "响应体超过 4 MB")
 
+    event_kind = request.headers.get("X-Mysekai-Event", "snapshot")
+    party_header = request.headers.get("X-Mysekai-Party-Id", "")
+    if event_kind not in {"snapshot", "birthday_delivery"}:
+        return error_response(422, "invalid_event", "不支持的抓包事件类型")
+    party_id = None
+    if event_kind == "birthday_delivery":
+        if not party_header.isascii() or not party_header.isdecimal() or not 0 < len(party_header) <= 9:
+            return error_response(422, "invalid_party_id", "生日活动 ID 格式不正确")
+        party_id = int(party_header)
+        if party_id <= 0:
+            return error_response(422, "invalid_party_id", "生日活动 ID 格式不正确")
+    elif party_header:
+        return error_response(422, "invalid_party_id", "普通抓包不应带生日活动 ID")
+
     # 密文长度必须是 16 的倍数；不是就说明手机端把二进制当文本处理坏了。
     # 只记长度与余数，不记内容。
     try:
         result = await _mysekai(request).ingest(
-            game_user_id=game_user_id, server="cn", body=body
+            game_user_id=game_user_id, server="cn", body=body,
+            event_kind=event_kind, birthday_party_id=party_id,
         )
     except MysekaiError as exc:
         logger.warning(
@@ -735,6 +786,7 @@ async def ingest(request: Request):
         "drops": result["drops"],
         "sites": result["sites"],
         "push": result["push"],
+        "watch": result.get("watch"),
     }
 
 

@@ -13,7 +13,7 @@ var DEBUG = false; // true 时不真正上报，只打印诊断信息
 
 (function () {
   var url = $request && $request.url ? $request.url : "";
-  var matched = /\/api\/user\/(\d+)\/mysekai/.exec(url);
+  var matched = /\/api\/user\/(\d+)\/mysekai(?:\/birthday-party\/(\d+)\/delivery)?(?:\?.*)?$/.exec(url);
   if (!matched) {
     $done({});
     return;
@@ -39,7 +39,9 @@ var DEBUG = false; // true 时不真正上报，只打印诊断信息
         "Authorization": "Bearer " + TOKEN,
         "Content-Type": "application/octet-stream",
         "X-Mysekai-Game-Id": gameId,
-        "X-Mysekai-Raw-Bytes": String(bytes.length)
+        "X-Mysekai-Raw-Bytes": String(bytes.length),
+        "X-Mysekai-Event": matched[2] ? "birthday_delivery" : "snapshot",
+        "X-Mysekai-Party-Id": matched[2] || ""
       },
       body: bytes,
       timeout: 30

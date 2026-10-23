@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS mysekai_water_rounds (
     game_user_id TEXT NOT NULL,
     round_key TEXT NOT NULL,
     pushed_at TEXT NOT NULL,
+    matched INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (game_user_id, round_key)
 );
 
@@ -287,6 +288,21 @@ class SQLiteRepository:
             if "uploaded_at_ms" not in capture_columns:
                 await connection.execute(
                     "ALTER TABLE mysekai_latest_capture ADD COLUMN uploaded_at_ms INTEGER"
+                )
+            round_columns = {
+                row["name"]
+                for row in (
+                    await (
+                        await connection.execute(
+                            "PRAGMA table_info(mysekai_water_rounds)"
+                        )
+                    ).fetchall()
+                )
+            }
+            if "matched" not in round_columns:
+                await connection.execute(
+                    "ALTER TABLE mysekai_water_rounds"
+                    " ADD COLUMN matched INTEGER NOT NULL DEFAULT 0"
                 )
             await connection.commit()
 
@@ -868,6 +884,16 @@ class SQLiteRepository:
             ).fetchone()
         return row is not None
 
+    async def mysekai_water_watch_enabled_at(self, qq: str) -> str | None:
+        """When this QQ last opened the watering watch."""
+        async with self.connect() as connection:
+            row = await (
+                await connection.execute(
+                    "SELECT enabled_at FROM mysekai_water_watches WHERE qq = ?", (qq,)
+                )
+            ).fetchone()
+        return str(row[0]) if row is not None else None
+
     async def set_mysekai_convert_watch(self, qq: str, enabled: bool) -> None:
         """Turn the converter-completion watch on or off for one QQ."""
         async with self.connect() as connection:
@@ -1176,11 +1202,37 @@ class SQLiteRepository:
             )
             await connection.commit()
 
+    async def release_mysekai_water_round(
+        self, game_user_id: str, round_key: str
+    ) -> None:
+        """Release a failed push; only the successful claimant may call this."""
+        async with self.connect() as connection:
+            await connection.execute(
+                "DELETE FROM mysekai_water_rounds WHERE game_user_id = ? AND round_key = ?",
+                (game_user_id, round_key),
+            )
+            await connection.commit()
+
     async def claim_mysekai_water_round(
         self, game_user_id: str, round_key: str
     ) -> bool:
-        """True only for the first push of one un-refreshed harvest round."""
+        """Claim an unseen round without moving a party's progress backwards."""
         async with self.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            parts = round_key.split(":")
+            if len(parts) == 4 and parts[0] == "party" and parts[2] == "progress" and parts[3].isdigit():
+                prefix = ":".join(parts[:3]) + ":"
+                async with connection.execute(
+                    "SELECT round_key FROM mysekai_water_rounds WHERE game_user_id = ? AND round_key LIKE ?",
+                    (game_user_id, prefix + "%"),
+                ) as previous:
+                    rows = await previous.fetchall()
+                if any(
+                    row[0][len(prefix):].isdigit()
+                    and int(row[0][len(prefix):]) >= int(parts[3])
+                    for row in rows
+                ):
+                    return False
             cursor = await connection.execute(
                 """
                 INSERT OR IGNORE INTO mysekai_water_rounds(
@@ -1191,6 +1243,48 @@ class SQLiteRepository:
             )
             await connection.commit()
         return cursor.rowcount > 0
+
+    async def mark_mysekai_water_round_matched(
+        self, game_user_id: str, round_key: str
+    ) -> None:
+        """Remember that this round carried a watched drop."""
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                UPDATE mysekai_water_rounds SET matched = 1
+                 WHERE game_user_id = ? AND round_key = ?
+                """,
+                (game_user_id, round_key),
+            )
+            await connection.commit()
+
+    async def mysekai_water_round_stats(
+        self, game_user_id: str, *, since: str | None = None
+    ) -> dict:
+        """How many rounds were observed for this account, and how many hit.
+
+        ``since`` is the watch-enable timestamp, so the count answers
+        "since I opened the listener", not "since this account ever played".
+        """
+        clause = " AND pushed_at >= ?" if since else ""
+        params = (game_user_id, since) if since else (game_user_id,)
+        async with self.connect() as connection:
+            async with connection.execute(
+                f"""
+                SELECT COUNT(*),
+                       COALESCE(SUM(matched), 0),
+                       MAX(pushed_at)
+                  FROM mysekai_water_rounds
+                 WHERE game_user_id = ?{clause}
+                """,
+                params,
+            ) as cursor:
+                total, matched, latest = await cursor.fetchone()
+        return {
+            "rounds": int(total or 0),
+            "matched_rounds": int(matched or 0),
+            "latest_round_at": latest,
+        }
 
     async def set_mysekai_catalog_state(
         self,

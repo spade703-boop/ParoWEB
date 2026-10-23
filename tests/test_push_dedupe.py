@@ -79,6 +79,160 @@ async def _app(
             yield client, push_payloads
 
 
+async def test_failed_rare_push_can_retry_same_round(tmp_path, monkeypatch) -> None:
+    from app.services.mysekai import MysekaiService
+
+    attempts = []
+
+    async def render_rare(self, body):
+        return b"test-png"
+
+    async def push_rare(self, **payload):
+        attempts.append(payload["upload_id"])
+        return ("failed", "test failure") if len(attempts) == 1 else ("sent", "ok")
+
+    monkeypatch.setattr(MysekaiService, "_render_rare", render_rare)
+    monkeypatch.setattr(MysekaiService, "_push_rare", push_rare)
+    birthday = {"targets": [{"material_id": 12}], "round_key": "retry-round"}
+    async with _app(tmp_path, submit_birthday=birthday, watch_on=True) as (client, _):
+        first = await _submit(client)
+        second = await _submit(client)
+    assert first["watch"]["status"] == "failed"
+    assert second["watch"]["status"] == "sent"
+    assert len(attempts) == 2
+    assert attempts[0] == attempts[1]
+
+
+async def test_web_submit_reports_watch_state(tmp_path) -> None:
+    birthday = {"party_id": 2, "round_key": "party:2:progress:8", "targets": []}
+    async with _app(tmp_path, submit_birthday=birthday, watch_on=True) as (client, _):
+        response = await _submit(client)
+    assert response["watch"] == {
+        "status": "recorded",
+        "message": "本轮已记录，未发现稀有材料",
+    }
+
+
+async def test_web_submit_without_watch_hides_watch_state(tmp_path) -> None:
+    birthday = {"party_id": 2, "round_key": "party:2:progress:8", "targets": []}
+    async with _app(tmp_path, submit_birthday=birthday, watch_on=False) as (client, _):
+        response = await _submit(client)
+    assert response["watch"]["status"] == "skipped"
+
+
+async def test_manual_upload_labels_result_as_current_snapshot(tmp_path, monkeypatch) -> None:
+    from app.services.mysekai import MysekaiService
+    notifications = []
+
+    async def push_rare(self, **payload):
+        notifications.append(payload)
+        return "sent", "ok"
+
+    async def render_rare(self, body):
+        return b"rare-png"
+
+    monkeypatch.setattr(MysekaiService, "_push_rare", push_rare)
+    monkeypatch.setattr(MysekaiService, "_render_rare", render_rare)
+    birthday = {
+        "party_id": 2, "round_key": "party:2:progress:8",
+        "targets": [{"material_id": 12, "name": "钻石", "quantity": 1, "site_id": 5, "x": 1, "z": 2}],
+    }
+    async with _app(tmp_path, submit_birthday=birthday, watch_on=True) as (client, _):
+        await _submit(client)
+    assert notifications[0]["birthday"]["observation_kind"] == "snapshot"
+
+
+async def test_empty_delivery_is_recorded_without_group_notification(tmp_path, monkeypatch) -> None:
+    from app.services.mysekai import MysekaiService
+    notifications = []
+
+    async def push_rare(self, **payload):
+        notifications.append(payload)
+        return "sent", "ok"
+
+    async def render_rare(self, body):
+        raise AssertionError("empty result must not render")
+
+    monkeypatch.setattr(MysekaiService, "_push_rare", push_rare)
+    monkeypatch.setattr(MysekaiService, "_render_rare", render_rare)
+    birthday = {"party_id": 2, "round_key": "party:2:progress:8", "targets": []}
+    async with _app(tmp_path, submit_birthday=birthday, watch_on=True) as (client, ordinary_pushes):
+        statuses = []
+        for _ in range(2):
+            response = await client.post(
+                "/api/v1/mysekai/ingest", content=b"capture",
+                headers={"Authorization": "Bearer ingest-token", "X-Mysekai-Game-Id": GAME_ID,
+                         "X-Mysekai-Event": "birthday_delivery", "X-Mysekai-Party-Id": "2"},
+            )
+            assert response.status_code == 200
+            statuses.append(response.json()["watch"]["status"])
+        repository = client._transport.app.state.services.repository
+        stats = await repository.mysekai_water_round_stats(GAME_ID)
+        enabled_at = await repository.mysekai_water_watch_enabled_at(QQ)
+        since_stats = await repository.mysekai_water_round_stats(GAME_ID, since=enabled_at)
+    assert statuses == ["recorded", "duplicate"]
+    assert notifications == []
+    assert ordinary_pushes == []
+    assert stats["rounds"] == 1
+    assert stats["matched_rounds"] == 0
+    assert since_stats == stats
+
+
+
+async def test_older_progress_cannot_claim_after_newer_round(tmp_path) -> None:
+    async with _app(tmp_path) as (client, _):
+        repository = client._transport.app.state.services.repository
+        assert await repository.claim_mysekai_water_round(GAME_ID, "party:2:progress:9")
+        assert not await repository.claim_mysekai_water_round(GAME_ID, "party:2:progress:8")
+        assert await repository.claim_mysekai_water_round(GAME_ID, "party:3:progress:1")
+
+
+async def test_missing_maps_is_reported_as_unknown_not_empty_round(tmp_path) -> None:
+    async with _app(tmp_path, watch_on=True) as (client, payloads):
+        service = client._transport.app.state.services.mysekai
+        original = service.transport
+
+        def handler(request):
+            if request.url.path == "/submit":
+                return httpx.Response(422, json={"error": "no_harvest_maps", "message": "本次未携带采集图"})
+            return original.handle_request(request)
+
+        service.transport = httpx.MockTransport(handler)
+        response = await client.post(
+            "/api/v1/mysekai/submit", json=_submit_body(),
+            headers={"Origin": "http://testserver"},
+        )
+    assert response.status_code == 422
+    assert "capture_missing_maps" in response.text
+    assert payloads == []
+
+
+async def test_ingest_rejects_invalid_event_before_processing(tmp_path) -> None:
+    async with _app(tmp_path) as (client, payloads):
+        response = await client.post(
+            "/api/v1/mysekai/ingest", content=b"capture",
+            headers={"Authorization": "Bearer ingest-token",
+                     "X-Mysekai-Game-Id": GAME_ID,
+                     "X-Mysekai-Event": "unknown"},
+        )
+    assert response.status_code == 422
+    assert payloads == []
+
+
+async def test_delivery_party_mismatch_is_rejected(tmp_path) -> None:
+    birthday = {"party_id": 2, "round_key": "party:2:progress:8", "targets": []}
+    async with _app(tmp_path, submit_birthday=birthday) as (client, payloads):
+        response = await client.post(
+            "/api/v1/mysekai/ingest", content=b"capture",
+            headers={"Authorization": "Bearer ingest-token",
+                     "X-Mysekai-Game-Id": GAME_ID,
+                     "X-Mysekai-Event": "birthday_delivery",
+                     "X-Mysekai-Party-Id": "3"},
+        )
+    assert response.status_code == 422
+    assert payloads == []
+
+
 async def test_second_upload_in_same_window_is_skipped(tmp_path) -> None:
     async with _app(tmp_path) as (client, push_payloads):
         first = await _submit(client)
@@ -125,6 +279,53 @@ async def test_unwatched_user_in_birthday_window_is_still_deduped(tmp_path) -> N
 
     assert second["push"]["status"] == "skipped"
     assert len(push_payloads) == 1
+
+
+async def test_unwatched_user_does_not_send_the_birthday_line(tmp_path) -> None:
+    """生日材料提示只属于开了浇水监听的人；普通上传不能附带。"""
+    birthday = {
+        "targets": [
+            {
+                "material_id": 12,
+                "name": "钻石",
+                "quantity": 1,
+                "site_id": 5,
+                "x": 1,
+                "z": 2,
+            }
+        ],
+        "round_key": "t1792723215029",
+    }
+    async with _app(
+        tmp_path, submit_birthday=birthday, watch_on=False
+    ) as (client, push_payloads):
+        await _submit(client)
+
+    assert len(push_payloads) == 1
+    assert push_payloads[0]["birthday"] is None
+
+
+async def test_main_map_never_duplicates_the_watering_notification(tmp_path) -> None:
+    """生日结果只走独立通知，不附在普通地图推送里。"""
+    birthday = {
+        "targets": [
+            {
+                "material_id": 12,
+                "name": "钻石",
+                "quantity": 1,
+                "site_id": 5,
+                "x": 1,
+                "z": 2,
+            }
+        ],
+        "round_key": "t1792723215029",
+    }
+    async with _app(
+        tmp_path, submit_birthday=birthday, watch_on=True
+    ) as (client, push_payloads):
+        await _submit(client)
+
+    assert push_payloads[0]["birthday"] is None
 
 
 async def test_dedupe_can_be_switched_off(tmp_path) -> None:

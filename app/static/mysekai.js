@@ -75,6 +75,7 @@ const el = {
   profileName: $("#profile-name"),
   profileId: $("#profile-id"),
   pushBadge: $("#push-badge"),
+  watchLine: $("#watch-line"),
   resultMap: $("#result-map"),
   resultCard: $("#result-card"),
   downloadMap: $("#download-map"),
@@ -267,6 +268,25 @@ function showEmpty() {
   el.resultEmpty.classList.remove("hidden");
 }
 
+const WATCH_LINES = {
+  recorded: ["浇水监听：本轮已记录，未发现稀有材料", ""],
+  duplicate: ["浇水监听：这一轮之前已经处理过", ""],
+  sent: ["浇水监听：本轮有稀有材料，已播报到群里", "is-ok"],
+  failed: ["浇水监听：出图或发送失败，请重新上传", "is-error"],
+  unknown: ["浇水监听：缺少当前活动进度，无法识别轮次", "is-error"],
+};
+
+function renderWatchLine(watch) {
+  el.watchLine.classList.add("hidden");
+  el.watchLine.classList.remove("is-ok", "is-error");
+  if (!watch || watch.status === "skipped") return;
+  const [text, tone] = WATCH_LINES[watch.status] || [watch.message || "", ""];
+  if (!text) return;
+  el.watchLine.textContent = text;
+  el.watchLine.classList.remove("hidden");
+  if (tone) el.watchLine.classList.add(tone);
+}
+
 function renderResult(data) {
   el.resultLoading.classList.add("hidden");
   el.resultEmpty.classList.add("hidden");
@@ -303,8 +323,8 @@ function renderResult(data) {
     el.pushBadge.textContent = "推送未配置";
   }
 
-  const sites = Array.isArray(data.sites) ? data.sites.length : 0;
-  el.resultMeta.textContent = `${data.points} 点位 · ${data.drops} 掉落 · ${sites} 个站点`;
+  renderWatchLine(data.watch);
+  const sites = Array.isArray(data.sites) ? data.sites.length : 0;  el.resultMeta.textContent = `${data.points} 点位 · ${data.drops} 掉落 · ${sites} 个站点`;
   state.lastResult = data;
 
   el.result.scrollIntoView({ behavior: "instant", block: "start" });

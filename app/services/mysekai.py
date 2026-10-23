@@ -1113,6 +1113,11 @@ class MysekaiService:
             raise UpstreamError("出图服务暂时不可用，请稍后再试") from None
         if response.status_code in (400, 422):
             message = _error_message(response)
+            if message == "no_harvest_maps":
+                raise MysekaiError(
+                    "本次响应未携带采集图，尚未检查本轮生日花；请上传含地图的响应",
+                    code="capture_missing_maps", status=422,
+                )
             raise MysekaiError(
                 message or "这份响应无法生成采集图",
                 code="invalid_response",
@@ -1148,6 +1153,8 @@ class MysekaiService:
         game_user_id: str,
         server: str,
         body: bytes,
+        event_kind: str = "snapshot",
+        birthday_party_id: int | None = None,
     ) -> dict:
         """Render a response body pushed by the mobile capture path.
 
@@ -1165,6 +1172,7 @@ class MysekaiService:
             game_user_id=game_user_id,
             server=server,
             file_base64=base64.b64encode(body).decode("ascii"),
+            event_kind=event_kind, birthday_party_id=birthday_party_id,
         )
 
     async def ingest_convert(
@@ -1287,7 +1295,7 @@ class MysekaiService:
         game_user_id: str,
         nickname: str | None,
         birthday: dict,
-        rare_png: bytes,
+        rare_png: bytes | None,
     ) -> tuple[str, str]:
         """Push a watering-watch hit: one text line plus the filtered map."""
         url = self.settings.mysekai_push_url
@@ -1299,7 +1307,8 @@ class MysekaiService:
             "game_user_id": game_user_id,
             "nickname": nickname,
             "birthday": birthday,
-            "rare_png_base64": base64.b64encode(rare_png).decode("ascii"),
+            "rare_png_base64": base64.b64encode(rare_png).decode("ascii") if rare_png is not None else None,
+            "empty_result": rare_png is None,
         }
         headers = {"Content-Type": "application/json"}
         if self.settings.mysekai_push_token:
@@ -1322,6 +1331,8 @@ class MysekaiService:
         game_user_id: str,
         server: str,
         file_base64: str,
+        event_kind: str = "manual",
+        birthday_party_id: int | None = None,
     ) -> dict:
         binding = await self.repository.get_mysekai_binding(qq)
         if binding is None:
@@ -1387,6 +1398,14 @@ class MysekaiService:
         day = _today_key()
         visit_baseline = await self.repository.get_mysekai_visit_baseline(qq, day)
         result = await self._render(body, profile_payload, visit_baseline)
+        if event_kind == "birthday_delivery" and (
+            not result.birthday
+            or result.birthday.get("party_id") != birthday_party_id
+        ):
+            raise MysekaiError(
+                "生日事件与响应中的当前活动不一致",
+                code="birthday_party_mismatch", status=422,
+            )
         if result.catalog_state is not None:
             await self.repository.set_mysekai_catalog_state(
                 server=server,
@@ -1442,8 +1461,8 @@ class MysekaiService:
             logger.warning("我的世界最近抓包写入失败", exc_info=True)
         moment = datetime.now(_CN)
         window = window_key(moment, birthdays=birthday_dates(moment.year))
-        claimed = True
-        if self.settings.mysekai_push_dedupe and not is_exempt(
+        claimed = event_kind != "birthday_delivery"
+        if claimed and self.settings.mysekai_push_dedupe and not is_exempt(
             watch_on, result.birthday
         ):
             try:
@@ -1461,7 +1480,8 @@ class MysekaiService:
                 nickname=binding.get("nickname"),
                 map_png_base64=result.map_png_base64,
                 card_png_base64=result.card_png_base64,
-                birthday=result.birthday,
+                # 生日结果只由独立轮次通知发送，普通地图不附加播报。
+                birthday=None,
             )
             if push_status != "sent":
                 # 推失败不能占着窗口，否则本时段后续上传会被静音。
@@ -1472,26 +1492,71 @@ class MysekaiService:
                 except Exception:
                     logger.warning("我的世界推送窗口释放失败", exc_info=True)
         else:
-            push_status, push_message = "skipped", "本时段已推送过，本次仅更新数据"
+            push_status = "skipped"
+            push_message = (
+                "生日刷新仅发送监听结果" if event_kind == "birthday_delivery"
+                else "本时段已推送过，本次仅更新数据"
+            )
         await self.repository.update_mysekai_upload_push_status(
             upload_id, push_status
         )
-        if watch_on and result.birthday and result.birthday.get("targets"):
+        watch_result = {"status": "skipped", "message": "本次未触发浇水监听"}
+        if watch_on and result.birthday and event_kind in {"birthday_delivery", "manual"}:
+            watch_result = {"status": "unknown", "message": "缺少当前活动进度，无法识别轮次"}
             round_key = str(result.birthday.get("round_key") or "")
             if round_key:
-                # 先渲染再占位：渲染失败时不会把这一轮锁死
-                rare_png = await self._render_rare(body)
-                if rare_png and await self.repository.claim_mysekai_water_round(
-                    binding["game_user_id"], round_key
-                ):
-                    await self._push_rare(
-                        upload_id=upload_id,
+                # 每轮都入库便于查询；只有命中稀有才播报，避免连续浇水刷屏。
+                has_targets = bool(result.birthday.get("targets"))
+                rare_png = await self._render_rare(body) if has_targets else None
+                claimed = False
+                if not has_targets:
+                    claimed = await self.repository.claim_mysekai_water_round(
+                        binding["game_user_id"], round_key
+                    )
+                    watch_result = {
+                        "status": "recorded" if claimed else "duplicate",
+                        "message": "本轮已记录，未发现稀有材料" if claimed
+                        else "这一轮已经记录过",
+                    }
+                elif not rare_png:
+                    watch_result = {
+                        "status": "failed",
+                        "message": "检测到稀有材料，但点位图生成失败，请重试",
+                    }
+                else:
+                    claimed = await self.repository.claim_mysekai_water_round(
+                        binding["game_user_id"], round_key
+                    )
+                    if not claimed:
+                        watch_result = {"status": "duplicate", "message": "这一轮已经播报过"}
+                if has_targets and rare_png and claimed:
+                    await self.repository.mark_mysekai_water_round_matched(
+                        binding["game_user_id"], round_key
+                    )
+                    notification_id = str(uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"mysekai:{server}:{binding['game_user_id']}:{round_key}",
+                    ))
+                    rare_status, rare_message = await self._push_rare(
+                        upload_id=notification_id,
                         qq=qq,
                         game_user_id=binding["game_user_id"],
                         nickname=binding.get("nickname"),
-                        birthday=result.birthday,
+                        birthday={
+                            **result.birthday,
+                            "observation_kind": "delivery" if event_kind == "birthday_delivery" else "snapshot",
+                        },
                         rare_png=rare_png,
                     )
+                    watch_result = {"status": rare_status, "message": rare_message}
+                    if rare_status != "sent":
+                        await self.repository.release_mysekai_water_round(
+                            binding["game_user_id"], round_key
+                        )
+                        logger.warning(
+                            "mysekai rare push failed upload_id=%s reason=%s",
+                            upload_id, rare_message,
+                        )
         return {
             "upload_id": upload_id,
             "profile": {
@@ -1508,6 +1573,7 @@ class MysekaiService:
             "map": f"data:image/png;base64,{result.map_png_base64}",
             "card": f"data:image/png;base64,{result.card_png_base64}",
             "push": {"status": push_status, "message": push_message},
+            "watch": watch_result,
         }
 
 

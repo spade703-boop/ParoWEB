@@ -315,6 +315,15 @@
 .push-badge.is-ok { background: #e7f4ec; color: #2f7d4f; }
 .push-badge.is-error { background: #fbeceb; color: var(--danger); }
 
+.watch-line {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.watch-line.is-ok { color: #2f7d4f; }
+.watch-line.is-error { color: var(--danger); }
+
 .image-card {
   margin: 0;
   overflow: hidden;

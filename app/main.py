@@ -111,6 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "/internal/v1/mysekai/unbind",
                 "/internal/v1/mysekai/gate",
                 "/internal/v1/mysekai/watch",
+                "/internal/v1/mysekai/watch-status",
                 "/internal/v1/mysekai/fixture-list",
                 "/internal/v1/mysekai/talk-list",
                 "/internal/v1/mysekai/music-record",
