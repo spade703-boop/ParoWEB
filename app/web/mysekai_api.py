@@ -776,6 +776,24 @@ async def capture_script(request: Request, t: str = ""):
     )
 
 
+@router.get("/convert.js")
+async def convert_script(request: Request, t: str = ""):
+    """Serve the converter-action script to Shadowrocket, keyed by the token."""
+    settings = request.app.state.settings
+    expected = settings.mysekai_ingest_token
+    if not expected:
+        return error_response(503, "ingest_disabled", "MySekai 上报告口未配置")
+    if not t or not hmac.compare_digest(t, expected):
+        return error_response(403, "forbidden", "无权获取脚本")
+
+    body = _read_template(settings, "mysekai-convert.js").replace("__TOKEN__", expected)
+    return Response(
+        content=body,
+        media_type="application/javascript; charset=utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get("/module-link")
 async def module_links(request: Request):
     """One-click install URL for Shadowrocket, built from the current request."""
