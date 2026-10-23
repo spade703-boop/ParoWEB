@@ -45,6 +45,8 @@ async def _app(
     watch_on: bool = False,
     bind: bool = True,
     convert_state: dict | None = None,
+    dedupe: bool = True,
+    convert_ingest: bool = True,
 ):
     """一个开着推送的应用；yield (client, push_payloads)。"""
     push_payloads: list[dict] = []
@@ -52,6 +54,8 @@ async def _app(
         tmp_path,
         mysekai_push_url="http://push.test/push",
         mysekai_ingest_token="ingest-token",
+        mysekai_push_dedupe=dedupe,
+        mysekai_convert_ingest=convert_ingest,
     )
     app = create_app(settings)
     app.state.services.mysekai.transport = _mock_transport(
@@ -120,4 +124,44 @@ async def test_unwatched_user_in_birthday_window_is_still_deduped(tmp_path) -> N
         second = await _submit(client)
 
     assert second["push"]["status"] == "skipped"
+    assert len(push_payloads) == 1
+
+
+async def test_dedupe_can_be_switched_off(tmp_path) -> None:
+    """运维开关：关掉后回到「每次上传都推」。"""
+    async with _app(tmp_path, dedupe=False) as (client, push_payloads):
+        await _submit(client)
+        second = await _submit(client)
+
+    assert second["push"]["status"] == "sent"
+    assert len(push_payloads) == 2
+
+
+async def test_a_broken_dedupe_store_still_pushes(tmp_path) -> None:
+    """去重表出问题时必须失败即放行，不能让上传挂掉。"""
+    async with _app(tmp_path) as (client, push_payloads):
+        repository = client._transport.app.state.services.repository  # type: ignore[attr-defined]
+
+        async def boom(*_args, **_kwargs):
+            raise RuntimeError("database is locked")
+
+        repository.claim_mysekai_push_window = boom
+        response = await _submit(client)
+
+    assert response["push"]["status"] == "sent"
+    assert len(push_payloads) == 1
+
+
+async def test_a_broken_capture_store_does_not_block_the_upload(tmp_path) -> None:
+    """最近抓包只是指令用的缓存，写失败不该影响上传与推送。"""
+    async with _app(tmp_path) as (client, push_payloads):
+        repository = client._transport.app.state.services.repository  # type: ignore[attr-defined]
+
+        async def boom(*_args, **_kwargs):
+            raise RuntimeError("disk full")
+
+        repository.save_mysekai_latest_capture = boom
+        response = await _submit(client)
+
+    assert response["push"]["status"] == "sent"
     assert len(push_payloads) == 1

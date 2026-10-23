@@ -59,6 +59,10 @@ class Settings:
     mysekai_ingest_allowlist: frozenset[str]
     mysekai_push_url: str
     mysekai_push_token: str
+    #: 同一刷新窗口只推一次的开关；出事时设 PARO_MYSEKAI_PUSH_DEDUPE=0 即可退回旧行为。
+    mysekai_push_dedupe: bool = True
+    #: 转换机动作旁路开关；出事时设 PARO_MYSEKAI_CONVERT_INGEST=0 让接口返回 503。
+    mysekai_convert_ingest: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -121,4 +125,6 @@ class Settings:
             ),
             mysekai_push_url=os.getenv("PARO_MYSEKAI_PUSH_URL", "").strip(),
             mysekai_push_token=os.getenv("PARO_MYSEKAI_PUSH_TOKEN", "").strip(),
+            mysekai_push_dedupe=_bool_env("PARO_MYSEKAI_PUSH_DEDUPE", True),
+            mysekai_convert_ingest=_bool_env("PARO_MYSEKAI_CONVERT_INGEST", True),
         )

@@ -695,6 +695,8 @@ async def ingest_convert(request: Request):
     auth_error = _ingest_auth_error(request)
     if auth_error is not None:
         return auth_error
+    if not request.app.state.settings.mysekai_convert_ingest:
+        return error_response(503, "convert_ingest_disabled", "转换机上报已关闭")
 
     game_user_id = (request.headers.get("X-Mysekai-Game-Id") or "").strip()
     if not GAME_ID_RE.fullmatch(game_user_id):

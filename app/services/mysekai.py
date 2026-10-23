@@ -19,6 +19,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import logging
 import io
 import json
 import time
@@ -35,6 +36,8 @@ from PIL import Image
 from app.config import Settings
 from app.repositories.sqlite import SQLiteRepository
 from app.services.mysekai_window import birthday_dates, is_exempt, window_key
+
+logger = logging.getLogger(__name__)
 
 COOKIE_NAME = "paro_mysekai"
 SESSION_TTL_SECONDS = 12 * 60 * 60
@@ -1375,23 +1378,32 @@ class MysekaiService:
             drops=result.drops,
             push_status="pending",
         )
-        await self.repository.save_mysekai_latest_capture(
-            qq=qq,
-            game_user_id=binding["game_user_id"],
-            upload_id=upload_id,
-            captured_at_ms=(
-                (result.catalog_state or {}).get("refreshed_at_ms")
-            ),
-            map_png=base64.b64decode(result.map_png_base64),
-            card_png=base64.b64decode(result.card_png_base64),
-        )
+        try:
+            await self.repository.save_mysekai_latest_capture(
+                qq=qq,
+                game_user_id=binding["game_user_id"],
+                upload_id=upload_id,
+                captured_at_ms=(
+                    (result.catalog_state or {}).get("refreshed_at_ms")
+                ),
+                map_png=base64.b64decode(result.map_png_base64),
+                card_png=base64.b64decode(result.card_png_base64),
+            )
+        except Exception:  # 只是指令用的缓存，坏了不能拖垮上传
+            logger.warning("我的世界最近抓包写入失败", exc_info=True)
         moment = datetime.now(_CN)
         window = window_key(moment, birthdays=birthday_dates(moment.year))
-        claimed = is_exempt(watch_on, result.birthday) or (
-            await self.repository.claim_mysekai_push_window(
-                binding["game_user_id"], window, upload_id
-            )
-        )
+        claimed = True
+        if self.settings.mysekai_push_dedupe and not is_exempt(
+            watch_on, result.birthday
+        ):
+            try:
+                claimed = await self.repository.claim_mysekai_push_window(
+                    binding["game_user_id"], window, upload_id
+                )
+            except Exception:  # 去重坏了就失败即放行，宁可多推一条
+                logger.warning("我的世界推送窗口占位失败，改为照常推送", exc_info=True)
+                claimed = True
         if claimed:
             push_status, push_message = await self._push(
                 upload_id=upload_id,
@@ -1404,9 +1416,12 @@ class MysekaiService:
             )
             if push_status != "sent":
                 # 推失败不能占着窗口，否则本时段后续上传会被静音。
-                await self.repository.release_mysekai_push_window(
-                    binding["game_user_id"], window, upload_id
-                )
+                try:
+                    await self.repository.release_mysekai_push_window(
+                        binding["game_user_id"], window, upload_id
+                    )
+                except Exception:
+                    logger.warning("我的世界推送窗口释放失败", exc_info=True)
         else:
             push_status, push_message = "skipped", "本时段已推送过，本次仅更新数据"
         await self.repository.update_mysekai_upload_push_status(

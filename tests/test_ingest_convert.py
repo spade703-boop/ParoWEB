@@ -108,3 +108,31 @@ async def test_convert_action_updates_the_watch_table(tmp_path) -> None:
 
     assert response.status_code == 200
     assert row is not None
+
+
+async def test_convert_ingest_can_be_switched_off(tmp_path) -> None:
+    """运维开关：关掉后旁路直接 503，已有槽位不动。"""
+    async with _app(
+        tmp_path,
+        convert_state={"present": True, "slots": [SLOT]},
+        convert_ingest=False,
+    ) as (client, _payloads):
+        repository = client._transport.app.state.services.repository  # type: ignore[attr-defined]
+        await repository.set_mysekai_catalog_state(
+            server="cn",
+            game_user_id=GAME_ID,
+            music_records=None,
+            blueprints=None,
+            fixtures=None,
+            convert_slots=[SLOT],
+            convert_histories=None,
+            mysekai_rank=None,
+            refreshed_at_ms=None,
+        )
+
+        response = await _ingest_convert(client)
+        state = await repository.get_mysekai_catalog_state("cn", GAME_ID)
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "convert_ingest_disabled"
+    assert [slot["slotId"] for slot in state["convert_slots"]] == [2]
