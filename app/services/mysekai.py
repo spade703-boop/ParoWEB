@@ -1032,10 +1032,19 @@ class MysekaiService:
         Closing is always allowed. Opening is only allowed from one hour before
         the flower window starts until it ends; the render service is the
         authority on whether such a window exists.
+
+        Repeating the same command is a no-op: re-opening an active watch must
+        not reset its counting start, and closing an inactive one changes
+        nothing. ``changed`` tells the caller which case it hit.
         """
+        active = await self.repository.is_mysekai_water_watch(qq)
         if not enabled:
+            if not active:
+                return {"enabled": False, "changed": False, "birthday": None}
             await self.repository.set_mysekai_water_watch(qq, False)
-            return {"enabled": False, "birthday": None}
+            return {"enabled": False, "changed": True, "birthday": None}
+        if active:
+            return {"enabled": True, "changed": False, "birthday": None}
         state = await self.fetch_birthday_state()
         if state is None:
             raise MysekaiError(
@@ -1055,13 +1064,13 @@ class MysekaiService:
                     end_ms=end_ms,
                 )
             await self.repository.set_mysekai_water_watch(qq, True)
-            return {"enabled": True, "birthday": state}
+            return {"enabled": True, "changed": True, "birthday": state}
         next_start_ms = state.get("next_start_ms")
         if isinstance(next_start_ms, int):
             next_start = datetime.fromtimestamp(next_start_ms / 1000, _CN)
             if watch_is_open(now, start=next_start, end=next_start + FLOWER_WINDOW):
                 await self.repository.set_mysekai_water_watch(qq, True)
-                return {"enabled": True, "birthday": state}
+                return {"enabled": True, "changed": True, "birthday": state}
             opens = watch_opens_at(next_start)
             raise MysekaiError(
                 "现在还不能开启烤森监听：监听在生日花窗口开始前 1 小时至窗口结束期间可用；"

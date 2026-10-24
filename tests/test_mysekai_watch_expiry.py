@@ -80,10 +80,51 @@ async def test_enabling_records_the_active_window(tmp_path) -> None:
     result = await service.set_water_watch(QQ, True)
 
     assert result["enabled"] is True
+    assert result["changed"] is True
     assert await repository.is_mysekai_water_watch(QQ) is True
     stored = await repository.get_mysekai_birthday_window()
     assert stored is not None
     assert stored["character_name"] == "望月穗波"
+
+
+async def test_enabling_twice_keeps_the_first_enabled_at(tmp_path) -> None:
+    service, repository = await _service(tmp_path)
+    now = datetime.now(CN)
+    service.fetch_birthday_state = AsyncMock(
+        return_value=_state(
+            active=True,
+            start=now - timedelta(hours=1),
+            end=now + timedelta(hours=71),
+            name="望月穗波",
+        )
+    )
+
+    first = await service.set_water_watch(QQ, True)
+    opened_at = await repository.mysekai_water_watch_enabled_at(QQ)
+    second = await service.set_water_watch(QQ, True)
+
+    assert first["changed"] is True
+    assert second["changed"] is False
+    assert await repository.mysekai_water_watch_enabled_at(QQ) == opened_at
+    assert service.fetch_birthday_state.await_count == 1
+
+
+async def test_disabling_when_not_enabled_reports_no_change(tmp_path) -> None:
+    service, _ = await _service(tmp_path)
+
+    result = await service.set_water_watch(QQ, False)
+
+    assert result == {"enabled": False, "changed": False, "birthday": None}
+
+
+async def test_disabling_an_enabled_watch_reports_change(tmp_path) -> None:
+    service, repository = await _service(tmp_path)
+    await repository.set_mysekai_water_watch(QQ, True)
+
+    result = await service.set_water_watch(QQ, False)
+
+    assert result["changed"] is True
+    assert await repository.is_mysekai_water_watch(QQ) is False
 
 
 async def test_enabling_is_allowed_within_one_hour_before_the_window(tmp_path) -> None:
@@ -98,6 +139,7 @@ async def test_enabling_is_allowed_within_one_hour_before_the_window(tmp_path) -
     result = await service.set_water_watch(QQ, True)
 
     assert result["enabled"] is True
+    assert result["changed"] is True
     assert await repository.is_mysekai_water_watch(QQ) is True
 
 

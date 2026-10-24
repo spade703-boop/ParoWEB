@@ -867,14 +867,19 @@ class SQLiteRepository:
             await connection.commit()
 
     async def set_mysekai_water_watch(self, qq: str, enabled: bool) -> None:
-        """Turn the watering watch on or off for one QQ."""
+        """Turn the watering watch on or off for one QQ.
+
+        Enabling an already-enabled watch is a no-op: ``enabled_at`` is the
+        counting start, and a repeated command must not reset it. To start a
+        fresh count, close first and then open again.
+        """
         async with self.connect() as connection:
             if enabled:
                 await connection.execute(
                     """
                     INSERT INTO mysekai_water_watches(qq, enabled_at)
                     VALUES (?, ?)
-                    ON CONFLICT(qq) DO UPDATE SET enabled_at = excluded.enabled_at
+                    ON CONFLICT(qq) DO NOTHING
                     """,
                     (qq, utc_now()),
                 )
