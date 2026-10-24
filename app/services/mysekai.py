@@ -1435,11 +1435,15 @@ class MysekaiService:
             birthday = result.birthday or {}
             logger.warning(
                 "mysekai birthday delivery mismatch upload_id=%s expected_party=%s"
-                " actual_party=%s has_birthday=%s",
+                " actual_party=%s has_birthday=%s round_source=%s flowers=%s"
+                " round_known=%s",
                 upload_id,
                 birthday_party_id,
                 birthday.get("party_id"),
                 bool(result.birthday),
+                birthday.get("round_source"),
+                birthday.get("flower_points"),
+                birthday.get("round_known"),
             )
         await self.repository.set_mysekai_data_times(
             server=server,
