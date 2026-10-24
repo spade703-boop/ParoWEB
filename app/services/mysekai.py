@@ -1403,14 +1403,6 @@ class MysekaiService:
         day = _today_key()
         visit_baseline = await self.repository.get_mysekai_visit_baseline(qq, day)
         result = await self._render(body, profile_payload, visit_baseline)
-        if event_kind == "birthday_delivery" and (
-            not result.birthday
-            or result.birthday.get("party_id") != birthday_party_id
-        ):
-            raise MysekaiError(
-                "生日事件与响应中的当前活动不一致",
-                code="birthday_party_mismatch", status=422,
-            )
         if result.catalog_state is not None:
             await self.repository.set_mysekai_catalog_state(
                 server=server,
@@ -1434,6 +1426,21 @@ class MysekaiService:
                 qq, day, result.visit_counts
             )
         upload_id = str(uuid.uuid4())
+        if event_kind == "birthday_delivery" and (
+            not result.birthday
+            or result.birthday.get("party_id") != birthday_party_id
+        ):
+            # URL 里的活动 ID 只是模块带的元数据；响应本身可信，口径不一致时
+            # 记日志并按响应内容继续，绝不能因此吞掉一次真实出货。
+            birthday = result.birthday or {}
+            logger.warning(
+                "mysekai birthday delivery mismatch upload_id=%s expected_party=%s"
+                " actual_party=%s has_birthday=%s",
+                upload_id,
+                birthday_party_id,
+                birthday.get("party_id"),
+                bool(result.birthday),
+            )
         await self.repository.set_mysekai_data_times(
             server=server,
             game_user_id=binding["game_user_id"],

@@ -237,9 +237,10 @@ async def test_ingest_rejects_invalid_event_before_processing(tmp_path) -> None:
     assert payloads == []
 
 
-async def test_delivery_party_mismatch_is_rejected(tmp_path) -> None:
+async def test_delivery_party_mismatch_still_processes_the_response(tmp_path, caplog) -> None:
+    """URL 活动 ID 与响应不一致时记警告，不能吞掉真实结果。"""
     birthday = {"party_id": 2, "round_key": "party:2:progress:8", "targets": []}
-    async with _app(tmp_path, submit_birthday=birthday) as (client, payloads):
+    async with _app(tmp_path, submit_birthday=birthday, watch_on=True) as (client, payloads):
         response = await client.post(
             "/api/v1/mysekai/ingest", content=b"capture",
             headers={"Authorization": "Bearer ingest-token",
@@ -247,8 +248,12 @@ async def test_delivery_party_mismatch_is_rejected(tmp_path) -> None:
                      "X-Mysekai-Event": "birthday_delivery",
                      "X-Mysekai-Party-Id": "3"},
         )
-    assert response.status_code == 422
-    assert payloads == []
+        repository = client._transport.app.state.services.repository
+        stats = await repository.mysekai_water_round_stats(GAME_ID)
+    assert response.status_code == 200
+    assert response.json()["watch"]["status"] == "recorded"
+    assert stats["rounds"] == 1
+    assert any("birthday delivery mismatch" in r.message for r in caplog.records)
 
 
 async def test_second_upload_in_same_window_is_skipped(tmp_path) -> None:
