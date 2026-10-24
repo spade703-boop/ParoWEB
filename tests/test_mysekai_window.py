@@ -8,6 +8,8 @@ from app.services.mysekai_window import (
     birthday_dates,
     flower_start_dates,
     is_exempt,
+    watch_is_open,
+    watch_opens_at,
     window_key,
 )
 
@@ -110,3 +112,14 @@ def test_flower_start_day_also_gets_a_midnight_window() -> None:
 def test_flower_start_is_derived_from_the_birthday() -> None:
     assert date(2026, 10, 24) in flower_start_dates(2026)
     assert date(2026, 10, 27) in birthday_dates(2026)
+
+
+def test_watch_opens_one_hour_before_the_flower_window() -> None:
+    start = datetime(2026, 10, 24, 0, 0, tzinfo=CN)
+    end = datetime(2026, 10, 27, 0, 0, tzinfo=CN)
+
+    assert watch_opens_at(start) == datetime(2026, 10, 23, 23, 0, tzinfo=CN)
+    assert watch_is_open(datetime(2026, 10, 23, 22, 59, tzinfo=CN), start=start, end=end) is False
+    assert watch_is_open(datetime(2026, 10, 23, 23, 0, tzinfo=CN), start=start, end=end) is True
+    assert watch_is_open(datetime(2026, 10, 26, 23, 59, tzinfo=CN), start=start, end=end) is True
+    assert watch_is_open(end, start=start, end=end) is False

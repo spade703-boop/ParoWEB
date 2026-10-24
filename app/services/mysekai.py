@@ -35,7 +35,14 @@ from PIL import Image
 
 from app.config import Settings
 from app.repositories.sqlite import SQLiteRepository
-from app.services.mysekai_window import birthday_dates, is_exempt, window_key
+from app.services.mysekai_window import (
+    FLOWER_WINDOW,
+    birthday_dates,
+    is_exempt,
+    watch_is_open,
+    watch_opens_at,
+    window_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1018,6 +1025,93 @@ class MysekaiService:
         """关闭全群浇水监听；轮次历史保留，重新开启后从头计数。"""
         cleared = await self.repository.clear_mysekai_water_watches()
         return {"watches": cleared}
+
+    async def set_water_watch(self, qq: str, enabled: bool) -> dict:
+        """Open or close one player's watch, enforcing the birthday window.
+
+        Closing is always allowed. Opening is only allowed from one hour before
+        the flower window starts until it ends; the render service is the
+        authority on whether such a window exists.
+        """
+        if not enabled:
+            await self.repository.set_mysekai_water_watch(qq, False)
+            return {"enabled": False, "birthday": None}
+        state = await self.fetch_birthday_state()
+        if state is None:
+            raise MysekaiError(
+                "暂时无法核对生日窗口，请稍后再试。",
+                code="birthday_state_unavailable",
+                status=503,
+            )
+        now = datetime.now(_CN)
+        if state.get("active"):
+            start_ms = state.get("start_ms")
+            end_ms = state.get("end_ms")
+            if isinstance(start_ms, int) and isinstance(end_ms, int):
+                await self.repository.set_mysekai_birthday_window(
+                    character_id=int(state.get("character_id") or 0),
+                    character_name=state.get("character_name"),
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                )
+            await self.repository.set_mysekai_water_watch(qq, True)
+            return {"enabled": True, "birthday": state}
+        next_start_ms = state.get("next_start_ms")
+        if isinstance(next_start_ms, int):
+            next_start = datetime.fromtimestamp(next_start_ms / 1000, _CN)
+            if watch_is_open(now, start=next_start, end=next_start + FLOWER_WINDOW):
+                await self.repository.set_mysekai_water_watch(qq, True)
+                return {"enabled": True, "birthday": state}
+            opens = watch_opens_at(next_start)
+            raise MysekaiError(
+                "现在还不能开启烤森监听：监听在生日花窗口开始前 1 小时至窗口结束期间可用；"
+                f"下一窗口 {opens:%m-%d %H:%M} 起可开启。",
+                code="watch_window_closed",
+                status=409,
+            )
+        raise MysekaiError(
+            "现在还不能开启烤森监听：当前没有可用的生日窗口。",
+            code="watch_window_closed",
+            status=409,
+        )
+
+    async def expire_water_watches(self) -> dict:
+        """Close every watch once the recorded birthday window has ended.
+
+        The render service is the authority; when it cannot be reached the
+        stored window is kept and the next poll retries. Clearing is
+        unconditional for that window, so no per-QQ grace is applied.
+        """
+        state = await self.fetch_birthday_state()
+        if state is None:
+            return {"cleared": 0, "reason": "birthday_state_unavailable"}
+        now_ms = int(datetime.now(_CN).timestamp() * 1000)
+        stored = await self.repository.get_mysekai_birthday_window()
+        ended: dict | None = None
+        cleared = 0
+        if stored is not None and int(stored["end_ms"]) <= now_ms:
+            cleared = await self.repository.clear_mysekai_water_watches()
+            await self.repository.delete_mysekai_birthday_window()
+            ended = stored
+        if state.get("active"):
+            start_ms = state.get("start_ms")
+            end_ms = state.get("end_ms")
+            if isinstance(start_ms, int) and isinstance(end_ms, int):
+                await self.repository.set_mysekai_birthday_window(
+                    character_id=int(state.get("character_id") or 0),
+                    character_name=state.get("character_name"),
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                )
+        return {
+            "cleared": cleared,
+            "character_name": ended.get("character_name") if ended else None,
+            "start_ms": int(ended["start_ms"]) if ended else None,
+            "end_ms": int(ended["end_ms"]) if ended else None,
+            "next_character_name": state.get("next_character_name"),
+            "next_start_ms": state.get("next_start_ms"),
+            "active": bool(state.get("active")),
+        }
 
     async def reset_convert_watches(self) -> dict:
         """清空所有转换机订阅与槽位记录。

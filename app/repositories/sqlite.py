@@ -112,6 +112,15 @@ CREATE TABLE IF NOT EXISTS mysekai_water_rounds (
     PRIMARY KEY (game_user_id, round_key)
 );
 
+CREATE TABLE IF NOT EXISTS mysekai_birthday_window (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    character_id INTEGER NOT NULL,
+    character_name TEXT,
+    start_ms INTEGER NOT NULL,
+    end_ms INTEGER NOT NULL,
+    observed_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mysekai_convert_watches (
     qq TEXT PRIMARY KEY,
     enabled_at TEXT NOT NULL
@@ -940,6 +949,55 @@ class SQLiteRepository:
             await connection.execute("DELETE FROM mysekai_water_watches")
             await connection.commit()
         return int(row[0]) if row else 0
+
+    async def set_mysekai_birthday_window(
+        self,
+        *,
+        character_id: int,
+        character_name: str | None,
+        start_ms: int,
+        end_ms: int,
+    ) -> None:
+        """Remember the birthday window currently being observed."""
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO mysekai_birthday_window(
+                    id, character_id, character_name, start_ms, end_ms, observed_at
+                )
+                VALUES (1, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    character_id = excluded.character_id,
+                    character_name = excluded.character_name,
+                    start_ms = excluded.start_ms,
+                    end_ms = excluded.end_ms,
+                    observed_at = excluded.observed_at
+                """,
+                (character_id, character_name, start_ms, end_ms, utc_now()),
+            )
+            await connection.commit()
+
+    async def get_mysekai_birthday_window(self) -> dict | None:
+        """The last birthday window this service observed, if any."""
+        async with self.connect() as connection:
+            row = await (
+                await connection.execute(
+                    """
+                    SELECT character_id, character_name, start_ms, end_ms, observed_at
+                      FROM mysekai_birthday_window
+                     WHERE id = 1
+                    """
+                )
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    async def delete_mysekai_birthday_window(self) -> None:
+        """Forget the observed window once its watches have been closed."""
+        async with self.connect() as connection:
+            await connection.execute(
+                "DELETE FROM mysekai_birthday_window WHERE id = 1"
+            )
+            await connection.commit()
 
     async def clear_mysekai_convert_watches(self) -> tuple[int, int]:
         """Drop every converter subscription together with its slot rows.

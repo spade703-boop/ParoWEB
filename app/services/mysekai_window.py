@@ -31,6 +31,19 @@ REFRESH_HOURS: tuple[int, ...] = (5, 17)
 #: 生日花开放时长：生日前 72 小时开始，生日当天 00:00 下掉。
 FLOWER_WINDOW = timedelta(hours=72)
 
+#: 监听可在生日花窗口开始前这么久开启；再早会被拒绝。
+WATCH_OPEN_LEAD = timedelta(hours=1)
+
+
+def watch_opens_at(start: datetime) -> datetime:
+    """The first moment a player may open a watch for this flower window."""
+    return start - WATCH_OPEN_LEAD
+
+
+def watch_is_open(now: datetime, *, start: datetime, end: datetime) -> bool:
+    """Whether ``now`` is inside the interval where a watch may be opened."""
+    return watch_opens_at(start) <= now < end
+
 
 def birthday_dates(year: int) -> frozenset[date]:
     """Every character birthday in ``year`` as calendar dates."""

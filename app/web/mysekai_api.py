@@ -252,9 +252,21 @@ async def water_watch(payload: WatchRequest, request: Request):
     if auth_error is not None:
         return auth_error
     service = _mysekai(request)
-    await service.repository.set_mysekai_water_watch(payload.qq, payload.enabled)
-    birthday = await service.fetch_birthday_state() if payload.enabled else None
-    return {"ok": True, "enabled": payload.enabled, "birthday": birthday}
+    try:
+        result = await service.set_water_watch(payload.qq, payload.enabled)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return {"ok": True, **result}
+
+
+@internal_router.post("/watch-expire")
+async def water_watch_expire(request: Request):
+    """Close every watch once the observed birthday window has ended."""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    service = _mysekai(request)
+    return {"ok": True, **await service.expire_water_watches()}
 
 
 @internal_router.post("/watch-status")
