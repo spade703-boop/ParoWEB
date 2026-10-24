@@ -36,6 +36,12 @@ from app.web.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
+# uvicorn only configures its own loggers; application INFO records need a root handler.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+
 
 @dataclass(slots=True)
 class Services:
