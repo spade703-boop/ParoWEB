@@ -1568,7 +1568,12 @@ class SQLiteRepository:
                 ON CONFLICT(server, game_user_id) DO UPDATE SET
                     party_id=excluded.party_id,
                     character_id=excluded.character_id,
-                    obtained=excluded.obtained,
+                    -- 同一活动内 obtained 是累计获得数，只增不减；换活动才重置。
+                    obtained=CASE
+                        WHEN mysekai_birthday_state.party_id = excluded.party_id
+                        THEN MAX(mysekai_birthday_state.obtained, excluded.obtained)
+                        ELSE excluded.obtained
+                    END,
                     dropped=excluded.dropped,
                     total_point=excluded.total_point,
                     captured_at_ms=COALESCE(
