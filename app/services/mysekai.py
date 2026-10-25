@@ -1638,9 +1638,9 @@ class MysekaiService:
             return "sent", "已推送到群里"
         return "failed", f"推送失败（HTTP {response.status_code}）"
 
-    async def _render_rare(self, body: bytes) -> bytes | None:
-        """Ask the render service for a map that only carries the watched drops."""
-        url = f"{self.settings.mysekai_service_url}/render/rare"
+    async def _render_push(self, body: bytes) -> bytes | None:
+        """One composed image: the rare map plus the birthday progress strip."""
+        url = f"{self.settings.mysekai_service_url}/render/push"
         try:
             async with self._client(timeout=120.0) as client:
                 response = await client.post(
@@ -1663,7 +1663,6 @@ class MysekaiService:
         nickname: str | None,
         birthday: dict,
         rare_png: bytes | None,
-        birthday_png_base64: str | None = None,
     ) -> tuple[str, str]:
         """Push a watering-watch hit: one text line plus the filtered map."""
         url = self.settings.mysekai_push_url
@@ -1676,7 +1675,6 @@ class MysekaiService:
             "nickname": nickname,
             "birthday": birthday,
             "rare_png_base64": base64.b64encode(rare_png).decode("ascii") if rare_png is not None else None,
-            "birthday_png_base64": birthday_png_base64,
             "empty_result": rare_png is None,
         }
         headers = {"Content-Type": "application/json"}
@@ -1912,10 +1910,7 @@ class MysekaiService:
             if round_key:
                 # 每轮都入库便于查询；只有命中稀有才播报，避免连续浇水刷屏。
                 has_targets = bool(result.birthday.get("targets"))
-                if result.rare_png_base64:
-                    rare_png = base64.b64decode(result.rare_png_base64)
-                else:
-                    rare_png = await self._render_rare(body) if has_targets else None
+                push_png = await self._render_push(body) if has_targets else None
                 claimed = False
                 if not has_targets:
                     claimed = await self.repository.claim_mysekai_water_round(
@@ -1926,7 +1921,7 @@ class MysekaiService:
                         "message": "本轮已记录，未发现稀有材料" if claimed
                         else "这一轮已经记录过",
                     }
-                elif not rare_png:
+                elif not push_png:
                     watch_result = {
                         "status": "failed",
                         "message": "检测到稀有材料，但点位图生成失败，请重试",
@@ -1937,7 +1932,7 @@ class MysekaiService:
                     )
                     if not claimed:
                         watch_result = {"status": "duplicate", "message": "这一轮已经播报过"}
-                if has_targets and rare_png and claimed:
+                if has_targets and push_png and claimed:
                     await self.repository.mark_mysekai_water_round_matched(
                         binding["game_user_id"], round_key
                     )
@@ -1954,8 +1949,7 @@ class MysekaiService:
                             **result.birthday,
                             "observation_kind": "delivery" if event_kind == "birthday_delivery" else "snapshot",
                         },
-                        rare_png=rare_png,
-                        birthday_png_base64=result.birthday_png_base64,
+                        rare_png=push_png,
                     )
                     watch_result = {"status": rare_status, "message": rare_message}
                     if rare_status != "sent":

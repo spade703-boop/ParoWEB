@@ -91,7 +91,7 @@ async def test_failed_rare_push_can_retry_same_round(tmp_path, monkeypatch) -> N
         attempts.append(payload["upload_id"])
         return ("failed", "test failure") if len(attempts) == 1 else ("sent", "ok")
 
-    monkeypatch.setattr(MysekaiService, "_render_rare", render_rare)
+    monkeypatch.setattr(MysekaiService, "_render_push", render_rare)
     monkeypatch.setattr(MysekaiService, "_push_rare", push_rare)
     birthday = {"targets": [{"material_id": 12}], "round_key": "retry-round"}
     async with _app(tmp_path, submit_birthday=birthday, watch_on=True) as (client, _):
@@ -150,7 +150,7 @@ async def test_manual_upload_labels_result_as_current_snapshot(tmp_path, monkeyp
         return b"rare-png"
 
     monkeypatch.setattr(MysekaiService, "_push_rare", push_rare)
-    monkeypatch.setattr(MysekaiService, "_render_rare", render_rare)
+    monkeypatch.setattr(MysekaiService, "_render_push", render_rare)
     birthday = {
         "party_id": 2, "round_key": "party:2:progress:8",
         "targets": [{"material_id": 12, "name": "钻石", "quantity": 1, "site_id": 5, "x": 1, "z": 2}],
@@ -172,7 +172,7 @@ async def test_empty_delivery_is_recorded_without_group_notification(tmp_path, m
         raise AssertionError("empty result must not render")
 
     monkeypatch.setattr(MysekaiService, "_push_rare", push_rare)
-    monkeypatch.setattr(MysekaiService, "_render_rare", render_rare)
+    monkeypatch.setattr(MysekaiService, "_render_push", render_rare)
     birthday = {"party_id": 2, "round_key": "party:2:progress:8", "targets": []}
     async with _app(tmp_path, submit_birthday=birthday, watch_on=True) as (client, ordinary_pushes):
         statuses = []
