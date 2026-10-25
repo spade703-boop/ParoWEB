@@ -138,3 +138,35 @@ async def test_no_active_party_maps_to_404(api_client) -> None:
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "no_active_birthday"
+
+
+def test_ingest_response_for_a_delivery_has_no_snapshot_fields() -> None:
+    from app.web.mysekai_api import _ingest_response
+
+    out = _ingest_response({
+        "kind": "birthday_delivery",
+        "upload_id": "u1",
+        "message": "本轮无稀有材料",
+        "push": {"status": "skipped", "message": "生日刷新仅发送监听结果"},
+        "watch": {"status": "recorded", "message": "本轮已记录"},
+    })
+
+    assert out["kind"] == "birthday_delivery"
+    assert "points" not in out and "sites" not in out and "drops" not in out
+
+
+def test_ingest_response_for_a_snapshot_keeps_the_snapshot_fields() -> None:
+    from app.web.mysekai_api import _ingest_response
+
+    out = _ingest_response({
+        "upload_id": "u2",
+        "points": 3,
+        "drops": 4,
+        "sites": [{"site_id": 5}],
+        "push": {"status": "skipped", "message": ""},
+        "watch": None,
+    })
+
+    assert out["points"] == 3
+    assert out["drops"] == 4
+    assert out["sites"] == [{"site_id": 5}]

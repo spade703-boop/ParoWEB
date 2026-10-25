@@ -829,6 +829,28 @@ def _ingest_allowed(request: Request, game_user_id: str) -> bool:
     return not allowlist or game_user_id in allowlist
 
 
+def _ingest_response(result: dict) -> dict:
+    """The mobile capture path accepts both snapshots and delivery results."""
+    if result.get("kind") == "birthday_delivery":
+        return {
+            "ok": True,
+            "upload_id": result["upload_id"],
+            "kind": "birthday_delivery",
+            "message": result.get("message"),
+            "push": result["push"],
+            "watch": result.get("watch"),
+        }
+    return {
+        "ok": True,
+        "upload_id": result["upload_id"],
+        "points": result["points"],
+        "drops": result["drops"],
+        "sites": result["sites"],
+        "push": result["push"],
+        "watch": result.get("watch"),
+    }
+
+
 @router.post("/ingest")
 async def ingest(request: Request):
     """Receive a raw response body from the mobile capture module.
@@ -890,15 +912,7 @@ async def ingest(request: Request):
         len(body) % 16,
         result["upload_id"],
     )
-    return {
-        "ok": True,
-        "upload_id": result["upload_id"],
-        "points": result["points"],
-        "drops": result["drops"],
-        "sites": result["sites"],
-        "push": result["push"],
-        "watch": result.get("watch"),
-    }
+    return _ingest_response(result)
 
 
 @router.post("/ingest-convert")
