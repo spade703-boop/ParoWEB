@@ -337,7 +337,9 @@ function renderResult(data) {
 
   const push = data.push || {};
   el.pushBadge.classList.remove("is-ok", "is-error");
-  if (push.status === "sent") {
+  if (delivery) {
+    el.pushBadge.textContent = "仅生日监听";
+  } else if (push.status === "sent") {
     el.pushBadge.textContent = "已推送群里";
     el.pushBadge.classList.add("is-ok");
   } else if (push.status === "failed") {
