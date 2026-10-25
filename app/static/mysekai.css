@@ -354,8 +354,18 @@
 .image-frame--card {
   max-width: 560px;
   margin-inline: auto;
-  aspect-ratio: 916 / 1076;
+  aspect-ratio: 916 / 1188;
 }
+.image-frame--birthday {
+  max-width: 858px;
+  margin-inline: auto;
+  aspect-ratio: 858 / 100;
+}
+.image-frame--rare {
+  max-width: 100%;
+  margin-inline: auto;
+}
+.image-frame--rare img { height: auto; }
 .image-frame img {
   display: block;
   width: 100%;

@@ -301,10 +301,13 @@ function renderResult(data) {
 
   const profile = data.profile || {};
   const delivery = data.kind === "birthday_delivery";
-  el.resultMapFigure.classList.toggle("hidden", delivery);
-  el.resultCardFigure.classList.toggle("hidden", delivery);
-  el.resultMessage.classList.toggle("hidden", !delivery);
-  if (delivery) {
+  const toggle = (node, hidden) => {
+    if (node) node.classList.toggle("hidden", hidden);
+  };
+  toggle(el.resultMapFigure, delivery);
+  toggle(el.resultCardFigure, delivery);
+  toggle(el.resultMessage, !delivery);
+  if (delivery && el.resultMessage) {
     el.resultMessage.textContent = data.message || "";
   }
   el.profileName.textContent = profile.nickname || "—";
@@ -326,12 +329,12 @@ function renderResult(data) {
     el.downloadMap.href = data.map;
     el.downloadCard.href = data.card;
   }
-  el.resultRareFigure.classList.toggle("hidden", !delivery || !data.rare);
-  if (delivery && data.rare) {
+  toggle(el.resultRareFigure, !delivery || !data.rare);
+  if (delivery && data.rare && el.resultRare) {
     el.resultRare.src = data.rare;
   }
-  el.resultBirthdayFigure.classList.toggle("hidden", !delivery || !data.birthday);
-  if (delivery && data.birthday) {
+  toggle(el.resultBirthdayFigure, !delivery || !data.birthday);
+  if (delivery && data.birthday && el.resultBirthday) {
     el.resultBirthday.src = data.birthday;
   }
 
