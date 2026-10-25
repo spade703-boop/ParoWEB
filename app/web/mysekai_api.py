@@ -150,6 +150,8 @@ class HighlightNamesRequest(BaseModel):
 
     qq: str = Field(pattern=QQ_PATTERN)
     names: list[str] = Field(default_factory=list)
+    #: False = merge into the current list (设置); True = replace it (替换).
+    replace: bool = True
 
 
 def _mysekai(request: Request) -> MysekaiService:
@@ -384,7 +386,9 @@ async def highlight_set(payload: HighlightNamesRequest, request: Request):
     if auth_error is not None:
         return auth_error
     try:
-        result = await _mysekai(request).set_highlights(payload.qq, payload.names)
+        result = await _mysekai(request).set_highlights(
+            payload.qq, payload.names, replace=payload.replace
+        )
     except MysekaiError as exc:
         return error_response(exc.status, exc.code, str(exc), exc.details)
     return {"ok": True, **result}

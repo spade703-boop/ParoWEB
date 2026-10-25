@@ -1098,8 +1098,15 @@ class MysekaiService:
             "missing_ids": [i for i in ids if i not in by_id],
         }
 
-    async def set_highlights(self, qq: str, names: list[str]) -> dict:
-        """Replace this QQ's extra highlight list with the named materials."""
+    async def set_highlights(
+        self, qq: str, names: list[str], *, replace: bool = True
+    ) -> dict:
+        """Add to (default) or replace this QQ's extra highlight list.
+
+        ``replace=False`` merges the named materials into the existing list,
+        so "set cotton" after "set battery" keeps both. ``replace=True`` is the
+        explicit "replace" command.
+        """
         if not names:
             raise MysekaiError("请至少提供一个材料名", code="highlight_empty", status=422)
         resolved, unknown, ambiguous = await self._resolve_highlight_names(names)
@@ -1107,19 +1114,37 @@ class MysekaiService:
             raise self._highlight_name_error(unknown, ambiguous)
         if not resolved:
             raise MysekaiError("请至少提供一个材料名", code="highlight_empty", status=422)
-        if len(resolved) > HIGHLIGHT_LIMIT:
+
+        existing_ids: list[int] = []
+        if replace:
+            final_ids = [row["id"] for row in resolved]
+            materials = resolved
+            added = resolved
+        else:
+            existing_ids = await self.repository.list_mysekai_highlight_materials(qq)
+            existing = set(existing_ids)
+            added = [row for row in resolved if row["id"] not in existing]
+            final_ids = existing_ids + [row["id"] for row in added]
+            by_id = {row["id"]: row for row in await self.fetch_materials()}
+            materials = [by_id[i] for i in final_ids if i in by_id]
+
+        if len(final_ids) > HIGHLIGHT_LIMIT:
+            suffix = (
+                f"；当前已有 {len(existing_ids)} 种" if existing_ids else ""
+            )
             raise MysekaiError(
-                f"最多只能高亮 {HIGHLIGHT_LIMIT} 种材料",
+                f"最多只能高亮 {HIGHLIGHT_LIMIT} 种材料{suffix}",
                 code="highlight_too_many",
                 status=422,
             )
-        await self.repository.set_mysekai_highlight_materials(
-            qq, [row["id"] for row in resolved]
-        )
+
+        await self.repository.set_mysekai_highlight_materials(qq, final_ids)
         return {
-            "count": len(resolved),
+            "count": len(final_ids),
             "limit": HIGHLIGHT_LIMIT,
-            "materials": resolved,
+            "materials": materials,
+            "added": added,
+            "mode": "replace" if replace else "add",
         }
 
     async def remove_highlights(self, qq: str, names: list[str]) -> dict:

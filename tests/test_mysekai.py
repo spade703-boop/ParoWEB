@@ -869,13 +869,27 @@ async def test_highlight_endpoints_roundtrip(client, monkeypatch) -> None:
     assert set_response.status_code == 200
     assert set_response.json()["count"] == 1
 
+    add_response = await client.post(
+        "/internal/v1/mysekai/highlight-set",
+        json={"qq": QQ, "names": ["铁矿石"], "replace": False},
+        headers=headers,
+    )
+    assert add_response.status_code == 200
+    assert add_response.json()["count"] == 2
+    assert {row["name"] for row in add_response.json()["materials"]} == {
+        "钻石", "铁矿石",
+    }
+
     status_response = await client.post(
         "/internal/v1/mysekai/highlight-status",
         json={"qq": QQ},
         headers=headers,
     )
     assert status_response.status_code == 200
-    assert status_response.json()["materials"][0]["name"] == "钻石"
+    assert status_response.json()["count"] == 2
+    assert {row["name"] for row in status_response.json()["materials"]} == {
+        "钻石", "铁矿石",
+    }
 
     remove_response = await client.post(
         "/internal/v1/mysekai/highlight-remove",
@@ -883,7 +897,7 @@ async def test_highlight_endpoints_roundtrip(client, monkeypatch) -> None:
         headers=headers,
     )
     assert remove_response.status_code == 200
-    assert remove_response.json()["count"] == 0
+    assert remove_response.json()["count"] == 1
 
 
 async def test_material_catalog_endpoint_returns_png(client, monkeypatch) -> None:

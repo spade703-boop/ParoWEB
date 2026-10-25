@@ -124,3 +124,55 @@ async def test_material_catalog_image_is_fetched_and_cached(tmp_path) -> None:
 
     assert first == second == TINY_PNG
     assert calls == ["/render/materials"]
+
+
+async def test_set_without_replace_adds_to_the_existing_list(tmp_path) -> None:
+    service = await _service(tmp_path)
+
+    await service.set_highlights(QQ, ["铁矿石"], replace=False)
+    result = await service.set_highlights(QQ, ["钻石"], replace=False)
+    status = await service.highlight_status(QQ)
+
+    assert [row["name"] for row in result["materials"]] == ["铁矿石", "钻石"]
+    assert [row["name"] for row in result["added"]] == ["钻石"]
+    assert [row["name"] for row in status["materials"]] == ["铁矿石", "钻石"]
+
+
+async def test_replace_drops_the_existing_list(tmp_path) -> None:
+    service = await _service(tmp_path)
+    await service.set_highlights(QQ, ["铁矿石"], replace=False)
+
+    result = await service.set_highlights(QQ, ["钻石"], replace=True)
+    status = await service.highlight_status(QQ)
+
+    assert [row["name"] for row in result["materials"]] == ["钻石"]
+    assert [row["name"] for row in status["materials"]] == ["钻石"]
+
+
+async def test_adding_past_the_limit_is_rejected_atomically(tmp_path) -> None:
+    service = await _service(tmp_path)
+    many = [
+        {"id": i, "name": f"材料{i}", "rarity": "rarity_1"}
+        for i in range(1, HIGHLIGHT_LIMIT + 2)
+    ]
+    service.fetch_materials = AsyncMock(return_value=many)
+    await service.set_highlights(
+        QQ, [f"材料{i}" for i in range(1, HIGHLIGHT_LIMIT + 1)], replace=False
+    )
+
+    with pytest.raises(MysekaiError) as raised:
+        await service.set_highlights(QQ, [f"材料{HIGHLIGHT_LIMIT + 1}"], replace=False)
+
+    assert raised.value.code == "highlight_too_many"
+    assert (await service.highlight_status(QQ))["count"] == HIGHLIGHT_LIMIT
+
+
+async def test_adding_an_existing_material_is_idempotent(tmp_path) -> None:
+    service = await _service(tmp_path)
+    await service.set_highlights(QQ, ["铁矿石"], replace=False)
+
+    result = await service.set_highlights(QQ, ["铁矿石"], replace=False)
+
+    assert result["added"] == []
+    assert [row["name"] for row in result["materials"]] == ["铁矿石"]
+    assert result["count"] == 1
