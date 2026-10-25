@@ -138,3 +138,32 @@ async def test_delivery_is_not_pushed_as_a_normal_map(tmp_path: Path) -> None:
     assert row is not None
     assert row["party_id"] == 2
     assert row["obtained"] == 25
+
+
+async def test_rare_push_carries_the_birthday_strip(tmp_path: Path) -> None:
+    import json
+    import uuid
+
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/rare":
+            captured.append(json.loads(request.content))
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(404, json={"error": "not found"})
+
+    service, _repository = await _service(tmp_path, httpx.MockTransport(handler))
+    service.settings = replace(service.settings, mysekai_push_url="http://push.test")
+
+    status, _message = await service._push_rare(
+        upload_id=str(uuid.uuid4()),
+        qq=QQ,
+        game_user_id=GAME,
+        nickname=None,
+        birthday={"targets": [{"name": "钻石", "quantity": 1}]},
+        rare_png=b"png",
+        birthday_png_base64="aGVsbG8=",
+    )
+
+    assert status == "sent"
+    assert captured[0]["birthday_png_base64"] == "aGVsbG8="

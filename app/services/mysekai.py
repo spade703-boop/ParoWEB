@@ -1471,6 +1471,7 @@ class MysekaiService:
                     if isinstance(data.get("catalog_state"), dict)
                     else None
                 ),
+                birthday_png_base64=data.get("birthday_png_base64"),
             )
         except (ValueError, KeyError, TypeError):
             raise UpstreamError("出图服务返回了无法解析的数据") from None
@@ -1662,6 +1663,7 @@ class MysekaiService:
         nickname: str | None,
         birthday: dict,
         rare_png: bytes | None,
+        birthday_png_base64: str | None = None,
     ) -> tuple[str, str]:
         """Push a watering-watch hit: one text line plus the filtered map."""
         url = self.settings.mysekai_push_url
@@ -1674,6 +1676,7 @@ class MysekaiService:
             "nickname": nickname,
             "birthday": birthday,
             "rare_png_base64": base64.b64encode(rare_png).decode("ascii") if rare_png is not None else None,
+            "birthday_png_base64": birthday_png_base64,
             "empty_result": rare_png is None,
         }
         headers = {"Content-Type": "application/json"}
@@ -1952,6 +1955,7 @@ class MysekaiService:
                             "observation_kind": "delivery" if event_kind == "birthday_delivery" else "snapshot",
                         },
                         rare_png=rare_png,
+                        birthday_png_base64=result.birthday_png_base64,
                     )
                     watch_result = {"status": rare_status, "message": rare_message}
                     if rare_status != "sent":
