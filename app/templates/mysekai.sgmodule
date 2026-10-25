@@ -7,8 +7,8 @@
 ^https:\/\/submit\.backtrace\.io\/ reject
 
 [Script]
-mysekai-capture = type=http-response, pattern=^https?://[^/]+\.dailygn\.com/api/user/\d+/mysekai(/birthday-party/\d+/delivery)?(\?.*)?$, requires-body=1, binary-body-mode=1, max-size=104857600, script-path=__BASE_URL__/api/v1/mysekai/capture.js?t=__TOKEN__, timeout=60
-mysekai-convert = type=http-response, pattern=^https?://[^/]+\.dailygn\.com/api/user/\d+/mysekai/convert/\d+/(start|receive|shorten)(\?.*)?$, requires-body=1, binary-body-mode=1, max-size=1048576, script-path=__BASE_URL__/api/v1/mysekai/convert.js?t=__TOKEN__, timeout=30
+mysekai-capture = type=http-response, pattern=^https?://[^/]+/api/user/\d+/mysekai(/birthday-party/\d+/delivery)?(\?.*)?$, requires-body=1, binary-body-mode=1, max-size=104857600, script-path=__BASE_URL__/api/v1/mysekai/capture.js?t=__TOKEN__, timeout=60
+mysekai-convert = type=http-response, pattern=^https?://[^/]+/api/user/\d+/mysekai/convert/\d+/(start|receive|shorten)(\?.*)?$, requires-body=1, binary-body-mode=1, max-size=1048576, script-path=__BASE_URL__/api/v1/mysekai/convert.js?t=__TOKEN__, timeout=30
 
 [MITM]
-hostname = %APPEND% mkcn-prod-public-60001-1.dailygn.com, submit.backtrace.io
+hostname = %APPEND% *.dailygn.com, *.volcalb.com, submit.backtrace.io
