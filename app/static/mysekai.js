@@ -76,6 +76,13 @@ const el = {
   profileId: $("#profile-id"),
   pushBadge: $("#push-badge"),
   watchLine: $("#watch-line"),
+  resultMessage: $("#result-message"),
+  resultMapFigure: $("#result-map-figure"),
+  resultCardFigure: $("#result-card-figure"),
+  resultRare: $("#result-rare"),
+  resultRareFigure: $("#result-rare-figure"),
+  resultBirthday: $("#result-birthday"),
+  resultBirthdayFigure: $("#result-birthday-figure"),
   resultMap: $("#result-map"),
   resultCard: $("#result-card"),
   downloadMap: $("#download-map"),
@@ -293,6 +300,13 @@ function renderResult(data) {
   el.resultContent.classList.remove("hidden");
 
   const profile = data.profile || {};
+  const delivery = data.kind === "birthday_delivery";
+  el.resultMapFigure.classList.toggle("hidden", delivery);
+  el.resultCardFigure.classList.toggle("hidden", delivery);
+  el.resultMessage.classList.toggle("hidden", !delivery);
+  if (delivery) {
+    el.resultMessage.textContent = data.message || "";
+  }
   el.profileName.textContent = profile.nickname || "—";
   el.profileId.textContent = profile.game_user_id || "";
   if (profile.avatar_data_url) {
@@ -306,10 +320,20 @@ function renderResult(data) {
     el.profileAvatarFallback.classList.remove("hidden");
   }
 
-  el.resultMap.src = data.map;
-  el.resultCard.src = data.card;
-  el.downloadMap.href = data.map;
-  el.downloadCard.href = data.card;
+  if (!delivery) {
+    el.resultMap.src = data.map;
+    el.resultCard.src = data.card;
+    el.downloadMap.href = data.map;
+    el.downloadCard.href = data.card;
+  }
+  el.resultRareFigure.classList.toggle("hidden", !delivery || !data.rare);
+  if (delivery && data.rare) {
+    el.resultRare.src = data.rare;
+  }
+  el.resultBirthdayFigure.classList.toggle("hidden", !delivery || !data.birthday);
+  if (delivery && data.birthday) {
+    el.resultBirthday.src = data.birthday;
+  }
 
   const push = data.push || {};
   el.pushBadge.classList.remove("is-ok", "is-error");
@@ -324,7 +348,10 @@ function renderResult(data) {
   }
 
   renderWatchLine(data.watch);
-  const sites = Array.isArray(data.sites) ? data.sites.length : 0;  el.resultMeta.textContent = `${data.points} 点位 · ${data.drops} 掉落 · ${sites} 个站点`;
+  const sites = Array.isArray(data.sites) ? data.sites.length : 0;
+  el.resultMeta.textContent = delivery
+    ? ""
+    : `${data.points} 点位 · ${data.drops} 掉落 · ${sites} 个站点`;
   state.lastResult = data;
 
   el.result.scrollIntoView({ behavior: "instant", block: "start" });

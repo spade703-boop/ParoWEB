@@ -366,6 +366,19 @@ async def material_catalog(request: Request):
     return Response(content=png, media_type="image/png")
 
 
+@internal_router.post("/birthday-progress")
+async def birthday_progress(payload: QqRequest, request: Request):
+    """The birthday party progress strip for one QQ."""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        png = await _mysekai(request).birthday_progress_image(payload.qq)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return Response(content=png, media_type="image/png")
+
+
 @internal_router.post("/highlight-status")
 async def highlight_status(payload: QqRequest, request: Request):
     """This QQ's extra highlight material list."""

@@ -453,3 +453,10 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+.delivery-message {
+  margin: 0 0 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #2b374a;
+}

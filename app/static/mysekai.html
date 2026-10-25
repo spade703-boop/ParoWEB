@@ -124,8 +124,9 @@
               <span class="push-badge" id="push-badge">—</span>
             </div>
             <p class="watch-line hidden" id="watch-line"></p>
+            <p class="delivery-message hidden" id="result-message"></p>
 
-            <figure class="image-card">
+            <figure class="image-card" id="result-map-figure">
               <figcaption>
                 <span>资源地图</span>
                 <a class="download-link" id="download-map" href="#" download="mysekai-map.png">下载 PNG</a>
@@ -135,13 +136,27 @@
               </div>
             </figure>
 
-            <figure class="image-card">
+            <figure class="image-card" id="result-card-figure">
               <figcaption>
                 <span>材料汇总卡</span>
                 <a class="download-link" id="download-card" href="#" download="mysekai-card.png">下载 PNG</a>
               </figcaption>
               <div class="image-frame image-frame--card">
                 <img id="result-card" alt="MySekai 材料汇总卡" width="916" height="1076">
+              </div>
+            </figure>
+
+            <figure class="image-card hidden" id="result-rare-figure">
+              <figcaption><span>本轮稀有材料</span></figcaption>
+              <div class="image-frame image-frame--map">
+                <img id="result-rare" alt="本轮稀有材料点位">
+              </div>
+            </figure>
+
+            <figure class="image-card hidden" id="result-birthday-figure">
+              <figcaption><span>生日派对进度</span></figcaption>
+              <div class="image-frame image-frame--card">
+                <img id="result-birthday" alt="生日派对进度" width="858" height="120">
               </div>
             </figure>
 

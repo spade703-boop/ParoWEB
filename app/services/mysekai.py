@@ -1475,6 +1475,44 @@ class MysekaiService:
         except (ValueError, KeyError, TypeError):
             raise UpstreamError("出图服务返回了无法解析的数据") from None
 
+    async def birthday_progress_image(self, qq: str) -> bytes:
+        """The stored birthday progress, rendered by the pipeline."""
+        binding = await self.repository.get_mysekai_binding(qq)
+        if binding is None:
+            raise BindingNotFound("这个 QQ 还没有绑定游戏 ID，请先绑定")
+        state = await self.repository.get_mysekai_birthday_state(
+            binding["server"], binding["game_user_id"]
+        )
+        if state is None:
+            raise MysekaiError(
+                "还没有你的生日数据，请先上传一次带地图的响应或浇水回执",
+                code="birthday_state_missing",
+                status=404,
+            )
+        url = f"{self.settings.mysekai_service_url}/render/birthday"
+        payload = {
+            "region": binding["server"],
+            "party_id": state["party_id"],
+            "obtained": state["obtained"],
+            "dropped": state["dropped"],
+            "total_point": state["total_point"],
+            "captured_at_ms": state["captured_at_ms"],
+        }
+        try:
+            async with self._client(timeout=60.0) as client:
+                response = await client.post(url, json=payload)
+        except httpx.HTTPError:
+            raise UpstreamError("生日进度服务暂时不可用，请稍后再试") from None
+        if response.status_code == 404:
+            raise MysekaiError(
+                "当前没有进行中的生日活动",
+                code="no_active_birthday",
+                status=404,
+            )
+        if response.status_code != 200:
+            raise UpstreamError("生日进度服务暂时不可用，请稍后再试")
+        return response.content
+
     async def ingest(
         self,
         *,
