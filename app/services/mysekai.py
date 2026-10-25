@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 COOKIE_NAME = "paro_mysekai"
 SESSION_TTL_SECONDS = 12 * 60 * 60
 MAX_BODY_BYTES = 4 * 1024 * 1024
+HIGHLIGHT_LIMIT = 20
 AVATAR_SIZE = 96
 CARDS_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 
@@ -371,6 +372,10 @@ class MysekaiService:
         self._suite_cache: dict[tuple[str, str, str], tuple[int | None, dict]] = {}
         #: Rendered catalog PNGs; a repeat command never reaches the renderer.
         self.render_cache = RenderCache()
+        #: The render service's material table; refreshed on master updates.
+        self._materials_cache: list[dict] | None = None
+        #: The material icon/name sheet PNG; static until the master changes.
+        self._material_card_cache: bytes | None = None
 
     # ------------------------------------------------------------------ session
     def enabled(self) -> bool:
@@ -975,6 +980,8 @@ class MysekaiService:
         # The render service reloaded its master tables; every cached PNG was
         # drawn from the previous snapshot, so drop them before the next query.
         self.render_cache.clear()
+        self._materials_cache = None
+        self._material_card_cache = None
         return result
 
     async def fetch_birthday_state(self) -> dict | None:
@@ -992,6 +999,158 @@ class MysekaiService:
         except ValueError:
             return None
         return data if isinstance(data, dict) else None
+
+    async def fetch_materials(self) -> list[dict]:
+        """The render service's ``mysekai_material`` rows, cached per process."""
+        if self._materials_cache is not None:
+            return self._materials_cache
+        url = f"{self.settings.mysekai_service_url}/materials"
+        try:
+            async with self._client(timeout=30.0) as client:
+                response = await client.get(url)
+        except httpx.HTTPError:
+            raise UpstreamError("材料目录暂时不可用，请稍后再试") from None
+        if response.status_code != 200:
+            raise UpstreamError("材料目录暂时不可用，请稍后再试")
+        try:
+            data = response.json()
+        except ValueError:
+            raise UpstreamError("材料目录返回了无效数据") from None
+        rows = data.get("materials") if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            raise UpstreamError("材料目录返回了无效数据")
+        materials = [
+            {
+                "id": int(row["id"]),
+                "name": str(row["name"]),
+                "rarity": str(row.get("rarity") or ""),
+            }
+            for row in rows
+            if isinstance(row, dict)
+            and isinstance(row.get("id"), int)
+            and isinstance(row.get("name"), str)
+        ]
+        self._materials_cache = materials
+        return materials
+
+    async def render_material_catalog(self) -> bytes:
+        """The icon + official-name sheet, cached until the master changes."""
+        if self._material_card_cache is not None:
+            return self._material_card_cache
+        url = f"{self.settings.mysekai_service_url}/render/materials"
+        try:
+            async with self._client(timeout=60.0) as client:
+                response = await client.get(url)
+        except httpx.HTTPError:
+            raise UpstreamError("材料对照表暂时不可用，请稍后再试") from None
+        if response.status_code != 200:
+            raise UpstreamError("材料对照表暂时不可用，请稍后再试")
+        self._material_card_cache = response.content
+        return response.content
+
+    async def _resolve_highlight_names(        self, names: list[str]
+    ) -> tuple[list[dict], list[str], list[str]]:
+        """Resolve exact Chinese names; report unknown and duplicate names."""
+        materials = await self.fetch_materials()
+        by_name: dict[str, list[dict]] = {}
+        for row in materials:
+            by_name.setdefault(row["name"], []).append(row)
+        resolved: list[dict] = []
+        seen: set[int] = set()
+        unknown: list[str] = []
+        ambiguous: list[str] = []
+        for raw in names:
+            name = raw.strip()
+            if not name:
+                continue
+            matches = by_name.get(name)
+            if not matches:
+                unknown.append(name)
+            elif len(matches) > 1:
+                ambiguous.append(name)
+            elif matches[0]["id"] not in seen:
+                resolved.append(matches[0])
+                seen.add(matches[0]["id"])
+        return resolved, unknown, ambiguous
+
+    @staticmethod
+    def _highlight_name_error(
+        unknown: list[str], ambiguous: list[str]
+    ) -> MysekaiError:
+        parts: list[str] = []
+        if unknown:
+            parts.append("未找到材料：" + "、".join(unknown))
+        if ambiguous:
+            parts.append("材料名不唯一：" + "、".join(ambiguous))
+        return MysekaiError(
+            "；".join(parts), code="highlight_name_invalid", status=422
+        )
+
+    async def highlight_status(self, qq: str) -> dict:
+        """This QQ's extra highlights, with names from the render service."""
+        ids = await self.repository.list_mysekai_highlight_materials(qq)
+        materials = await self.fetch_materials()
+        by_id = {row["id"]: row for row in materials}
+        return {
+            "count": len(ids),
+            "limit": HIGHLIGHT_LIMIT,
+            "materials": [by_id[i] for i in ids if i in by_id],
+            "missing_ids": [i for i in ids if i not in by_id],
+        }
+
+    async def set_highlights(self, qq: str, names: list[str]) -> dict:
+        """Replace this QQ's extra highlight list with the named materials."""
+        if not names:
+            raise MysekaiError("请至少提供一个材料名", code="highlight_empty", status=422)
+        resolved, unknown, ambiguous = await self._resolve_highlight_names(names)
+        if unknown or ambiguous:
+            raise self._highlight_name_error(unknown, ambiguous)
+        if not resolved:
+            raise MysekaiError("请至少提供一个材料名", code="highlight_empty", status=422)
+        if len(resolved) > HIGHLIGHT_LIMIT:
+            raise MysekaiError(
+                f"最多只能高亮 {HIGHLIGHT_LIMIT} 种材料",
+                code="highlight_too_many",
+                status=422,
+            )
+        await self.repository.set_mysekai_highlight_materials(
+            qq, [row["id"] for row in resolved]
+        )
+        return {
+            "count": len(resolved),
+            "limit": HIGHLIGHT_LIMIT,
+            "materials": resolved,
+        }
+
+    async def remove_highlights(self, qq: str, names: list[str]) -> dict:
+        """Remove the named materials from this QQ's extra highlight list."""
+        if not names:
+            raise MysekaiError("请提供要取消的材料名", code="highlight_empty", status=422)
+        resolved, unknown, ambiguous = await self._resolve_highlight_names(names)
+        if unknown or ambiguous:
+            raise self._highlight_name_error(unknown, ambiguous)
+        removed = await self.repository.remove_mysekai_highlight_materials(
+            qq, [row["id"] for row in resolved]
+        )
+        status = await self.highlight_status(qq)
+        return {**status, "removed": removed}
+
+    async def clear_highlights(self, qq: str) -> dict:
+        """Drop every extra highlight for this QQ."""
+        removed = await self.repository.clear_mysekai_highlight_materials(qq)
+        return {
+            "removed": removed,
+            "count": 0,
+            "limit": HIGHLIGHT_LIMIT,
+            "materials": [],
+            "missing_ids": [],
+        }
+
+    async def highlight_ids(self, qq: str) -> frozenset[int]:
+        """The ids the render service should promote to rare for this QQ."""
+        return frozenset(
+            await self.repository.list_mysekai_highlight_materials(qq)
+        )
 
     # ------------------------------------------------------------------ data
     async def set_convert_watch(self, qq: str, enabled: bool) -> None:
@@ -1192,7 +1351,11 @@ class MysekaiService:
 
     # ------------------------------------------------------------------ render
     async def _render(
-        self, body: bytes, profile_payload: dict, visit_baseline: dict | None = None
+        self,
+        body: bytes,
+        profile_payload: dict,
+        visit_baseline: dict | None = None,
+        highlight_ids: frozenset[int] = frozenset(),
     ) -> RenderResult:
         header = _b64url_encode(
             json.dumps(
@@ -1208,6 +1371,12 @@ class MysekaiService:
         if visit_baseline:
             headers["X-Mysekai-Visit-Baseline"] = _b64url_encode(
                 json.dumps(visit_baseline, separators=(",", ":")).encode("utf-8")
+            )
+        if highlight_ids:
+            headers["X-Mysekai-Highlight"] = _b64url_encode(
+                json.dumps(
+                    sorted(highlight_ids), separators=(",", ":")
+                ).encode("utf-8")
             )
         url = f"{self.settings.mysekai_service_url}/submit"
         try:
@@ -1505,7 +1674,10 @@ class MysekaiService:
         }
         day = _today_key()
         visit_baseline = await self.repository.get_mysekai_visit_baseline(qq, day)
-        result = await self._render(body, profile_payload, visit_baseline)
+        highlight_ids = await self.highlight_ids(qq)
+        result = await self._render(
+            body, profile_payload, visit_baseline, highlight_ids
+        )
         if result.catalog_state is not None:
             await self.repository.set_mysekai_catalog_state(
                 server=server,

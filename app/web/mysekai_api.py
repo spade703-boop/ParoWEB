@@ -145,6 +145,13 @@ class QqRequest(BaseModel):
     qq: str = Field(pattern=QQ_PATTERN)
 
 
+class HighlightNamesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qq: str = Field(pattern=QQ_PATTERN)
+    names: list[str] = Field(default_factory=list)
+
+
 def _mysekai(request: Request) -> MysekaiService:
     return request.app.state.services.mysekai
 
@@ -342,6 +349,71 @@ async def latest_capture(payload: QqRequest, request: Request):
         "map": base64.b64encode(row["map_png"]).decode("ascii"),
         "card": base64.b64encode(row["card_png"]).decode("ascii"),
     }
+
+
+@internal_router.post("/material-catalog")
+async def material_catalog(request: Request):
+    """The material icon + official-name sheet for the group."""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        png = await _mysekai(request).render_material_catalog()
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return Response(content=png, media_type="image/png")
+
+
+@internal_router.post("/highlight-status")
+async def highlight_status(payload: QqRequest, request: Request):
+    """This QQ's extra highlight material list."""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        result = await _mysekai(request).highlight_status(payload.qq)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return {"ok": True, **result}
+
+
+@internal_router.post("/highlight-set")
+async def highlight_set(payload: HighlightNamesRequest, request: Request):
+    """Replace this QQ's extra highlight list with the named materials."""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        result = await _mysekai(request).set_highlights(payload.qq, payload.names)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return {"ok": True, **result}
+
+
+@internal_router.post("/highlight-remove")
+async def highlight_remove(payload: HighlightNamesRequest, request: Request):
+    """Remove named materials from this QQ's extra highlight list."""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        result = await _mysekai(request).remove_highlights(payload.qq, payload.names)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return {"ok": True, **result}
+
+
+@internal_router.post("/highlight-clear")
+async def highlight_clear(payload: QqRequest, request: Request):
+    """Drop every extra highlight for this QQ."""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        result = await _mysekai(request).clear_highlights(payload.qq)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return {"ok": True, **result}
 
 
 @internal_router.post("/convert-done")

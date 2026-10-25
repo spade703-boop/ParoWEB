@@ -4,6 +4,7 @@ import base64
 from dataclasses import replace
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -65,6 +66,7 @@ def _mock_transport(
     render_status: int = 200,
     submit_birthday: dict | None = None,
     convert_state: dict | None = None,
+    submit_headers: list[dict] | None = None,
 ) -> httpx.MockTransport:
     suite_calls = 0
 
@@ -115,6 +117,8 @@ def _mock_transport(
                 200, content=TINY_PNG, headers={"content-type": "image/png"}
             )
         if path == "/submit":
+            if submit_headers is not None:
+                submit_headers.append(dict(request.headers))
             body = {
                 "ok": True,
                 "sites": [{"site_id": 5, "points": 33, "drops": 177}],
@@ -841,3 +845,59 @@ def test_capture_time_reads_seconds_milliseconds_and_iso() -> None:
     # And an ISO string is still accepted
     assert format_capture_time("2026-10-22T07:01:00+00:00") == "2026-10-22 15:01"
     assert format_capture_time(None) is None
+
+
+async def test_highlight_endpoints_roundtrip(client, monkeypatch) -> None:
+    service = client._transport.app.state.services.mysekai
+    monkeypatch.setattr(
+        service,
+        "fetch_materials",
+        AsyncMock(
+            return_value=[
+                {"id": 8, "name": "铁矿石", "rarity": "rarity_1"},
+                {"id": 12, "name": "钻石", "rarity": "rarity_3"},
+            ]
+        ),
+    )
+    headers = {"Authorization": f"Bearer {BOT_TOKEN}"}
+
+    set_response = await client.post(
+        "/internal/v1/mysekai/highlight-set",
+        json={"qq": QQ, "names": ["钻石"]},
+        headers=headers,
+    )
+    assert set_response.status_code == 200
+    assert set_response.json()["count"] == 1
+
+    status_response = await client.post(
+        "/internal/v1/mysekai/highlight-status",
+        json={"qq": QQ},
+        headers=headers,
+    )
+    assert status_response.status_code == 200
+    assert status_response.json()["materials"][0]["name"] == "钻石"
+
+    remove_response = await client.post(
+        "/internal/v1/mysekai/highlight-remove",
+        json={"qq": QQ, "names": ["钻石"]},
+        headers=headers,
+    )
+    assert remove_response.status_code == 200
+    assert remove_response.json()["count"] == 0
+
+
+async def test_material_catalog_endpoint_returns_png(client, monkeypatch) -> None:
+    service = client._transport.app.state.services.mysekai
+    monkeypatch.setattr(
+        service, "render_material_catalog", AsyncMock(return_value=TINY_PNG)
+    )
+
+    response = await client.post(
+        "/internal/v1/mysekai/material-catalog",
+        json={},
+        headers={"Authorization": f"Bearer {BOT_TOKEN}"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content == TINY_PNG

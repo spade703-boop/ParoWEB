@@ -121,6 +121,14 @@ CREATE TABLE IF NOT EXISTS mysekai_birthday_window (
     observed_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS mysekai_highlight_materials (
+    qq TEXT NOT NULL,
+    resource_type TEXT NOT NULL DEFAULT 'mysekai_material',
+    resource_id INTEGER NOT NULL,
+    added_at TEXT NOT NULL,
+    PRIMARY KEY (qq, resource_type, resource_id)
+);
+
 CREATE TABLE IF NOT EXISTS mysekai_convert_watches (
     qq TEXT PRIMARY KEY,
     enabled_at TEXT NOT NULL
@@ -1003,6 +1011,76 @@ class SQLiteRepository:
                 "DELETE FROM mysekai_birthday_window WHERE id = 1"
             )
             await connection.commit()
+
+    async def list_mysekai_highlight_materials(self, qq: str) -> list[int]:
+        """Material ids this QQ asked to highlight, in insertion order."""
+        async with self.connect() as connection:
+            rows = await (
+                await connection.execute(
+                    """
+                    SELECT resource_id
+                      FROM mysekai_highlight_materials
+                     WHERE qq = ? AND resource_type = 'mysekai_material'
+                     ORDER BY added_at, resource_id
+                    """,
+                    (qq,),
+                )
+            ).fetchall()
+        return [int(row[0]) for row in rows]
+
+    async def set_mysekai_highlight_materials(
+        self, qq: str, resource_ids: list[int]
+    ) -> None:
+        """Replace this QQ's whole highlight list in one transaction."""
+        async with self.connect() as connection:
+            await connection.execute(
+                "DELETE FROM mysekai_highlight_materials WHERE qq = ?", (qq,)
+            )
+            now = utc_now()
+            await connection.executemany(
+                """
+                INSERT INTO mysekai_highlight_materials(
+                    qq, resource_type, resource_id, added_at
+                ) VALUES (?, 'mysekai_material', ?, ?)
+                """,
+                [(qq, int(resource_id), now) for resource_id in resource_ids],
+            )
+            await connection.commit()
+
+    async def remove_mysekai_highlight_materials(
+        self, qq: str, resource_ids: list[int]
+    ) -> int:
+        """Remove the named material ids; returns how many rows were deleted."""
+        if not resource_ids:
+            return 0
+        placeholders = ",".join("?" for _ in resource_ids)
+        async with self.connect() as connection:
+            cursor = await connection.execute(
+                f"""
+                DELETE FROM mysekai_highlight_materials
+                 WHERE qq = ?
+                   AND resource_type = 'mysekai_material'
+                   AND resource_id IN ({placeholders})
+                """,
+                (qq, *resource_ids),
+            )
+            await connection.commit()
+        return int(cursor.rowcount or 0)
+
+    async def clear_mysekai_highlight_materials(self, qq: str) -> int:
+        """Drop every extra highlight for one QQ; returns the old count."""
+        async with self.connect() as connection:
+            row = await (
+                await connection.execute(
+                    "SELECT COUNT(*) FROM mysekai_highlight_materials WHERE qq = ?",
+                    (qq,),
+                )
+            ).fetchone()
+            await connection.execute(
+                "DELETE FROM mysekai_highlight_materials WHERE qq = ?", (qq,)
+            )
+            await connection.commit()
+        return int(row[0]) if row else 0
 
     async def clear_mysekai_convert_watches(self) -> tuple[int, int]:
         """Drop every converter subscription together with its slot rows.
