@@ -178,6 +178,19 @@ CREATE TABLE IF NOT EXISTS mysekai_catalog_state (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (server, game_user_id)
 );
+
+CREATE TABLE IF NOT EXISTS mysekai_birthday_state (
+    server TEXT NOT NULL,
+    game_user_id TEXT NOT NULL,
+    party_id INTEGER NOT NULL,
+    character_id INTEGER NOT NULL,
+    obtained INTEGER NOT NULL,
+    dropped INTEGER NOT NULL,
+    total_point INTEGER NOT NULL,
+    captured_at_ms INTEGER,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (server, game_user_id)
+);
 """
 
 
@@ -1531,6 +1544,76 @@ class SQLiteRepository:
             "suite_uploaded_at_ms": row[8],
             "mysekai_uploaded_at_ms": row[9],
             "game_rank": row[10],
+        }
+
+    async def set_mysekai_birthday_state(
+        self,
+        *,
+        server: str,
+        game_user_id: str,
+        party_id: int,
+        character_id: int,
+        obtained: int,
+        dropped: int,
+        total_point: int,
+        captured_at_ms: int | None,
+    ) -> None:
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO mysekai_birthday_state(
+                    server, game_user_id, party_id, character_id,
+                    obtained, dropped, total_point, captured_at_ms, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(server, game_user_id) DO UPDATE SET
+                    party_id=excluded.party_id,
+                    character_id=excluded.character_id,
+                    obtained=excluded.obtained,
+                    dropped=excluded.dropped,
+                    total_point=excluded.total_point,
+                    captured_at_ms=COALESCE(
+                        excluded.captured_at_ms, captured_at_ms
+                    ),
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    server,
+                    game_user_id,
+                    party_id,
+                    character_id,
+                    obtained,
+                    dropped,
+                    total_point,
+                    captured_at_ms,
+                    utc_now(),
+                ),
+            )
+            await connection.commit()
+
+    async def get_mysekai_birthday_state(
+        self, server: str, game_user_id: str
+    ) -> dict | None:
+        async with self.connect() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT party_id, character_id, obtained, dropped,
+                       total_point, captured_at_ms, updated_at
+                FROM mysekai_birthday_state
+                WHERE server = ? AND game_user_id = ?
+                """,
+                (server, game_user_id),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "party_id": row[0],
+            "character_id": row[1],
+            "obtained": row[2],
+            "dropped": row[3],
+            "total_point": row[4],
+            "captured_at_ms": row[5],
+            "updated_at": row[6],
         }
 
     async def set_mysekai_game_rank(
