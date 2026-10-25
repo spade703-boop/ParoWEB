@@ -249,6 +249,10 @@ class RenderResult:
     visit_counts: dict[str, int]
     birthday: dict | None = None
     catalog_state: dict | None = None
+    kind: str = "snapshot"
+    rare_png_base64: str | None = None
+    birthday_png_base64: str | None = None
+    message: str | None = None
 
 
 _CN = timezone(timedelta(hours=8))
@@ -1381,6 +1385,7 @@ class MysekaiService:
         profile_payload: dict,
         visit_baseline: dict | None = None,
         highlight_ids: frozenset[int] = frozenset(),
+        watch_on: bool = False,
     ) -> RenderResult:
         header = _b64url_encode(
             json.dumps(
@@ -1392,6 +1397,7 @@ class MysekaiService:
         headers = {
             "Content-Type": "application/octet-stream",
             "X-Mysekai-Profile": header,
+            "X-Mysekai-Watch": "1" if watch_on else "0",
         }
         if visit_baseline:
             headers["X-Mysekai-Visit-Baseline"] = _b64url_encode(
@@ -1420,6 +1426,11 @@ class MysekaiService:
                     "本次响应未携带采集图，尚未检查本轮生日花；请上传含地图的响应",
                     code="capture_missing_maps", status=422,
                 )
+            if message == "watch_required":
+                raise MysekaiError(
+                    "请先在群里发送「开启烤森监听」，再上传浇水回执",
+                    code="birthday_watch_required", status=422,
+                )
             raise MysekaiError(
                 message or "这份响应无法生成采集图",
                 code="invalid_response",
@@ -1429,6 +1440,21 @@ class MysekaiService:
             raise UpstreamError("出图服务暂时不可用，请稍后再试")
         try:
             data = response.json()
+            if str(data.get("kind") or "snapshot") == "birthday_delivery":
+                return RenderResult(
+                    sites=[],
+                    points=0,
+                    drops=0,
+                    map_png_base64="",
+                    card_png_base64="",
+                    visit_counts={},
+                    birthday=data.get("birthday"),
+                    catalog_state=None,
+                    kind="birthday_delivery",
+                    rare_png_base64=data.get("rare_png_base64"),
+                    birthday_png_base64=data.get("birthday_png_base64"),
+                    message=data.get("message"),
+                )
             return RenderResult(
                 sites=list(data.get("sites") or []),
                 points=int(data.get("points") or 0),
@@ -1701,8 +1727,11 @@ class MysekaiService:
         visit_baseline = await self.repository.get_mysekai_visit_baseline(qq, day)
         highlight_ids = await self.highlight_ids(qq)
         result = await self._render(
-            body, profile_payload, visit_baseline, highlight_ids
+            body, profile_payload, visit_baseline, highlight_ids, watch_on=watch_on
         )
+        if result.kind == "birthday_delivery":
+            event_kind = "birthday_delivery"
+            birthday_party_id = (result.birthday or {}).get("party_id")
         if result.catalog_state is not None:
             await self.repository.set_mysekai_catalog_state(
                 server=server,
@@ -1715,7 +1744,7 @@ class MysekaiService:
                 mysekai_rank=result.catalog_state.get("mysekai_rank"),
                 refreshed_at_ms=result.catalog_state.get("refreshed_at_ms"),
             )
-        if await self.repository.is_mysekai_convert_watch(qq):
+        if result.catalog_state is not None and await self.repository.is_mysekai_convert_watch(qq):
             slots = result.catalog_state.get("convert_slots")
             if slots:
                 await self.repository.record_mysekai_convert_slots(
@@ -1750,6 +1779,24 @@ class MysekaiService:
             game_user_id=binding["game_user_id"],
             mysekai_uploaded_at_ms=int(time.time() * 1000),
         )
+        birthday = result.birthday or {}
+        if birthday.get("party_id") is not None and birthday.get("obtained") is not None:
+            try:
+                await self.repository.set_mysekai_birthday_state(
+                    server=server,
+                    game_user_id=binding["game_user_id"],
+                    party_id=int(birthday["party_id"]),
+                    character_id=int(birthday.get("character_id") or 0),
+                    obtained=int(birthday.get("obtained") or 0),
+                    dropped=int(birthday.get("dropped") or 0),
+                    total_point=int(birthday.get("total_point") or 0),
+                    captured_at_ms=(
+                        (result.catalog_state or {}).get("refreshed_at_ms")
+                        or int(time.time() * 1000)
+                    ),
+                )
+            except Exception:  # 进度缓存坏了不能拖垮上传
+                logger.warning("生日进度落库失败", exc_info=True)
         await self.repository.record_mysekai_upload(
             upload_id=upload_id,
             qq=qq,
@@ -1761,20 +1808,21 @@ class MysekaiService:
             drops=result.drops,
             push_status="pending",
         )
-        try:
-            await self.repository.save_mysekai_latest_capture(
-                qq=qq,
-                game_user_id=binding["game_user_id"],
-                upload_id=upload_id,
-                captured_at_ms=(
-                    (result.catalog_state or {}).get("refreshed_at_ms")
-                ),
-                uploaded_at_ms=int(time.time() * 1000),
-                map_png=base64.b64decode(result.map_png_base64),
-                card_png=base64.b64decode(result.card_png_base64),
-            )
-        except Exception:  # 只是指令用的缓存，坏了不能拖垮上传
-            logger.warning("我的世界最近抓包写入失败", exc_info=True)
+        if result.kind != "birthday_delivery":
+            try:
+                await self.repository.save_mysekai_latest_capture(
+                    qq=qq,
+                    game_user_id=binding["game_user_id"],
+                    upload_id=upload_id,
+                    captured_at_ms=(
+                        (result.catalog_state or {}).get("refreshed_at_ms")
+                    ),
+                    uploaded_at_ms=int(time.time() * 1000),
+                    map_png=base64.b64decode(result.map_png_base64),
+                    card_png=base64.b64decode(result.card_png_base64),
+                )
+            except Exception:  # 只是指令用的缓存，坏了不能拖垮上传
+                logger.warning("我的世界最近抓包写入失败", exc_info=True)
         moment = datetime.now(_CN)
         window = window_key(moment, birthdays=birthday_dates(moment.year))
         claimed = event_kind != "birthday_delivery"
@@ -1823,7 +1871,10 @@ class MysekaiService:
             if round_key:
                 # 每轮都入库便于查询；只有命中稀有才播报，避免连续浇水刷屏。
                 has_targets = bool(result.birthday.get("targets"))
-                rare_png = await self._render_rare(body) if has_targets else None
+                if result.rare_png_base64:
+                    rare_png = base64.b64decode(result.rare_png_base64)
+                else:
+                    rare_png = await self._render_rare(body) if has_targets else None
                 claimed = False
                 if not has_targets:
                     claimed = await self.repository.claim_mysekai_water_round(
@@ -1873,6 +1924,32 @@ class MysekaiService:
                             "mysekai rare push failed upload_id=%s reason=%s",
                             upload_id, rare_message,
                         )
+        if result.kind == "birthday_delivery":
+            return {
+                "kind": "birthday_delivery",
+                "upload_id": upload_id,
+                "profile": {
+                    "qq": qq,
+                    "game_user_id": binding["game_user_id"],
+                    "nickname": binding.get("nickname"),
+                    "avatar_data_url": (
+                        f"data:image/png;base64,{avatar}" if avatar else None
+                    ),
+                },
+                "message": result.message,
+                "rare": (
+                    f"data:image/png;base64,{result.rare_png_base64}"
+                    if result.rare_png_base64
+                    else None
+                ),
+                "birthday": (
+                    f"data:image/png;base64,{result.birthday_png_base64}"
+                    if result.birthday_png_base64
+                    else None
+                ),
+                "push": {"status": push_status, "message": push_message},
+                "watch": watch_result,
+            }
         return {
             "upload_id": upload_id,
             "profile": {
