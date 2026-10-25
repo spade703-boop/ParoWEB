@@ -1437,6 +1437,11 @@ class MysekaiService:
                 status=422,
             )
         if response.status_code != 200:
+            logger.warning(
+                "mysekai render failed status=%s body=%s",
+                response.status_code,
+                response.text[:300],
+            )
             raise UpstreamError("出图服务暂时不可用，请稍后再试")
         try:
             data = response.json()
