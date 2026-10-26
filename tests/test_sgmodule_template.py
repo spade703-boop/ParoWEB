@@ -45,6 +45,14 @@ def test_mitm_hostname_does_not_pin_a_single_node():
     assert "mkcn-prod-public-60001-1.dailygn.com" not in hostname
 
 
+def test_mitm_hostname_stays_within_the_known_api_host_family():
+    hostname = _line("hostname")
+    assert "volcalb" not in hostname, (
+        "no evidence that the iOS module ever sees this host; it came from one "
+        "Android capture, so decrypting the whole domain is unjustified risk"
+    )
+
+
 def test_script_patterns_match_by_path_not_host():
     for prefix in ("mysekai-capture", "mysekai-convert"):
         line = _line(prefix)
