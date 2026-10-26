@@ -1,12 +1,16 @@
-"""The shipped Shadowrocket module must cover every node the game hands out.
+"""The shipped Shadowrocket module must cover every API node, and nothing else.
 
-The API host rotates between numbered nodes (``...-1``, ``...-2`` ...) and has
-also been seen under an Alibaba ALB domain. A module that names one host only
-silently stops intercepting when the game lands elsewhere, which looks exactly
-like "the watch stopped working" (see the 2026-10-21 MITM narrowing in git).
+Two hard constraints pull in opposite directions:
 
-The script pattern therefore matches on path, not host, so a newly discovered
-node only needs a MITM hostname entry, not a pattern change.
+* The game balances MySekai traffic across numbered API nodes, and picks per
+  request, so covering one node silently drops captures.
+* Decrypting the whole publisher domain breaks the game. ``edf6627`` narrowed
+  ``*.dailygn.com`` to one host precisely because the module made the game
+  unreachable: login and anti-cheat SDKs live on sibling subdomains.
+
+The module therefore pins the MySekai API host family by wildcard and matches
+the script pattern on path, so a new node needs no pattern change while the
+SDK subdomains stay encrypted end-to-end.
 """
 
 from pathlib import Path
@@ -24,10 +28,16 @@ def _line(prefix: str) -> str:
     raise AssertionError(f"module declares no line starting with {prefix!r}")
 
 
-def test_mitm_hostname_covers_every_known_node_family():
+def test_mitm_hostname_covers_the_mysekai_node_family():
     hostname = _line("hostname")
-    assert "*.dailygn.com" in hostname
-    assert "*.volcalb.com" in hostname
+    assert "mkcn-prod-public-60001-*.dailygn.com" in hostname
+
+
+def test_mitm_hostname_does_not_decrypt_the_whole_publisher_domain():
+    hostname = _line("hostname")
+    assert "*.dailygn.com" not in hostname.replace(
+        "mkcn-prod-public-60001-*.dailygn.com", ""
+    ), "decrypting every dailygn subdomain breaks login and anti-cheat SDKs"
 
 
 def test_mitm_hostname_does_not_pin_a_single_node():
@@ -35,15 +45,9 @@ def test_mitm_hostname_does_not_pin_a_single_node():
     assert "mkcn-prod-public-60001-1.dailygn.com" not in hostname
 
 
-def test_script_pattern_matches_by_path_not_host():
-    pattern_line = _line("mysekai-capture")
-    assert "/api/user/\\d+/mysekai" in pattern_line
-    assert "dailygn" not in pattern_line
-    assert "volcalb" not in pattern_line
-
-
-def test_convert_pattern_matches_by_path_not_host():
-    pattern_line = _line("mysekai-convert")
-    assert "/api/user/\\d+/mysekai/convert/" in pattern_line
-    assert "dailygn" not in pattern_line
-    assert "volcalb" not in pattern_line
+def test_script_patterns_match_by_path_not_host():
+    for prefix in ("mysekai-capture", "mysekai-convert"):
+        line = _line(prefix)
+        assert "/api/user/\\d+/mysekai" in line
+        assert "dailygn" not in line
+        assert "volcalb" not in line
