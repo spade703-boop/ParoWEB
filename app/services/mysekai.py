@@ -38,6 +38,7 @@ from app.repositories.sqlite import SQLiteRepository
 from app.services.mysekai_window import (
     FLOWER_WINDOW,
     birthday_dates,
+    current_flower_window,
     is_exempt,
     watch_is_open,
     watch_opens_at,
@@ -47,7 +48,7 @@ from app.services.mysekai_window import (
 logger = logging.getLogger(__name__)
 
 COOKIE_NAME = "paro_mysekai"
-SESSION_TTL_SECONDS = 12 * 60 * 60
+SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 MAX_BODY_BYTES = 4 * 1024 * 1024
 HIGHLIGHT_LIMIT = 20
 AVATAR_SIZE = 96
@@ -385,6 +386,10 @@ class MysekaiService:
     def enabled(self) -> bool:
         return bool(self.settings.mysekai_password)
 
+    def _now(self) -> datetime:
+        """Current time in the game's timezone; overridable in tests."""
+        return datetime.now(_CN)
+
     def verify_password(self, password: str) -> None:
         if not self.enabled():
             raise MysekaiDisabled("入口还没有开启（未配置访问密码）")
@@ -393,9 +398,25 @@ class MysekaiService:
         if not hmac.compare_digest(actual, expected):
             raise InvalidPassword("密码不正确")
 
+    def _password_fingerprint(self) -> str:
+        """Short digest of the current password, bound into every session token.
+
+        Changing ``PARO_MYSEKAI_PASSWORD`` changes this value, so tokens issued
+        before the change stop verifying without touching the session secret.
+        """
+        digest = hmac.new(
+            self.settings.mysekai_session_secret.encode("utf-8"),
+            self.settings.mysekai_password.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return digest[:16]
+
     def issue_token(self) -> str:
         payload = json.dumps(
-            {"exp": int(time.time()) + SESSION_TTL_SECONDS},
+            {
+                "exp": int(time.time()) + SESSION_TTL_SECONDS,
+                "pw": self._password_fingerprint(),
+            },
             separators=(",", ":"),
         ).encode("utf-8")
         body = _b64url_encode(payload)
@@ -419,6 +440,10 @@ class MysekaiService:
             return False
         try:
             payload = json.loads(_b64url_decode(body))
+            if not hmac.compare_digest(
+                str(payload.get("pw", "")), self._password_fingerprint()
+            ):
+                return False
             return int(payload.get("exp", 0)) >= int(time.time())
         except (ValueError, TypeError):
             return False
@@ -1273,24 +1298,50 @@ class MysekaiService:
         )
 
     async def expire_water_watches(self) -> dict:
-        """Close every watch once the recorded birthday window has ended.
+        """Close every watch once the birthday-flower window has ended.
 
-        The render service is the authority; when it cannot be reached the
-        stored window is kept and the next poll retries. Clearing is
-        unconditional for that window, so no per-QQ grace is applied.
+        Two authorities, in order:
+
+        1. the stored window row, once ``end_ms`` has passed;
+        2. the local calendar (``mysekai_window.current_flower_window``) when no
+           row was ever written — the "open one hour before the window" path
+           only writes the watches table, so relying on the row alone left
+           those watches open forever.
+
+        A failure to reach the render service no longer aborts the check: the
+        local calendar still closes watches, and the outcome is logged either
+        way so the next incident is observable.
         """
         state = await self.fetch_birthday_state()
-        if state is None:
-            return {"cleared": 0, "reason": "birthday_state_unavailable"}
-        now_ms = int(datetime.now(_CN).timestamp() * 1000)
+        now = self._now()
+        now_ms = int(now.timestamp() * 1000)
         stored = await self.repository.get_mysekai_birthday_window()
         ended: dict | None = None
         cleared = 0
+        reason: str | None = None
+
         if stored is not None and int(stored["end_ms"]) <= now_ms:
             cleared = await self.repository.clear_mysekai_water_watches()
             await self.repository.delete_mysekai_birthday_window()
             ended = stored
-        if state.get("active"):
+            reason = "stored_window_expired"
+        elif stored is None:
+            watching = await self.repository.count_mysekai_water_watches()
+            local = current_flower_window(now)
+            if watching and local is None:
+                cleared = await self.repository.clear_mysekai_water_watches()
+                reason = "local_calendar_closed"
+            elif local is not None:
+                # Keep the window for the notification even when nothing was
+                # cleared; the bot only speaks when ``cleared`` is positive.
+                ended = {
+                    "character_id": local[0],
+                    "character_name": None,
+                    "start_ms": int(local[1].timestamp() * 1000),
+                    "end_ms": int(local[2].timestamp() * 1000),
+                }
+
+        if state is not None and state.get("active"):
             start_ms = state.get("start_ms")
             end_ms = state.get("end_ms")
             if isinstance(start_ms, int) and isinstance(end_ms, int):
@@ -1300,14 +1351,31 @@ class MysekaiService:
                     start_ms=start_ms,
                     end_ms=end_ms,
                 )
+
+        if cleared:
+            logger.info(
+                "MySekai watch expiry cleared %s watch(es): reason=%s character=%s",
+                cleared,
+                reason,
+                ended.get("character_name") if ended else None,
+            )
+        elif state is None:
+            logger.warning(
+                "MySekai watch expiry could not read birthday state; "
+                "local calendar fallback applied (cleared=%s reason=%s)",
+                cleared,
+                reason,
+            )
+
         return {
             "cleared": cleared,
+            "reason": reason or ("birthday_state_unavailable" if state is None else None),
             "character_name": ended.get("character_name") if ended else None,
             "start_ms": int(ended["start_ms"]) if ended else None,
             "end_ms": int(ended["end_ms"]) if ended else None,
-            "next_character_name": state.get("next_character_name"),
-            "next_start_ms": state.get("next_start_ms"),
-            "active": bool(state.get("active")),
+            "next_character_name": state.get("next_character_name") if state else None,
+            "next_start_ms": state.get("next_start_ms") if state else None,
+            "active": bool(state.get("active")) if state else False,
         }
 
     async def reset_convert_watches(self) -> dict:
@@ -1320,15 +1388,15 @@ class MysekaiService:
         return {"watches": watches, "slots": slots}
 
     async def bind(self, qq: str, game_user_id: str, server: str) -> dict:
-        if await self.repository.get_mysekai_binding(qq) is not None:
-            raise BindingConflict(
-                "这个 QQ 已经绑定了游戏 ID，请先解绑后再绑定",
-                code="qq_already_bound",
-            )
-        if (
-            await self.repository.get_mysekai_binding_by_game(server, game_user_id)
-            is not None
-        ):
+        existing = await self.repository.get_mysekai_binding_by_game(
+            server, game_user_id
+        )
+        if existing is not None:
+            if existing["qq"] == qq:
+                raise BindingConflict(
+                    "这个 QQ 已经绑定了这个游戏 ID；要换用其它角色请用「切换烤森角色」",
+                    code="already_bound",
+                )
             raise BindingConflict(
                 "这个游戏 ID 已经绑定了其他 QQ",
                 code="game_id_already_bound",
@@ -1359,12 +1427,19 @@ class MysekaiService:
                 "这个 QQ 已经绑定了游戏 ID，请先解绑后再绑定",
                 code="qq_already_bound",
             )
+        if conflict == "already_bound":
+            raise BindingConflict(
+                "这个 QQ 已经绑定了这个游戏 ID；要换用其它角色请用「切换烤森角色」",
+                code="already_bound",
+            )
         if conflict == "game_user_id":
             raise BindingConflict(
                 "这个游戏 ID 已经绑定了其他 QQ",
                 code="game_id_already_bound",
             )
-        binding = await self.repository.get_mysekai_binding(qq)
+        binding = await self.repository.get_mysekai_binding_by_game(
+            server, game_user_id
+        )
         if binding is None:  # pragma: no cover - insert guarantees it
             raise UpstreamError("绑定保存失败")
         return binding
@@ -1372,8 +1447,21 @@ class MysekaiService:
     async def query_binding(self, qq: str) -> dict | None:
         return await self.repository.get_mysekai_binding(qq)
 
-    async def unbind(self, qq: str) -> dict:
-        binding = await self.repository.delete_mysekai_binding(qq)
+    async def list_bindings(self, qq: str) -> list[dict]:
+        return await self.repository.list_mysekai_bindings(qq)
+
+    async def switch_role(self, qq: str, game_user_id: str) -> dict:
+        """Make one of the QQ's bound roles the default for every query."""
+        binding = await self.repository.get_mysekai_binding_by_game("cn", game_user_id)
+        if binding is None or binding["qq"] != qq:
+            raise BindingNotFound("这个 QQ 没有绑定该游戏 ID，请先绑定")
+        await self.repository.set_current_mysekai_role(
+            qq, binding["server"], game_user_id
+        )
+        return binding
+
+    async def unbind(self, qq: str, game_user_id: str | None = None) -> dict:
+        binding = await self.repository.delete_mysekai_binding(qq, game_user_id)
         if binding is None:
             raise BindingNotFound("这个 QQ 还没有绑定游戏 ID")
         return binding
@@ -1706,12 +1794,15 @@ class MysekaiService:
         event_kind: str = "manual",
         birthday_party_id: int | None = None,
     ) -> dict:
-        binding = await self.repository.get_mysekai_binding(qq)
-        if binding is None:
+        bindings = await self.repository.list_mysekai_bindings(qq)
+        if not bindings:
             raise BindingNotFound("这个 QQ 还没有绑定游戏 ID，请先在群里绑定")
-        if binding["game_user_id"] != game_user_id:
+        binding = next(
+            (row for row in bindings if row["game_user_id"] == game_user_id), None
+        )
+        if binding is None:
             raise BindingMismatch(
-                "填写的游戏 ID 与这个 QQ 的绑定不一致，已拒绝出图"
+                "填写的游戏 ID 不属于这个 QQ 的绑定，已拒绝出图"
             )
         if binding["server"] != server:
             raise BindingMismatch("绑定的服务器与本次选择不一致")

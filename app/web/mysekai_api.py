@@ -145,6 +145,21 @@ class QqRequest(BaseModel):
     qq: str = Field(pattern=QQ_PATTERN)
 
 
+class UnbindRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qq: str = Field(pattern=QQ_PATTERN)
+    #: Unbind one role; omitted means the QQ's current role.
+    game_user_id: str | None = Field(default=None, pattern=GAME_ID_PATTERN)
+
+
+class SwitchRoleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qq: str = Field(pattern=QQ_PATTERN)
+    game_user_id: str = Field(pattern=GAME_ID_PATTERN)
+
+
 class HighlightNamesRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -180,7 +195,7 @@ def _internal_auth_error(request: Request):
     return None
 
 
-def _serialize_binding(binding: dict) -> dict:
+def _serialize_binding(binding: dict, *, with_avatar: bool = True) -> dict:
     avatar = binding.get("leader_avatar")
     return {
         "qq": binding["qq"],
@@ -189,7 +204,9 @@ def _serialize_binding(binding: dict) -> dict:
         "nickname": binding.get("nickname"),
         "deck_id": binding.get("deck_id"),
         "leader_card_id": binding.get("leader_card_id"),
-        "avatar_data_url": f"data:image/png;base64,{avatar}" if avatar else None,
+        "avatar_data_url": (
+            f"data:image/png;base64,{avatar}" if with_avatar and avatar else None
+        ),
     }
 
 
@@ -767,16 +784,34 @@ async def query_binding(qq: str, request: Request):
     binding = await _mysekai(request).query_binding(qq)
     if binding is None:
         return error_response(404, "not_bound", "这个 QQ 还没有绑定游戏 ID")
-    return {"ok": True, "binding": _serialize_binding(binding)}
+    roles = await _mysekai(request).list_bindings(qq)
+    return {
+        "ok": True,
+        "binding": _serialize_binding(binding),
+        "roles": [_serialize_binding(row, with_avatar=False) for row in roles],
+    }
 
 
-@internal_router.post("/unbind")
-async def unbind(payload: QqRequest, request: Request):
+@internal_router.post("/switch-role")
+async def switch_role(payload: SwitchRoleRequest, request: Request):
+    """Point the QQ at one of its bound roles; queries follow the current one."""
     auth_error = _internal_auth_error(request)
     if auth_error is not None:
         return auth_error
     try:
-        binding = await _mysekai(request).unbind(payload.qq)
+        binding = await _mysekai(request).switch_role(payload.qq, payload.game_user_id)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return {"ok": True, "binding": _serialize_binding(binding)}
+
+
+@internal_router.post("/unbind")
+async def unbind(payload: UnbindRequest, request: Request):
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        binding = await _mysekai(request).unbind(payload.qq, payload.game_user_id)
     except MysekaiError as exc:
         return error_response(exc.status, exc.code, str(exc), exc.details)
     return {"ok": True, "binding": _serialize_binding(binding)}

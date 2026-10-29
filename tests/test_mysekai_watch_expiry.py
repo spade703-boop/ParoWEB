@@ -205,7 +205,8 @@ async def test_expiry_is_idempotent(tmp_path) -> None:
     assert second["cleared"] == 0
 
 
-async def test_expiry_does_not_clear_when_state_is_unavailable(tmp_path) -> None:
+async def test_expiry_still_clears_when_state_is_unavailable(tmp_path) -> None:
+    """A stored window that has ended is enough; the state call is not required."""
     service, repository = await _service(tmp_path)
     await repository.set_mysekai_water_watch(QQ, True)
     await _store_window(repository, datetime.now(CN) - timedelta(minutes=1))
@@ -213,9 +214,36 @@ async def test_expiry_does_not_clear_when_state_is_unavailable(tmp_path) -> None
 
     result = await service.expire_water_watches()
 
+    assert result["cleared"] == 1
+    assert await repository.is_mysekai_water_watch(QQ) is False
+    assert await repository.get_mysekai_birthday_window() is None
+
+
+async def test_expiry_uses_local_calendar_without_a_stored_window(tmp_path) -> None:
+    """Watches opened on the lead-hour path never write a window row."""
+    service, repository = await _service(tmp_path)
+    await repository.set_mysekai_water_watch(QQ, True)
+    service.fetch_birthday_state = AsyncMock(return_value=None)
+    service._now = lambda: datetime(2026, 11, 15, 12, tzinfo=CN)
+
+    result = await service.expire_water_watches()
+
+    assert result["cleared"] == 1
+    assert result["reason"] == "local_calendar_closed"
+    assert await repository.is_mysekai_water_watch(QQ) is False
+
+
+async def test_expiry_keeps_watches_inside_a_local_window(tmp_path) -> None:
+    service, repository = await _service(tmp_path)
+    await repository.set_mysekai_water_watch(QQ, True)
+    service.fetch_birthday_state = AsyncMock(return_value=None)
+    # 角色 25 的生日是 11-05，窗口从 11-02 00:00 开始。
+    service._now = lambda: datetime(2026, 11, 3, 12, tzinfo=CN)
+
+    result = await service.expire_water_watches()
+
     assert result["cleared"] == 0
     assert await repository.is_mysekai_water_watch(QQ) is True
-    assert await repository.get_mysekai_birthday_window() is not None
 
 
 async def test_expiry_closes_the_old_window_before_recording_a_new_one(tmp_path) -> None:

@@ -249,17 +249,25 @@ async def test_public_lookup_is_not_available(client: httpx.AsyncClient) -> None
     assert response.status_code == 404
 
 
-async def test_binding_is_one_to_one_until_unbound(client: httpx.AsyncClient) -> None:
+async def test_a_qq_can_bind_several_roles(client: httpx.AsyncClient) -> None:
     await _bind(client)
     headers = {"Authorization": f"Bearer {BOT_TOKEN}"}
 
-    same_qq = await client.post(
+    second = await client.post(
         "/internal/v1/mysekai/bind",
         json={"qq": QQ, "game_user_id": SECOND_GAME_ID, "server": "cn"},
         headers=headers,
     )
-    assert same_qq.status_code == 409
-    assert same_qq.json()["error"]["code"] == "qq_already_bound"
+    assert second.status_code == 200
+    assert second.json()["binding"]["game_user_id"] == SECOND_GAME_ID
+
+    same_role = await client.post(
+        "/internal/v1/mysekai/bind",
+        json={"qq": QQ, "game_user_id": GAME_ID, "server": "cn"},
+        headers=headers,
+    )
+    assert same_role.status_code == 409
+    assert same_role.json()["error"]["code"] == "already_bound"
 
     same_game = await client.post(
         "/internal/v1/mysekai/bind",
@@ -269,12 +277,32 @@ async def test_binding_is_one_to_one_until_unbound(client: httpx.AsyncClient) ->
     assert same_game.status_code == 409
     assert same_game.json()["error"]["code"] == "game_id_already_bound"
 
+    query = await client.get(f"/internal/v1/mysekai/query?qq={QQ}", headers=headers)
+    assert query.json()["binding"]["game_user_id"] == GAME_ID
+    assert len(query.json()["roles"]) == 2
+
+    switched = await client.post(
+        "/internal/v1/mysekai/switch-role",
+        json={"qq": QQ, "game_user_id": SECOND_GAME_ID},
+        headers=headers,
+    )
+    assert switched.status_code == 200
+    query = await client.get(f"/internal/v1/mysekai/query?qq={QQ}", headers=headers)
+    assert query.json()["binding"]["game_user_id"] == SECOND_GAME_ID
+
     unbound = await client.post(
         "/internal/v1/mysekai/unbind",
-        json={"qq": QQ},
+        json={"qq": QQ, "game_user_id": SECOND_GAME_ID},
         headers=headers,
     )
     assert unbound.status_code == 200
+    query = await client.get(f"/internal/v1/mysekai/query?qq={QQ}", headers=headers)
+    assert query.json()["binding"]["game_user_id"] == GAME_ID
+    assert len(query.json()["roles"]) == 1
+
+    await client.post(
+        "/internal/v1/mysekai/unbind", json={"qq": QQ}, headers=headers
+    )
     rebound = await client.post(
         "/internal/v1/mysekai/bind",
         json={"qq": "987654321", "game_user_id": GAME_ID, "server": "cn"},

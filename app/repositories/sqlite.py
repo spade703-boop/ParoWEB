@@ -59,8 +59,9 @@ CREATE INDEX IF NOT EXISTS idx_results_batch_position
 
 -- MySekai 群友入口：QQ ↔ 游戏 ID 绑定，以及每次上传的审计记录。
 -- 绑定资料只存公开信息（昵称/队长卡/头像），不存抓包内容。
+-- 一个 QQ 可以绑多个角色；同一个游戏 ID 仍只能属于一个 QQ。
 CREATE TABLE IF NOT EXISTS mysekai_bindings (
-    qq TEXT PRIMARY KEY,
+    qq TEXT NOT NULL,
     server TEXT NOT NULL,
     game_user_id TEXT NOT NULL,
     nickname TEXT,
@@ -69,12 +70,21 @@ CREATE TABLE IF NOT EXISTS mysekai_bindings (
     leader_avatar TEXT,
     profile_image_type TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (qq, server, game_user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_mysekai_bindings_game
     ON mysekai_bindings(server, game_user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_mysekai_bindings_game
     ON mysekai_bindings(server, game_user_id);
+
+-- 每个 QQ 当前查询的角色；浇水监听、高亮等配置仍按 QQ 共享。
+CREATE TABLE IF NOT EXISTS mysekai_current_role (
+    qq TEXT PRIMARY KEY,
+    server TEXT NOT NULL,
+    game_user_id TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS mysekai_uploads (
     id TEXT PRIMARY KEY,
@@ -266,6 +276,7 @@ class SQLiteRepository:
         async with self.connect() as connection:
             await connection.execute("PRAGMA journal_mode = WAL")
             await connection.executescript(SCHEMA)
+            await self._migrate_bindings_to_multi_role(connection)
             # CREATE TABLE IF NOT EXISTS 不会给已有库补列，老库要靠这里补上。
             # 用 PRAGMA 判断而不是吞 duplicate column 异常：并发下吞异常会把真正的
             # SQLITE_READONLY 一起吞掉，以后没法排查。
@@ -717,6 +728,150 @@ class SQLiteRepository:
             },
         }
 
+    async def _migrate_bindings_to_multi_role(self, connection) -> None:
+        """Rebuild ``mysekai_bindings`` with a composite key, once.
+
+        The original table keyed on ``qq`` alone, so one QQ could hold a single
+        role. SQLite cannot alter a primary key, so the table is rebuilt and the
+        existing rows become each QQ's first (and current) role.
+
+        Safety: the rebuild runs inside one transaction (SQLite DDL is
+        transactional), so a crash rolls back to the old table. A previous
+        interrupted run that left ``mysekai_bindings_legacy`` behind is repaired
+        first, and a snapshot of the database is written next to it before any
+        table is touched.
+        """
+        if await self._has_table(connection, "mysekai_bindings_legacy"):
+            await self._recover_interrupted_binding_migration(connection)
+
+        rows = await (
+            await connection.execute("PRAGMA table_info(mysekai_bindings)")
+        ).fetchall()
+        primary_key = {row["name"]: int(row["pk"] or 0) for row in rows}
+        primary_columns = {name for name, position in primary_key.items() if position}
+        if primary_columns != {"qq"}:
+            return
+
+        await self._snapshot_before_binding_migration(connection)
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            await connection.execute(
+                "ALTER TABLE mysekai_bindings RENAME TO mysekai_bindings_legacy"
+            )
+            await connection.execute(
+                """
+                CREATE TABLE mysekai_bindings (
+                    qq TEXT NOT NULL,
+                    server TEXT NOT NULL,
+                    game_user_id TEXT NOT NULL,
+                    nickname TEXT,
+                    deck_id INTEGER,
+                    leader_card_id INTEGER,
+                    leader_avatar TEXT,
+                    profile_image_type TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (qq, server, game_user_id)
+                )
+                """
+            )
+            await connection.execute(
+                """
+                INSERT INTO mysekai_bindings(
+                    qq, server, game_user_id, nickname, deck_id, leader_card_id,
+                    leader_avatar, profile_image_type, created_at, updated_at
+                )
+                SELECT
+                    qq, server, game_user_id, nickname, deck_id, leader_card_id,
+                    leader_avatar, profile_image_type, created_at, updated_at
+                  FROM mysekai_bindings_legacy
+                """
+            )
+            await connection.execute("DROP TABLE mysekai_bindings_legacy")
+            await connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_mysekai_bindings_game
+                    ON mysekai_bindings(server, game_user_id)
+                """
+            )
+            await connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_mysekai_bindings_game
+                    ON mysekai_bindings(server, game_user_id)
+                """
+            )
+            await connection.execute(
+                """
+                INSERT OR REPLACE INTO mysekai_current_role(
+                    qq, server, game_user_id, updated_at
+                )
+                SELECT qq, server, game_user_id, updated_at FROM mysekai_bindings
+                """
+            )
+            await connection.commit()
+        except Exception:
+            await connection.rollback()
+            raise
+
+    async def _has_table(self, connection, name: str) -> bool:
+        row = await (
+            await connection.execute(
+                """
+                SELECT 1 FROM sqlite_master
+                 WHERE type = 'table' AND name = ?
+                """,
+                (name,),
+            )
+        ).fetchone()
+        return row is not None
+
+    async def _recover_interrupted_binding_migration(self, connection) -> None:
+        """A previous run stopped after RENAME: move the rows back, drop the husk.
+
+        ``INSERT OR IGNORE`` keeps anything the new table already received, so
+        this is safe both mid-crash and after a completed-but-uncleaned run.
+        """
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            await connection.execute(
+                """
+                INSERT OR IGNORE INTO mysekai_bindings(
+                    qq, server, game_user_id, nickname, deck_id, leader_card_id,
+                    leader_avatar, profile_image_type, created_at, updated_at
+                )
+                SELECT
+                    qq, server, game_user_id, nickname, deck_id, leader_card_id,
+                    leader_avatar, profile_image_type, created_at, updated_at
+                  FROM mysekai_bindings_legacy
+                """
+            )
+            await connection.execute("DROP TABLE mysekai_bindings_legacy")
+            await connection.execute(
+                """
+                INSERT OR REPLACE INTO mysekai_current_role(
+                    qq, server, game_user_id, updated_at
+                )
+                SELECT qq, server, game_user_id, updated_at FROM mysekai_bindings
+                """
+            )
+            await connection.commit()
+        except Exception:
+            await connection.rollback()
+            raise
+
+    async def _snapshot_before_binding_migration(self, connection) -> None:
+        """Write ``<db>.pre-multi-role.bak`` once; never block the migration."""
+        backup = self.database_path.with_name(
+            self.database_path.name + ".pre-multi-role.bak"
+        )
+        if backup.exists():
+            return
+        try:
+            await connection.execute("VACUUM INTO ?", (str(backup),))
+        except Exception:
+            # 备份只是额外保险；迁移本身有事务，失败也回滚到旧表。
+            pass
+
     async def create_mysekai_binding(
         self,
         *,
@@ -733,14 +888,18 @@ class SQLiteRepository:
         async with self.connect() as connection:
             await connection.execute("BEGIN IMMEDIATE")
             try:
-                qq_row = await (
+                same_row = await (
                     await connection.execute(
-                        "SELECT 1 FROM mysekai_bindings WHERE qq = ?", (qq,)
+                        """
+                        SELECT 1 FROM mysekai_bindings
+                         WHERE qq = ? AND server = ? AND game_user_id = ?
+                        """,
+                        (qq, server, game_user_id),
                     )
                 ).fetchone()
-                if qq_row:
+                if same_row:
                     await connection.rollback()
-                    return "qq"
+                    return "already_bound"
                 game_row = await (
                     await connection.execute(
                         "SELECT 1 FROM mysekai_bindings WHERE server = ? AND game_user_id = ?",
@@ -771,6 +930,17 @@ class SQLiteRepository:
                         now,
                     ),
                 )
+                # The first binding becomes the current role; later ones only do
+                # so when the player switches explicitly.
+                await connection.execute(
+                    """
+                    INSERT INTO mysekai_current_role(
+                        qq, server, game_user_id, updated_at
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(qq) DO NOTHING
+                    """,
+                    (qq, server, game_user_id, now),
+                )
                 await connection.commit()
                 return None
             except Exception:
@@ -778,13 +948,85 @@ class SQLiteRepository:
                 raise
 
     async def get_mysekai_binding(self, qq: str) -> dict | None:
+        """The QQ's current role: the explicit choice, else the newest binding."""
         async with self.connect() as connection:
             row = await (
                 await connection.execute(
-                    "SELECT * FROM mysekai_bindings WHERE qq = ?", (qq,)
+                    """
+                    SELECT b.*
+                      FROM mysekai_bindings b
+                      JOIN mysekai_current_role c
+                        ON c.qq = b.qq
+                       AND c.server = b.server
+                       AND c.game_user_id = b.game_user_id
+                     WHERE b.qq = ?
+                    """,
+                    (qq,),
                 )
             ).fetchone()
+            if row is None:
+                row = await (
+                    await connection.execute(
+                        """
+                        SELECT * FROM mysekai_bindings
+                         WHERE qq = ?
+                         ORDER BY updated_at DESC
+                         LIMIT 1
+                        """,
+                        (qq,),
+                    )
+                ).fetchone()
         return dict(row) if row else None
+
+    async def list_mysekai_bindings(self, qq: str) -> list[dict]:
+        """Every role this QQ has bound, oldest first.
+
+        The order is the u1/u2 numbering the group commands show, so it must not
+        depend on which role is current or which was updated last.
+        """
+        async with self.connect() as connection:
+            rows = await (
+                await connection.execute(
+                    """
+                    SELECT * FROM mysekai_bindings
+                     WHERE qq = ?
+                     ORDER BY created_at ASC, game_user_id ASC
+                    """,
+                    (qq,),
+                )
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    async def set_current_mysekai_role(
+        self, qq: str, server: str, game_user_id: str
+    ) -> bool:
+        """Point the QQ at one of its bound roles; False when not bound."""
+        async with self.connect() as connection:
+            row = await (
+                await connection.execute(
+                    """
+                    SELECT 1 FROM mysekai_bindings
+                     WHERE qq = ? AND server = ? AND game_user_id = ?
+                    """,
+                    (qq, server, game_user_id),
+                )
+            ).fetchone()
+            if row is None:
+                return False
+            await connection.execute(
+                """
+                INSERT INTO mysekai_current_role(
+                    qq, server, game_user_id, updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(qq) DO UPDATE SET
+                    server = excluded.server,
+                    game_user_id = excluded.game_user_id,
+                    updated_at = excluded.updated_at
+                """,
+                (qq, server, game_user_id, utc_now()),
+            )
+            await connection.commit()
+        return True
 
     async def get_mysekai_binding_by_game(
         self, server: str, game_user_id: str
@@ -807,14 +1049,21 @@ class SQLiteRepository:
         leader_card_id: int | None,
         leader_avatar: str | None,
         profile_image_type: str | None,
+        game_user_id: str | None = None,
     ) -> dict | None:
+        target = game_user_id
+        if target is None:
+            current = await self.get_mysekai_binding(qq)
+            target = current["game_user_id"] if current else None
+        if target is None:
+            return None
         async with self.connect() as connection:
             await connection.execute(
                 """
                 UPDATE mysekai_bindings
                 SET nickname = ?, deck_id = ?, leader_card_id = ?,
                     leader_avatar = ?, profile_image_type = ?, updated_at = ?
-                WHERE qq = ?
+                WHERE qq = ? AND game_user_id = ?
                 """,
                 (
                     nickname,
@@ -824,31 +1073,98 @@ class SQLiteRepository:
                     profile_image_type,
                     utc_now(),
                     qq,
+                    target,
                 ),
             )
             row = await (
                 await connection.execute(
-                    "SELECT * FROM mysekai_bindings WHERE qq = ?", (qq,)
+                    """
+                    SELECT * FROM mysekai_bindings
+                     WHERE qq = ? AND game_user_id = ?
+                    """,
+                    (qq, target),
                 )
             ).fetchone()
             await connection.commit()
         return dict(row) if row else None
 
-    async def delete_mysekai_binding(self, qq: str) -> dict | None:
+    async def delete_mysekai_binding(
+        self, qq: str, game_user_id: str | None = None
+    ) -> dict | None:
+        """Unbind one role (default: the current one) and keep the rest."""
         async with self.connect() as connection:
             await connection.execute("BEGIN IMMEDIATE")
             try:
+                current = await (
+                    await connection.execute(
+                        "SELECT game_user_id FROM mysekai_current_role WHERE qq = ?",
+                        (qq,),
+                    )
+                ).fetchone()
+                current_id = current["game_user_id"] if current else None
+                target = game_user_id or current_id
+                if target is None:
+                    newest = await (
+                        await connection.execute(
+                            """
+                            SELECT game_user_id FROM mysekai_bindings
+                             WHERE qq = ?
+                             ORDER BY updated_at DESC LIMIT 1
+                            """,
+                            (qq,),
+                        )
+                    ).fetchone()
+                    target = newest["game_user_id"] if newest else None
+                if target is None:
+                    await connection.rollback()
+                    return None
                 row = await (
                     await connection.execute(
-                        "SELECT * FROM mysekai_bindings WHERE qq = ?", (qq,)
+                        """
+                        SELECT * FROM mysekai_bindings
+                         WHERE qq = ? AND game_user_id = ?
+                        """,
+                        (qq, target),
                     )
                 ).fetchone()
                 if row is None:
                     await connection.rollback()
                     return None
                 await connection.execute(
-                    "DELETE FROM mysekai_bindings WHERE qq = ?", (qq,)
+                    """
+                    DELETE FROM mysekai_bindings
+                     WHERE qq = ? AND game_user_id = ?
+                    """,
+                    (qq, target),
                 )
+                remaining = await (
+                    await connection.execute(
+                        """
+                        SELECT server, game_user_id FROM mysekai_bindings
+                         WHERE qq = ?
+                         ORDER BY updated_at DESC LIMIT 1
+                        """,
+                        (qq,),
+                    )
+                ).fetchone()
+                if remaining is None:
+                    await connection.execute(
+                        "DELETE FROM mysekai_current_role WHERE qq = ?", (qq,)
+                    )
+                elif target == current_id:
+                    # 删掉的正是当前角色：回退到最近的一个。
+                    await connection.execute(
+                        """
+                        INSERT INTO mysekai_current_role(
+                            qq, server, game_user_id, updated_at
+                        ) VALUES (?, ?, ?, ?)
+                        ON CONFLICT(qq) DO UPDATE SET
+                            server = excluded.server,
+                            game_user_id = excluded.game_user_id,
+                            updated_at = excluded.updated_at
+                        """,
+                        (qq, remaining["server"], remaining["game_user_id"], utc_now()),
+                    )
                 await connection.commit()
                 return dict(row)
             except Exception:
@@ -974,6 +1290,14 @@ class SQLiteRepository:
             ).fetchone()
             await connection.execute("DELETE FROM mysekai_water_watches")
             await connection.commit()
+        return int(row[0]) if row else 0
+
+    async def count_mysekai_water_watches(self) -> int:
+        """How many QQs currently have a watering watch open."""
+        async with self.connect() as connection:
+            row = await (
+                await connection.execute("SELECT COUNT(*) FROM mysekai_water_watches")
+            ).fetchone()
         return int(row[0]) if row else 0
 
     async def set_mysekai_birthday_window(

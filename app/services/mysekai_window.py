@@ -45,6 +45,29 @@ def watch_is_open(now: datetime, *, start: datetime, end: datetime) -> bool:
     return watch_opens_at(start) <= now < end
 
 
+def current_flower_window(
+    now: datetime,
+) -> tuple[int, datetime, datetime] | None:
+    """The birthday-flower window containing ``now``, if any.
+
+    Returns ``(character_id, start, end)``. A window runs from 00:00 three days
+    before a character's birthday to 00:00 on the birthday itself. Used as the
+    local fallback when the render service cannot be asked: a watch opened on
+    the "one hour before" path is closed by the calendar even if no ``active``
+    window was ever observed.
+    """
+    for year in (now.year - 1, now.year, now.year + 1):
+        for character_id, (month, day) in BIRTHDAYS.items():
+            try:
+                birthday = datetime(year, month, day, tzinfo=CN)
+            except ValueError:
+                continue
+            start = birthday - FLOWER_WINDOW
+            if start <= now < birthday:
+                return character_id, start, birthday
+    return None
+
+
 def birthday_dates(year: int) -> frozenset[date]:
     """Every character birthday in ``year`` as calendar dates."""
     return frozenset(date(year, month, day) for month, day in BIRTHDAYS.values())
