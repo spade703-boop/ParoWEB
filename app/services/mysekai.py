@@ -51,6 +51,8 @@ COOKIE_NAME = "paro_mysekai"
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 MAX_BODY_BYTES = 4 * 1024 * 1024
 HIGHLIGHT_LIMIT = 20
+#: 一个 QQ 最多绑几个游戏角色；群指令用 u1..u3 指代。
+MAX_ROLES_PER_QQ = 3
 AVATAR_SIZE = 96
 CARDS_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 
@@ -1403,6 +1405,11 @@ class MysekaiService:
                 "这个游戏 ID 已经绑定了其他 QQ",
                 code="game_id_already_bound",
             )
+        if len(await self.repository.list_mysekai_bindings(qq)) >= MAX_ROLES_PER_QQ:
+            raise BindingConflict(
+                f"一个 QQ 最多绑定 {MAX_ROLES_PER_QQ} 个角色，请先解绑一个",
+                code="role_limit_reached",
+            )
         profile = await self.fetch_haruki_profile(game_user_id, server)
         await self.repository.set_mysekai_data_times(
             server=server,
@@ -1571,11 +1578,24 @@ class MysekaiService:
         except (ValueError, KeyError, TypeError):
             raise UpstreamError("出图服务返回了无法解析的数据") from None
 
-    async def birthday_progress_image(self, qq: str) -> bytes:
-        """The stored birthday progress, rendered by the pipeline."""
+    async def birthday_progress_image(
+        self, qq: str, game_user_id: str | None = None
+    ) -> bytes:
+        """The stored birthday progress, rendered by the pipeline.
+
+        ``game_user_id`` selects one of the QQ's roles; omitting it uses the
+        current one, same as every other query command.
+        """
         binding = await self.repository.get_mysekai_binding(qq)
         if binding is None:
             raise BindingNotFound("这个 QQ 还没有绑定游戏 ID，请先绑定")
+        if game_user_id and game_user_id != binding["game_user_id"]:
+            roles = await self.repository.list_mysekai_bindings(qq)
+            binding = next(
+                (row for row in roles if row["game_user_id"] == game_user_id), None
+            )
+            if binding is None:
+                raise BindingNotFound("这个游戏 ID 不属于这个 QQ 的绑定")
         state = await self.repository.get_mysekai_birthday_state(
             binding["server"], binding["game_user_id"]
         )
@@ -1698,6 +1718,18 @@ class MysekaiService:
         )
         return {"ok": True, "updated": True, "slots": len(slots)}
 
+    async def _role_label(self, qq: str, game_user_id: str) -> str | None:
+        """``u1``/``u2``… for this role, matching what ``查询MySekai绑定`` shows.
+
+        Returns ``None`` when the role is not bound, so the caller can omit the
+        label instead of printing a wrong number.
+        """
+        bindings = await self.repository.list_mysekai_bindings(qq)
+        for index, row in enumerate(bindings, 1):
+            if row["game_user_id"] == game_user_id:
+                return f"u{index}"
+        return None
+
     async def _push(
         self,
         *,
@@ -1717,6 +1749,7 @@ class MysekaiService:
             "qq": qq,
             "game_user_id": game_user_id,
             "nickname": nickname,
+            "role_label": await self._role_label(qq, game_user_id),
             "map_png_base64": map_png_base64,
             "card_png_base64": card_png_base64,
             "birthday": birthday,
@@ -1768,6 +1801,7 @@ class MysekaiService:
             "qq": qq,
             "game_user_id": game_user_id,
             "nickname": nickname,
+            "role_label": await self._role_label(qq, game_user_id),
             "birthday": birthday,
             "rare_png_base64": base64.b64encode(rare_png).decode("ascii") if rare_png is not None else None,
             "empty_result": rare_png is None,

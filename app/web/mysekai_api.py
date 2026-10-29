@@ -160,6 +160,14 @@ class SwitchRoleRequest(BaseModel):
     game_user_id: str = Field(pattern=GAME_ID_PATTERN)
 
 
+class BirthdayProgressRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qq: str = Field(pattern=QQ_PATTERN)
+    #: Omitted means the QQ's current role.
+    game_user_id: str | None = Field(default=None, pattern=GAME_ID_PATTERN)
+
+
 class HighlightNamesRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -315,12 +323,27 @@ async def water_watch_status(payload: WatchQueryRequest, request: Request):
     stats = await service.repository.mysekai_water_round_stats(
         binding["game_user_id"], since=enabled_at
     )
+    # 监听仍是 QQ 一条开关，但轮次本来就是按角色分开记的：一并给出 uN 明细，
+    # 群里才能看出是哪个角色浇的。
+    bindings = await service.repository.list_mysekai_bindings(payload.qq)
+    roles = []
+    for index, row in enumerate(bindings, 1):
+        roles.append(
+            {
+                "label": f"u{index}",
+                "game_user_id": row["game_user_id"],
+                **(await service.repository.mysekai_water_round_stats(
+                    row["game_user_id"], since=enabled_at
+                )),
+            }
+        )
     return {
         "ok": True,
         "bound": True,
         "enabled": enabled,
         "enabled_at": enabled_at,
         "game_user_id": binding["game_user_id"],
+        "roles": roles,
         **stats,
     }
 
@@ -384,13 +407,15 @@ async def material_catalog(request: Request):
 
 
 @internal_router.post("/birthday-progress")
-async def birthday_progress(payload: QqRequest, request: Request):
-    """The birthday party progress strip for one QQ."""
+async def birthday_progress(payload: BirthdayProgressRequest, request: Request):
+    """The birthday party progress strip for one QQ (optionally one role)."""
     auth_error = _internal_auth_error(request)
     if auth_error is not None:
         return auth_error
     try:
-        png = await _mysekai(request).birthday_progress_image(payload.qq)
+        png = await _mysekai(request).birthday_progress_image(
+            payload.qq, payload.game_user_id
+        )
     except MysekaiError as exc:
         return error_response(exc.status, exc.code, str(exc), exc.details)
     return Response(content=png, media_type="image/png")

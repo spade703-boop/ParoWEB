@@ -311,6 +311,26 @@ async def test_a_qq_can_bind_several_roles(client: httpx.AsyncClient) -> None:
     assert rebound.status_code == 200
 
 
+async def test_a_qq_stops_at_three_roles(client: httpx.AsyncClient) -> None:
+    await _bind(client)
+    headers = {"Authorization": f"Bearer {BOT_TOKEN}"}
+    for game_id in ("7440000000000000001", "7440000000000000002"):
+        response = await client.post(
+            "/internal/v1/mysekai/bind",
+            json={"qq": QQ, "game_user_id": game_id, "server": "cn"},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+
+    fourth = await client.post(
+        "/internal/v1/mysekai/bind",
+        json={"qq": QQ, "game_user_id": "7440000000000000003", "server": "cn"},
+        headers=headers,
+    )
+    assert fourth.status_code == 409
+    assert fourth.json()["error"]["code"] == "role_limit_reached"
+
+
 async def test_submit_rejects_unbound_and_mismatch(
     client: httpx.AsyncClient,
 ) -> None:
