@@ -9,10 +9,16 @@ const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const QQ_RE = /^\d{5,12}$/;
 const GAME_ID_RE = /^\d{15,25}$/;
 
-/* QQ 号与游戏 ID 存在本机 cookie 里，方便下次自动填回；清 cookie 即失效。 */
-const COOKIE_QQ = "paro_mysekai_qq";
-const COOKIE_GAME_ID = "paro_mysekai_gid";
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 180;
+/* QQ 号与游戏 ID 成对存在本机 localStorage，最多 10 条，方便下次联想。
+   旧版本用 cookie 存单值，初始化时迁移一次后删除。 */
+const HISTORY_KEY = "paro_mysekai_history";
+const HISTORY_LIMIT = 10;
+const LEGACY_COOKIE_QQ = "paro_mysekai_qq";
+const LEGACY_COOKIE_GAME_ID = "paro_mysekai_gid";
+
+function digitsOf(value) {
+  return String(value || "").replace(/\D/g, "");
+}
 
 function readCookie(name) {
   const prefix = `${name}=`;
@@ -23,19 +29,143 @@ function readCookie(name) {
   return "";
 }
 
-function saveInput(name, value) {
-  const digits = String(value || "").replace(/\D/g, "");
-  const secure = location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = digits
-    ? `${name}=${digits}; Path=/; Max-Age=${COOKIE_MAX_AGE}; SameSite=Lax${secure}`
-    : `${name}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+function deleteCookie(name) {
+  document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax`;
+}
+
+function readHistory() {
+  let raw;
+  try {
+    raw = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => ({
+      qq: digitsOf(entry && entry.qq),
+      // 兼容早期写错键名的记录：写入端统一用 game_user_id。
+      gameUserId: digitsOf(
+        (entry && (entry.game_user_id || entry.gameUserId)) || ""
+      ),
+      at: Number(entry && entry.at) || 0,
+    }))
+    .filter((entry) => entry.qq);
+}
+
+function writeHistory(entries) {
+  try {
+    // 存储层固定使用 game_user_id；内部对象用 gameUserId，转换只在这里做。
+    const stored = entries.slice(0, HISTORY_LIMIT).map((entry) => ({
+      qq: entry.qq,
+      game_user_id: entry.gameUserId,
+      at: entry.at,
+    }));
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(stored));
+  } catch {
+    // 隐私模式或存储被禁用时静默降级：不保存历史，不影响上传。
+  }
+}
+
+function migrateLegacyCookies() {
+  const qq = digitsOf(readCookie(LEGACY_COOKIE_QQ));
+  const gameId = digitsOf(readCookie(LEGACY_COOKIE_GAME_ID));
+  if (!qq && !gameId) return;
+  if (qq) {
+    const entries = readHistory();
+    if (!entries.some((entry) => entry.qq === qq)) {
+      entries.unshift({ qq, gameUserId: gameId, at: Date.now() });
+      writeHistory(entries);
+    }
+  }
+  deleteCookie(LEGACY_COOKIE_QQ);
+  deleteCookie(LEGACY_COOKIE_GAME_ID);
+}
+
+function rememberEntry(qq, gameUserId) {
+  const entries = readHistory().filter((entry) => entry.qq !== qq);
+  entries.unshift({ qq, gameUserId, at: Date.now() });
+  writeHistory(entries);
+  renderHistory();
+}
+
+function forgetEntry(qq) {
+  writeHistory(readHistory().filter((entry) => entry.qq !== qq));
+  renderHistory();
+}
+
+function applyEntry(entry, { focus = true } = {}) {
+  el.qq.value = entry.qq;
+  if (entry.gameUserId) el.gameId.value = entry.gameUserId;
+  el.uploadStatus.classList.remove("is-ok");
+  if (focus) el.qq.focus();
+}
+
+function renderHistory() {
+  const entries = readHistory();
+  el.qqHistory.innerHTML = "";
+  el.gameIdHistory.innerHTML = "";
+  el.recentEntries.innerHTML = "";
+
+  for (const entry of entries) {
+    const option = document.createElement("option");
+    option.value = entry.qq;
+    if (entry.gameUserId) option.label = `游戏 ID ${entry.gameUserId}`;
+    el.qqHistory.appendChild(option);
+
+    if (entry.gameUserId) {
+      const idOption = document.createElement("option");
+      idOption.value = entry.gameUserId;
+      el.gameIdHistory.appendChild(idOption);
+    }
+  }
+
+  if (!entries.length) {
+    el.recentEntries.classList.add("hidden");
+    return;
+  }
+  el.recentEntries.classList.remove("hidden");
+
+  for (const entry of entries.slice(0, 5)) {
+    const chip = document.createElement("span");
+    chip.className = "recent-chip";
+    chip.tabIndex = 0;
+    chip.setAttribute("role", "button");
+    chip.title = entry.gameUserId
+      ? `填充 QQ ${entry.qq} 与游戏 ID ${entry.gameUserId}`
+      : `填充 QQ ${entry.qq}`;
+
+    const label = document.createElement("span");
+    label.textContent = entry.gameUserId ? `${entry.qq} · ${entry.gameUserId}` : entry.qq;
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "recent-chip__remove";
+    remove.setAttribute("aria-label", `删除记录 ${entry.qq}`);
+    remove.textContent = "×";
+
+    chip.addEventListener("click", (event) => {
+      if (event.target !== remove) applyEntry(entry);
+    });
+    chip.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        applyEntry(entry);
+      }
+    });
+    remove.addEventListener("click", (event) => {
+      event.stopPropagation();
+      forgetEntry(entry.qq);
+    });
+
+    chip.append(label, remove);
+    el.recentEntries.appendChild(chip);
+  }
 }
 
 function restoreInputs() {
-  const qq = readCookie(COOKIE_QQ);
-  const gameId = readCookie(COOKIE_GAME_ID);
-  if (qq) el.qq.value = qq;
-  if (gameId) el.gameId.value = gameId;
+  const latest = readHistory()[0];
+  if (latest) applyEntry(latest, { focus: false });
 }
 
 const state = {
@@ -56,6 +186,9 @@ const el = {
   uploadForm: $("#upload-form"),
   qq: $("#qq"),
   gameId: $("#game-id"),
+  qqHistory: $("#qq-history"),
+  gameIdHistory: $("#game-id-history"),
+  recentEntries: $("#recent-entries"),
   dropZone: $("#drop-zone"),
   dropTitle: $("#drop-title"),
   fileInput: $("#file-input"),
@@ -206,12 +339,13 @@ el.gateForm.addEventListener("submit", async (event) => {
 /* ------------------------------------------------------------------ 本机记忆 */
 
 el.qq.addEventListener("input", () => {
-  saveInput(COOKIE_QQ, el.qq.value.trim());
+  // 从历史里选中已记录的 QQ 时，同时带出对应的游戏 ID。
+  const entry = readHistory().find((item) => item.qq === digitsOf(el.qq.value));
+  if (entry && entry.gameUserId) el.gameId.value = entry.gameUserId;
   el.uploadStatus.classList.remove("is-ok");
 });
 
 el.gameId.addEventListener("input", () => {
-  saveInput(COOKIE_GAME_ID, el.gameId.value.trim());
   el.uploadStatus.classList.remove("is-ok");
 });
 
@@ -294,11 +428,23 @@ function renderWatchLine(watch) {
   if (tone) el.watchLine.classList.add(tone);
 }
 
+/* 摘要卡有生日时 916×1188、没有生日时 916×1076；按实际图片比例显示，避免拉伸。 */
+function syncFrameRatio(img) {
+  const frame = img && img.closest(".image-frame");
+  if (!frame) return;
+  const apply = () => {
+    if (img.naturalWidth && img.naturalHeight) {
+      frame.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+    }
+  };
+  if (img.complete) apply();
+  else img.addEventListener("load", apply, { once: true });
+}
+
 function renderResult(data) {
   el.resultLoading.classList.add("hidden");
   el.resultEmpty.classList.add("hidden");
   el.resultContent.classList.remove("hidden");
-
   const profile = data.profile || {};
   const delivery = data.kind === "birthday_delivery";
   const toggle = (node, hidden) => {
@@ -326,6 +472,7 @@ function renderResult(data) {
   if (!delivery) {
     el.resultMap.src = data.map;
     el.resultCard.src = data.card;
+    syncFrameRatio(el.resultCard);
     el.downloadMap.href = data.map;
     el.downloadCard.href = data.card;
   }
@@ -399,6 +546,7 @@ el.uploadForm.addEventListener("submit", async (event) => {
       }),
     });
     renderResult(data);
+    rememberEntry(qq, gameId);
   } catch (error) {
     showEmpty();
     setFormStatus(error.message);
@@ -430,6 +578,8 @@ async function upgradeIosLink() {
 /* ------------------------------------------------------------------ boot */
 
 async function initialize() {
+  migrateLegacyCookies();
+  renderHistory();
   restoreInputs();
   try {
     const data = await api("/api/v1/mysekai/session");

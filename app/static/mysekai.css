@@ -91,6 +91,50 @@
   cursor: not-allowed;
 }
 
+/* ---------- 最近输入 ---------- */
+
+.recent-entries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.recent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper-deep);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: border-color .15s ease, color .15s ease;
+}
+.recent-chip:hover,
+.recent-chip:focus-visible {
+  border-color: var(--toya);
+  color: var(--ink);
+  outline: none;
+}
+.recent-chip__remove {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--faint);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.recent-chip__remove:hover { background: var(--line); color: var(--ink); }
+
 .form-status.is-ok { color: #2f7d4f; }
 
 .segmented--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -354,7 +398,8 @@
 .image-frame--card {
   max-width: 560px;
   margin-inline: auto;
-  aspect-ratio: 916 / 1188;
+  /* 无生日时摘要卡是 916×1076，有生日时 916×1188；JS 会按实际图片尺寸覆盖。 */
+  aspect-ratio: 916 / 1076;
 }
 .image-frame--birthday {
   max-width: 858px;
