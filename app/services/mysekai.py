@@ -985,7 +985,9 @@ class MysekaiService:
             raise UpstreamError("内部接口未配置，无法更新主数据")
         url = f"{self.settings.mysekai_service_url}/master/update"
         try:
-            async with self._client(timeout=180.0) as client:
+            # 上游归档在国内要十几秒，出图服务自己的超时是 120s；这里必须留出
+            # 解析与重载的时间，否则会出现「服务端已经更新完、前端却超时」。
+            async with self._client(timeout=300.0) as client:
                 response = await client.post(
                     url, json={"region": region}, headers={"X-Mysekai-Admin": token}
                 )
