@@ -1861,6 +1861,9 @@ class MysekaiService:
             )
             updated = await self.repository.update_mysekai_binding_profile(
                 qq=qq,
+                # 必须锁定本次上传的角色：不传就会更新「当前角色」，
+                # 返回行还会把下面的 binding 覆盖成另一个角色。
+                game_user_id=game_user_id,
                 nickname=refreshed.nickname,
                 deck_id=refreshed.deck_id,
                 leader_card_id=refreshed.leader_card_id,
@@ -1869,6 +1872,8 @@ class MysekaiService:
             )
             if updated is None:
                 raise BindingNotFound("这个 QQ 的绑定已经解除，请重新绑定后再上传")
+            if updated.get("game_user_id") != game_user_id:
+                raise UpstreamError("绑定资料更新返回了另一个角色，已拒绝出图")
             binding = updated
 
         try:

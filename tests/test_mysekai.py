@@ -405,6 +405,43 @@ async def test_submit_returns_images_and_records_upload(
     }
 
 
+async def test_submit_records_the_role_that_uploaded(
+    client: httpx.AsyncClient,
+) -> None:
+    """A second role must not be filed under the QQ's current role."""
+    await _bind(client)
+    headers = {"Authorization": f"Bearer {BOT_TOKEN}"}
+    second = await client.post(
+        "/internal/v1/mysekai/bind",
+        json={"qq": QQ, "game_user_id": SECOND_GAME_ID, "server": "cn"},
+        headers=headers,
+    )
+    assert second.status_code == 200, second.text
+    await _login(client)
+    response = await client.post(
+        "/api/v1/mysekai/submit",
+        json={
+            "qq": QQ,
+            "game_user_id": SECOND_GAME_ID,
+            "region": "cn",
+            "file_base64": base64.b64encode(b"capture").decode(),
+        },
+        headers={"Origin": "http://testserver"},
+    )
+    assert response.status_code == 200, response.text
+    upload_id = response.json()["upload_id"]
+
+    repository = client._transport.app.state.services.repository  # type: ignore[attr-defined]
+    async with repository.connect() as connection:
+        row = await (
+            await connection.execute(
+                "SELECT game_user_id FROM mysekai_uploads WHERE id = ?",
+                (upload_id,),
+            )
+        ).fetchone()
+    assert row["game_user_id"] == SECOND_GAME_ID
+
+
 async def test_submit_reports_push_success(tmp_path) -> None:
     push_payloads: list[dict] = []
     settings = _settings(tmp_path, mysekai_push_url="http://push.test/push")
@@ -432,6 +469,44 @@ async def test_submit_reports_push_success(tmp_path) -> None:
     assert response.status_code == 200
     assert response.json()["push"]["status"] == "sent"
     assert push_payloads[0]["upload_id"] == response.json()["upload_id"]
+
+
+async def test_push_labels_the_uploading_role(tmp_path) -> None:
+    """The push must carry the role that uploaded, not the QQ's current role."""
+    push_payloads: list[dict] = []
+    settings = _settings(tmp_path, mysekai_push_url="http://push.test/push")
+    app = create_app(settings)
+    app.state.services.mysekai.transport = _mock_transport(
+        push_ok=True, push_payloads=push_payloads
+    )
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", timeout=30
+        ) as client:
+            await _bind(client)
+            headers = {"Authorization": f"Bearer {BOT_TOKEN}"}
+            second = await client.post(
+                "/internal/v1/mysekai/bind",
+                json={"qq": QQ, "game_user_id": SECOND_GAME_ID, "server": "cn"},
+                headers=headers,
+            )
+            assert second.status_code == 200, second.text
+            await _login(client)
+            response = await client.post(
+                "/api/v1/mysekai/submit",
+                json={
+                    "qq": QQ,
+                    "game_user_id": SECOND_GAME_ID,
+                    "region": "cn",
+                    "file_base64": base64.b64encode(b"capture").decode(),
+                },
+                headers={"Origin": "http://testserver"},
+            )
+    assert response.status_code == 200, response.text
+    assert response.json()["push"]["status"] == "sent"
+    assert push_payloads[0]["role_label"] == "u2"
+    assert push_payloads[0]["game_user_id"] == SECOND_GAME_ID
 
 
 async def test_submit_refreshes_profile(tmp_path) -> None:
