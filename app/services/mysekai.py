@@ -1624,6 +1624,18 @@ class MysekaiService:
                 raise BindingNotFound("这个游戏 ID 不属于这个 QQ 的绑定")
         return binding
 
+    async def help_image(self, sections: list[dict]) -> bytes:
+        """Render the command help sheet from the list the Bot maintains."""
+        url = f"{self.settings.mysekai_service_url}/render/mysekai/help"
+        try:
+            async with self._client(timeout=60.0) as client:
+                response = await client.post(url, json={"sections": sections})
+        except httpx.HTTPError:
+            raise UpstreamError("帮助图暂时不可用，请稍后再试") from None
+        if response.status_code != 200:
+            raise UpstreamError("帮助图暂时不可用，请稍后再试")
+        return response.content
+
     async def latest_capture(
         self, qq: str, game_user_id: str | None = None
     ) -> dict:

@@ -185,6 +185,28 @@ class LatestCaptureRequest(BaseModel):
     game_user_id: str | None = Field(default=None, pattern=GAME_ID_PATTERN)
 
 
+class HelpItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=80)
+    roles: bool = False
+    admin: bool = False
+
+
+class HelpSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=24)
+    items: list[HelpItem] = Field(min_length=1, max_length=30)
+
+
+class HelpRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sections: list[HelpSection] = Field(min_length=1, max_length=10)
+
+
 class HighlightNamesRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -413,6 +435,21 @@ async def latest_capture(payload: LatestCaptureRequest, request: Request):
         "map": base64.b64encode(row["map_png"]).decode("ascii"),
         "card": base64.b64encode(row["card_png"]).decode("ascii"),
     }
+
+
+@internal_router.post("/help")
+async def help_image(payload: HelpRequest, request: Request):
+    """把 Bot 维护的指令清单渲染成一张帮助图。"""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        png = await _mysekai(request).help_image(
+            [section.model_dump() for section in payload.sections]
+        )
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return Response(content=png, media_type="image/png")
 
 
 @internal_router.post("/material-catalog")

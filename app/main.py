@@ -131,6 +131,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "/internal/v1/mysekai/convert-done",
                 "/internal/v1/mysekai/latest-capture",
                 "/internal/v1/mysekai/material-catalog",
+                "/internal/v1/mysekai/help",
                 "/internal/v1/mysekai/birthday-progress",
                 "/internal/v1/mysekai/highlight-status",
                 "/internal/v1/mysekai/highlight-set",
