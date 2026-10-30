@@ -134,6 +134,11 @@
   gap: 6px;
   margin-top: 8px;
 }
+
+/* 建议列表展开时隐藏芯片，避免同一组数据出现两次。 */
+.upload-card.suggest-open .recent-entries {
+  display: none !important;
+}
 .recent-chip {
   display: inline-flex;
   align-items: center;

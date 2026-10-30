@@ -142,13 +142,14 @@ function openSuggest() {
     });
     el.qqSuggest.appendChild(item);
   }
-  // 列表展开时先藏起芯片，否则同一组数据会在屏幕上出现两次。
-  el.recentEntries.classList.add("hidden");
+  // 列表展开时压住芯片：用表单级 class + CSS，比改芯片自身的 class 更抗重排。
+  el.uploadForm.classList.add("suggest-open");
   el.qqSuggest.classList.remove("hidden");
 }
 
 function closeSuggest() {
   el.qqSuggest.classList.add("hidden");
+  el.uploadForm.classList.remove("suggest-open");
   if (readHistory().length) el.recentEntries.classList.remove("hidden");
 }
 
