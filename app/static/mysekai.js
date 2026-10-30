@@ -133,7 +133,7 @@ function openSuggest() {
     item.type = "button";
     item.className = "suggest-item";
     item.textContent = entry.gameUserId
-      ? `${entry.qq} · ${entry.gameUserId}`
+      ? `${entry.qq} | ${entry.gameUserId}`
       : entry.qq;
     // mousedown 早于 blur，避免点选时列表先被收起。
     item.addEventListener("mousedown", (event) => {
@@ -174,7 +174,7 @@ function renderHistory() {
       : `填充 QQ ${entry.qq}`;
 
     const label = document.createElement("span");
-    label.textContent = entry.gameUserId ? `${entry.qq} · ${entry.gameUserId}` : entry.qq;
+    label.textContent = entry.gameUserId ? `${entry.qq} | ${entry.gameUserId}` : entry.qq;
 
     const remove = document.createElement("button");
     remove.type = "button";
