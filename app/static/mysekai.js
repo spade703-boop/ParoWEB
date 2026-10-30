@@ -279,12 +279,6 @@ function showWorkspace() {
   el.gate.classList.add("hidden");
   el.workspace.classList.remove("hidden");
   setStatus(el.gateStatus, "");
-  window.setTimeout(() => {
-    // 进入页面时自动聚焦输入框，但不弹出建议——只有用户主动点开才显示。
-    suppressSuggestOnFocus = true;
-    el.qq.focus();
-    suppressSuggestOnFocus = false;
-  }, 0);
 }
 
 function shakeGate() {
@@ -344,11 +338,7 @@ el.gateForm.addEventListener("submit", async (event) => {
 
 /* ------------------------------------------------------------------ 本机记忆 */
 
-let suppressSuggestOnFocus = false;
-
-el.qq.addEventListener("focus", () => {
-  if (!suppressSuggestOnFocus) openSuggest();
-});
+el.qq.addEventListener("focus", openSuggest);
 el.qq.addEventListener("input", () => {
   // 从历史里选中已记录的 QQ 时，同时带出对应的游戏 ID。
   const entry = readHistory().find((item) => item.qq === digitsOf(el.qq.value));
