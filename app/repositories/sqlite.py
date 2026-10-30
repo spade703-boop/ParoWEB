@@ -4,14 +4,18 @@ from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
 import json
+import logging
 import math
 from pathlib import Path
+import shutil
 import time
 import uuid
 
 import aiosqlite
 
 from app.domain.models import DrawLimitError, DrawResult, FixedSide
+
+logger = logging.getLogger(__name__)
 
 
 SCHEMA = """
@@ -280,9 +284,16 @@ class SQLiteRepository:
         async with self.connect() as connection:
             await connection.execute("PRAGMA journal_mode = WAL")
             await connection.executescript(SCHEMA)
-            await self._migrate_bindings_to_multi_role(connection)
-            await self._migrate_convert_watches_to_roles(connection)
-            await self._migrate_role_scoped_caches(connection)
+            try:
+                await self._migrate_bindings_to_multi_role(connection)
+                await self._migrate_convert_watches_to_roles(connection)
+                await self._migrate_role_scoped_caches(connection)
+            except Exception:
+                # 迁移失败不能拖垮整站：读功能仍然可用，下次启动会重试。
+                # 2026-10-30 线上事故就是迁移里 SQLITE_FULL 把整个服务卡在重启循环。
+                logger.exception(
+                    "MySekai schema migration failed; continuing with the current schema"
+                )
             # CREATE TABLE IF NOT EXISTS 不会给已有库补列，老库要靠这里补上。
             # 用 PRAGMA 判断而不是吞 duplicate column 异常：并发下吞异常会把真正的
             # SQLITE_READONLY 一起吞掉，以后没法排查。
@@ -865,12 +876,25 @@ class SQLiteRepository:
             await connection.rollback()
             raise
 
+    def _has_room_for_snapshot(self) -> bool:
+        """Whether a full-database copy fits with headroom to spare."""
+        try:
+            free = shutil.disk_usage(self.database_path.parent).free
+            size = self.database_path.stat().st_size
+        except OSError:
+            return True
+        return free > size * 2 + 64 * 1024 * 1024
+
     async def _snapshot_before_binding_migration(self, connection) -> None:
         """Write ``<db>.pre-multi-role.bak`` once; never block the migration."""
         backup = self.database_path.with_name(
             self.database_path.name + ".pre-multi-role.bak"
         )
         if backup.exists():
+            return
+        if not self._has_room_for_snapshot():
+            # 快照本身要占一份全库大小；磁盘紧张时写它会正好压垮迁移。
+            logger.warning("跳过 %s：磁盘余量不足", backup.name)
             return
         try:
             await connection.execute("VACUUM INTO ?", (str(backup),))
@@ -956,6 +980,9 @@ class SQLiteRepository:
         )
         if backup.exists():
             return
+        if not self._has_room_for_snapshot():
+            logger.warning("跳过 %s：磁盘余量不足", backup.name)
+            return
         try:
             await connection.execute("VACUUM INTO ?", (str(backup),))
         except Exception:
@@ -965,18 +992,18 @@ class SQLiteRepository:
     async def _migrate_role_scoped_caches(self, connection) -> None:
         """Give ``latest_capture`` and ``visit_baselines`` a role in the key.
 
-        Both were keyed on ``qq`` alone, so a second role overwrote the first
-        role's map and inherited its visit baseline. ``latest_capture`` already
-        stores ``game_user_id``, so its rows move over as-is; ``visit_baselines``
-        does not, and the value only matters for the current day, so the old
-        table is dropped and rebuilt — the next upload of each role seeds it.
+        Both are caches: a rebuilt table costs the player one re-upload, while
+        copying them row by row costs a full-table write. On 2026-10-30 the
+        136 MB copy plus its rollback journal filled the disk and left
+        ``paro-web`` in a restart loop, so both are now simply rebuilt.
         """
         if await self._primary_key(connection, "mysekai_latest_capture") == {"qq"}:
             await connection.execute("BEGIN IMMEDIATE")
             try:
                 await connection.execute(
-                    "ALTER TABLE mysekai_latest_capture RENAME TO mysekai_latest_capture_legacy"
+                    "DROP TABLE IF EXISTS mysekai_latest_capture_legacy"
                 )
+                await connection.execute("DROP TABLE mysekai_latest_capture")
                 await connection.execute(
                     """
                     CREATE TABLE mysekai_latest_capture (
@@ -992,20 +1019,6 @@ class SQLiteRepository:
                     )
                     """
                 )
-                await connection.execute(
-                    """
-                    INSERT INTO mysekai_latest_capture(
-                        qq, game_user_id, upload_id, captured_at_ms,
-                        uploaded_at_ms, map_png, card_png, updated_at
-                    )
-                    SELECT
-                        qq, game_user_id, upload_id, captured_at_ms,
-                        uploaded_at_ms, map_png, card_png, updated_at
-                      FROM mysekai_latest_capture_legacy
-                     WHERE game_user_id IS NOT NULL AND game_user_id <> ''
-                    """
-                )
-                await connection.execute("DROP TABLE mysekai_latest_capture_legacy")
                 await connection.commit()
             except Exception:
                 await connection.rollback()
