@@ -97,17 +97,13 @@
   position: relative;
 }
 
+/* 内联展开：出现在输入框下方并占据布局，把后续字段往下推，不遮挡内容。 */
 .suggest-list {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
+  margin-top: 8px;
   padding: 4px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--card);
-  box-shadow: 0 10px 24px rgba(40, 32, 60, .12);
   max-height: 232px;
   overflow-y: auto;
 }

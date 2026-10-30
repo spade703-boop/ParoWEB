@@ -142,11 +142,14 @@ function openSuggest() {
     });
     el.qqSuggest.appendChild(item);
   }
+  // 列表展开时先藏起芯片，否则同一组数据会在屏幕上出现两次。
+  el.recentEntries.classList.add("hidden");
   el.qqSuggest.classList.remove("hidden");
 }
 
 function closeSuggest() {
   el.qqSuggest.classList.add("hidden");
+  if (readHistory().length) el.recentEntries.classList.remove("hidden");
 }
 
 function renderHistory() {
