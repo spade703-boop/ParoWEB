@@ -103,10 +103,11 @@ CREATE INDEX IF NOT EXISTS idx_mysekai_uploads_qq_created
 
 CREATE TABLE IF NOT EXISTS mysekai_visit_baselines (
     qq TEXT NOT NULL,
+    game_user_id TEXT NOT NULL,
     day TEXT NOT NULL,
     payload TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    PRIMARY KEY (qq, day)
+    PRIMARY KEY (qq, game_user_id, day)
 );
 
 CREATE TABLE IF NOT EXISTS mysekai_water_watches (
@@ -156,14 +157,15 @@ CREATE TABLE IF NOT EXISTS mysekai_convert_slots (
 );
 
 CREATE TABLE IF NOT EXISTS mysekai_latest_capture (
-    qq TEXT PRIMARY KEY,
+    qq TEXT NOT NULL,
     game_user_id TEXT NOT NULL,
     upload_id TEXT NOT NULL,
     captured_at_ms INTEGER,
     uploaded_at_ms INTEGER,
     map_png BLOB NOT NULL,
     card_png BLOB NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (qq, game_user_id)
 );
 
 CREATE TABLE IF NOT EXISTS mysekai_push_windows (
@@ -277,6 +279,7 @@ class SQLiteRepository:
             await connection.execute("PRAGMA journal_mode = WAL")
             await connection.executescript(SCHEMA)
             await self._migrate_bindings_to_multi_role(connection)
+            await self._migrate_role_scoped_caches(connection)
             # CREATE TABLE IF NOT EXISTS 不会给已有库补列，老库要靠这里补上。
             # 用 PRAGMA 判断而不是吞 duplicate column 异常：并发下吞异常会把真正的
             # SQLITE_READONLY 一起吞掉，以后没法排查。
@@ -872,6 +875,85 @@ class SQLiteRepository:
             # 备份只是额外保险；迁移本身有事务，失败也回滚到旧表。
             pass
 
+    async def _primary_key(self, connection, table: str) -> set[str]:
+        rows = await (
+            await connection.execute(f"PRAGMA table_info({table})")
+        ).fetchall()
+        return {row["name"] for row in rows if int(row["pk"] or 0)}
+
+    async def _migrate_role_scoped_caches(self, connection) -> None:
+        """Give ``latest_capture`` and ``visit_baselines`` a role in the key.
+
+        Both were keyed on ``qq`` alone, so a second role overwrote the first
+        role's map and inherited its visit baseline. ``latest_capture`` already
+        stores ``game_user_id``, so its rows move over as-is; ``visit_baselines``
+        does not, and the value only matters for the current day, so the old
+        table is dropped and rebuilt — the next upload of each role seeds it.
+        """
+        if await self._primary_key(connection, "mysekai_latest_capture") == {"qq"}:
+            await connection.execute("BEGIN IMMEDIATE")
+            try:
+                await connection.execute(
+                    "ALTER TABLE mysekai_latest_capture RENAME TO mysekai_latest_capture_legacy"
+                )
+                await connection.execute(
+                    """
+                    CREATE TABLE mysekai_latest_capture (
+                        qq TEXT NOT NULL,
+                        game_user_id TEXT NOT NULL,
+                        upload_id TEXT NOT NULL,
+                        captured_at_ms INTEGER,
+                        uploaded_at_ms INTEGER,
+                        map_png BLOB NOT NULL,
+                        card_png BLOB NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY (qq, game_user_id)
+                    )
+                    """
+                )
+                await connection.execute(
+                    """
+                    INSERT INTO mysekai_latest_capture(
+                        qq, game_user_id, upload_id, captured_at_ms,
+                        uploaded_at_ms, map_png, card_png, updated_at
+                    )
+                    SELECT
+                        qq, game_user_id, upload_id, captured_at_ms,
+                        uploaded_at_ms, map_png, card_png, updated_at
+                      FROM mysekai_latest_capture_legacy
+                     WHERE game_user_id IS NOT NULL AND game_user_id <> ''
+                    """
+                )
+                await connection.execute("DROP TABLE mysekai_latest_capture_legacy")
+                await connection.commit()
+            except Exception:
+                await connection.rollback()
+                raise
+
+        if await self._primary_key(connection, "mysekai_visit_baselines") == {
+            "qq",
+            "day",
+        }:
+            await connection.execute("BEGIN IMMEDIATE")
+            try:
+                await connection.execute("DROP TABLE mysekai_visit_baselines")
+                await connection.execute(
+                    """
+                    CREATE TABLE mysekai_visit_baselines (
+                        qq TEXT NOT NULL,
+                        game_user_id TEXT NOT NULL,
+                        day TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        PRIMARY KEY (qq, game_user_id, day)
+                    )
+                    """
+                )
+                await connection.commit()
+            except Exception:
+                await connection.rollback()
+                raise
+
     async def create_mysekai_binding(
         self,
         *,
@@ -1049,14 +1131,11 @@ class SQLiteRepository:
         leader_card_id: int | None,
         leader_avatar: str | None,
         profile_image_type: str | None,
-        game_user_id: str | None = None,
+        #: Required: defaulting to the current role is what caused an uploaded
+        #: second role to be filed under the first one.
+        game_user_id: str,
     ) -> dict | None:
         target = game_user_id
-        if target is None:
-            current = await self.get_mysekai_binding(qq)
-            target = current["game_user_id"] if current else None
-        if target is None:
-            return None
         async with self.connect() as connection:
             await connection.execute(
                 """
@@ -1137,6 +1216,20 @@ class SQLiteRepository:
                     """,
                     (qq, target),
                 )
+                await connection.execute(
+                    """
+                    DELETE FROM mysekai_latest_capture
+                     WHERE qq = ? AND game_user_id = ?
+                    """,
+                    (qq, target),
+                )
+                await connection.execute(
+                    """
+                    DELETE FROM mysekai_visit_baselines
+                     WHERE qq = ? AND game_user_id = ?
+                    """,
+                    (qq, target),
+                )
                 remaining = await (
                     await connection.execute(
                         """
@@ -1171,13 +1264,18 @@ class SQLiteRepository:
                 await connection.rollback()
                 raise
 
-    async def get_mysekai_visit_baseline(self, qq: str, day: str) -> dict | None:
-        """The visit counts captured on this QQ's first upload of ``day``."""
+    async def get_mysekai_visit_baseline(
+        self, qq: str, game_user_id: str, day: str
+    ) -> dict | None:
+        """The visit counts captured on this role's first upload of ``day``."""
         async with self.connect() as connection:
             row = await (
                 await connection.execute(
-                    "SELECT payload FROM mysekai_visit_baselines WHERE qq = ? AND day = ?",
-                    (qq, day),
+                    """
+                    SELECT payload FROM mysekai_visit_baselines
+                     WHERE qq = ? AND game_user_id = ? AND day = ?
+                    """,
+                    (qq, game_user_id, day),
                 )
             ).fetchone()
         if row is None:
@@ -1189,17 +1287,25 @@ class SQLiteRepository:
         return data if isinstance(data, dict) else None
 
     async def set_mysekai_visit_baseline(
-        self, qq: str, day: str, payload: dict
+        self, qq: str, game_user_id: str, day: str, payload: dict
     ) -> None:
         """Record the day's first baseline; later uploads never overwrite it."""
         async with self.connect() as connection:
             await connection.execute(
                 """
-                INSERT INTO mysekai_visit_baselines(qq, day, payload, created_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(qq, day) DO NOTHING
+                INSERT INTO mysekai_visit_baselines(
+                    qq, game_user_id, day, payload, created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(qq, game_user_id, day) DO NOTHING
                 """,
-                (qq, day, json.dumps(payload, ensure_ascii=False), utc_now()),
+                (
+                    qq,
+                    game_user_id,
+                    day,
+                    json.dumps(payload, ensure_ascii=False),
+                    utc_now(),
+                ),
             )
             await connection.commit()
 
@@ -1457,8 +1563,7 @@ class SQLiteRepository:
                     qq, game_user_id, upload_id, captured_at_ms, uploaded_at_ms,
                     map_png, card_png, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(qq) DO UPDATE SET
-                    game_user_id = excluded.game_user_id,
+                ON CONFLICT(qq, game_user_id) DO UPDATE SET
                     upload_id = excluded.upload_id,
                     captured_at_ms = excluded.captured_at_ms,
                     uploaded_at_ms = excluded.uploaded_at_ms,
@@ -1479,16 +1584,18 @@ class SQLiteRepository:
             )
             await connection.commit()
 
-    async def get_mysekai_latest_capture(self, qq: str) -> dict | None:
+    async def get_mysekai_latest_capture(
+        self, qq: str, game_user_id: str
+    ) -> dict | None:
         async with self.connect() as connection:
             row = await (
                 await connection.execute(
                     """
                     SELECT captured_at_ms, uploaded_at_ms, map_png, card_png
                       FROM mysekai_latest_capture
-                     WHERE qq = ?
+                     WHERE qq = ? AND game_user_id = ?
                     """,
-                    (qq,),
+                    (qq, game_user_id),
                 )
             ).fetchone()
         if row is None:
@@ -1658,7 +1765,17 @@ class SQLiteRepository:
             cursor = await connection.execute(
                 """
                 SELECT s.game_user_id, s.slot_id, s.item_id, s.finish_at_ms,
-                       s.outcome_count, b.qq
+                       s.outcome_count, b.qq,
+                       (
+                         SELECT COUNT(*)
+                           FROM mysekai_bindings b2
+                          WHERE b2.qq = b.qq
+                            AND (
+                                 b2.created_at < b.created_at
+                                 OR (b2.created_at = b.created_at
+                                     AND b2.game_user_id <= b.game_user_id)
+                            )
+                       ) AS role_index
                   FROM mysekai_convert_slots s
                   JOIN mysekai_bindings b
                     ON b.game_user_id = s.game_user_id AND b.server = 'cn'
@@ -1677,6 +1794,8 @@ class SQLiteRepository:
                 "finish_at_ms": row[3],
                 "outcome_count": row[4],
                 "qq": row[5],
+                # 与群指令的 u1/u2 编号一致，提醒里才说得清是哪个角色。
+                "role_label": f"u{int(row[6] or 1)}",
             }
             for row in rows
         ]

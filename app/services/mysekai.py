@@ -1578,13 +1578,13 @@ class MysekaiService:
         except (ValueError, KeyError, TypeError):
             raise UpstreamError("出图服务返回了无法解析的数据") from None
 
-    async def birthday_progress_image(
-        self, qq: str, game_user_id: str | None = None
-    ) -> bytes:
-        """The stored birthday progress, rendered by the pipeline.
+    async def _binding_for_role(
+        self, qq: str, game_user_id: str | None
+    ) -> dict:
+        """The binding for one role, defaulting to the QQ's current role.
 
-        ``game_user_id`` selects one of the QQ's roles; omitting it uses the
-        current one, same as every other query command.
+        Every role-scoped read goes through here so "which role" is answered in
+        exactly one place instead of each endpoint re-deriving it.
         """
         binding = await self.repository.get_mysekai_binding(qq)
         if binding is None:
@@ -1596,6 +1596,35 @@ class MysekaiService:
             )
             if binding is None:
                 raise BindingNotFound("这个游戏 ID 不属于这个 QQ 的绑定")
+        return binding
+
+    async def latest_capture(
+        self, qq: str, game_user_id: str | None = None
+    ) -> dict:
+        """The stored map and card for one role (default: the current one)."""
+        binding = await self._binding_for_role(qq, game_user_id)
+        row = await self.repository.get_mysekai_latest_capture(
+            qq, binding["game_user_id"]
+        )
+        if row is None:
+            raise MysekaiError(
+                "还没有上传过烤森抓包", code="no_capture", status=404
+            )
+        return {
+            **row,
+            "game_user_id": binding["game_user_id"],
+            "role_label": await self._role_label(qq, binding["game_user_id"]),
+        }
+
+    async def birthday_progress_image(
+        self, qq: str, game_user_id: str | None = None
+    ) -> bytes:
+        """The stored birthday progress, rendered by the pipeline.
+
+        ``game_user_id`` selects one of the QQ's roles; omitting it uses the
+        current one, same as every other query command.
+        """
+        binding = await self._binding_for_role(qq, game_user_id)
         state = await self.repository.get_mysekai_birthday_state(
             binding["server"], binding["game_user_id"]
         )
@@ -1900,7 +1929,9 @@ class MysekaiService:
             "mysekai_at": format_capture_time(int(time.time() * 1000)),
         }
         day = _today_key()
-        visit_baseline = await self.repository.get_mysekai_visit_baseline(qq, day)
+        visit_baseline = await self.repository.get_mysekai_visit_baseline(
+            qq, binding["game_user_id"], day
+        )
         highlight_ids = await self.highlight_ids(qq)
         result = await self._render(
             body, profile_payload, visit_baseline, highlight_ids, watch_on=watch_on
@@ -1928,7 +1959,7 @@ class MysekaiService:
                 )
         if visit_baseline is None and result.visit_counts:
             await self.repository.set_mysekai_visit_baseline(
-                qq, day, result.visit_counts
+                qq, binding["game_user_id"], day, result.visit_counts
             )
         upload_id = str(uuid.uuid4())
         if event_kind == "birthday_delivery" and (

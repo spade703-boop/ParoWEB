@@ -168,6 +168,14 @@ class BirthdayProgressRequest(BaseModel):
     game_user_id: str | None = Field(default=None, pattern=GAME_ID_PATTERN)
 
 
+class LatestCaptureRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qq: str = Field(pattern=QQ_PATTERN)
+    #: Omitted means the QQ's current role.
+    game_user_id: str | None = Field(default=None, pattern=GAME_ID_PATTERN)
+
+
 class HighlightNamesRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -375,17 +383,20 @@ async def convert_due(request: Request):
 
 
 @internal_router.post("/latest-capture")
-async def latest_capture(payload: QqRequest, request: Request):
-    """Bot 指令：取这个 QQ 最近一次抓包的地图与结算卡。"""
+async def latest_capture(payload: LatestCaptureRequest, request: Request):
+    """Bot 指令：取某个角色最近一次抓包的地图与结算卡。"""
     auth_error = _internal_auth_error(request)
     if auth_error is not None:
         return auth_error
     service = _mysekai(request)
-    row = await service.repository.get_mysekai_latest_capture(payload.qq)
-    if row is None:
-        return error_response(404, "no_capture", "还没有上传过烤森抓包")
+    try:
+        row = await service.latest_capture(payload.qq, payload.game_user_id)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
     return {
         "ok": True,
+        "game_user_id": row["game_user_id"],
+        "role_label": row["role_label"],
         "captured_at_ms": row["captured_at_ms"],
         "uploaded_at_ms": row["uploaded_at_ms"],
         "map": base64.b64encode(row["map_png"]).decode("ascii"),

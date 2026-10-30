@@ -811,15 +811,34 @@ async def test_module_link_builds_the_shadowrocket_scheme(tmp_path) -> None:
 
 
 async def test_visit_baseline_is_written_once_per_day(tmp_path) -> None:
-    """当天首次上传留下的基线不能被后续上传覆盖。"""
+    """当天首次上传留下的基线不能被后续上传覆盖；角色之间也各记各的。"""
     repository = SQLiteRepository(tmp_path / "test.sqlite3")
     await repository.initialize()
 
-    await repository.set_mysekai_visit_baseline(QQ, "2026-10-21", {"1": 5})
-    await repository.set_mysekai_visit_baseline(QQ, "2026-10-21", {"1": 9})
+    await repository.set_mysekai_visit_baseline(
+        QQ, GAME_ID, "2026-10-21", {"1": 5}
+    )
+    await repository.set_mysekai_visit_baseline(
+        QQ, GAME_ID, "2026-10-21", {"1": 9}
+    )
+    await repository.set_mysekai_visit_baseline(
+        QQ, SECOND_GAME_ID, "2026-10-21", {"1": 2}
+    )
 
-    assert await repository.get_mysekai_visit_baseline(QQ, "2026-10-21") == {"1": 5}
-    assert await repository.get_mysekai_visit_baseline(QQ, "2026-10-22") is None
+    assert (
+        await repository.get_mysekai_visit_baseline(QQ, GAME_ID, "2026-10-21")
+        == {"1": 5}
+    )
+    assert (
+        await repository.get_mysekai_visit_baseline(
+            QQ, SECOND_GAME_ID, "2026-10-21"
+        )
+        == {"1": 2}
+    )
+    assert (
+        await repository.get_mysekai_visit_baseline(QQ, GAME_ID, "2026-10-22")
+        is None
+    )
 
 
 async def test_gate_endpoint_requires_internal_token(client) -> None:

@@ -13,7 +13,9 @@ from test_mysekai import (
     BOT_TOKEN,
     GAME_ID,
     QQ,
+    SECOND_GAME_ID,
     TINY_PNG,
+    _bind,
     _mock_transport,
     _settings,
 )
@@ -54,7 +56,7 @@ async def test_latest_capture_roundtrip(tmp_path) -> None:
         map_png=MAP_PNG,
         card_png=CARD_PNG,
     )
-    first = await repository.get_mysekai_latest_capture(QQ)
+    first = await repository.get_mysekai_latest_capture(QQ, GAME_ID)
     assert first is not None
     assert first["captured_at_ms"] == 1792723215029
     assert first["uploaded_at_ms"] == 1792725000000
@@ -71,15 +73,43 @@ async def test_latest_capture_roundtrip(tmp_path) -> None:
         map_png=b"map2",
         card_png=b"card2",
     )
-    second = await repository.get_mysekai_latest_capture(QQ)
+    second = await repository.get_mysekai_latest_capture(QQ, GAME_ID)
     assert second is not None
     assert second["captured_at_ms"] is None
     assert second["uploaded_at_ms"] == 1792728000000
     assert second["map_png"] == b"map2"
 
 
+async def test_latest_capture_is_kept_per_role(tmp_path) -> None:
+    """A second role must not overwrite the first role's newest capture."""
+    repository = await _repository(tmp_path)
+    await repository.save_mysekai_latest_capture(
+        qq=QQ,
+        game_user_id=GAME_ID,
+        upload_id="u1",
+        captured_at_ms=1,
+        uploaded_at_ms=1,
+        map_png=b"map-u1",
+        card_png=b"card-u1",
+    )
+    await repository.save_mysekai_latest_capture(
+        qq=QQ,
+        game_user_id=SECOND_GAME_ID,
+        upload_id="u2",
+        captured_at_ms=2,
+        uploaded_at_ms=2,
+        map_png=b"map-u2",
+        card_png=b"card-u2",
+    )
+
+    first = await repository.get_mysekai_latest_capture(QQ, GAME_ID)
+    second = await repository.get_mysekai_latest_capture(QQ, SECOND_GAME_ID)
+    assert first is not None and first["map_png"] == b"map-u1"
+    assert second is not None and second["map_png"] == b"map-u2"
+
+
 async def test_latest_capture_endpoint_404_when_empty(tmp_path) -> None:
-    async with _client(tmp_path) as client:
+    async with _app(tmp_path) as (client, _payloads):
         response = await client.post(
             "/internal/v1/mysekai/latest-capture",
             json={"qq": QQ},
@@ -87,6 +117,17 @@ async def test_latest_capture_endpoint_404_when_empty(tmp_path) -> None:
         )
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "no_capture"
+
+
+async def test_latest_capture_reports_not_bound(tmp_path) -> None:
+    async with _client(tmp_path) as client:
+        response = await client.post(
+            "/internal/v1/mysekai/latest-capture",
+            json={"qq": QQ},
+            headers={"Authorization": f"Bearer {BOT_TOKEN}"},
+        )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "not_bound"
 
 
 async def test_latest_capture_requires_internal_token(tmp_path) -> None:
