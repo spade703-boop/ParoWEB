@@ -52,17 +52,18 @@
         <form class="control-card upload-card" id="upload-form" novalidate>
           <div class="control-card__group">
             <label class="control-card__legend" for="qq">QQ 号</label>
-            <input class="text-input" id="qq" name="qq" list="qq-history" inputmode="numeric"
-                   autocomplete="off" placeholder="已绑定的QQ号" required>
-            <datalist id="qq-history"></datalist>
+            <div class="input-suggest">
+              <input class="text-input" id="qq" name="qq" inputmode="numeric"
+                     autocomplete="off" placeholder="已绑定的QQ号" required>
+              <div class="suggest-list hidden" id="qq-suggest" role="listbox" aria-label="最近输入"></div>
+            </div>
             <div class="recent-entries hidden" id="recent-entries" aria-label="最近输入"></div>
           </div>
 
           <div class="control-card__group">
             <label class="control-card__legend" for="game-id">游戏 ID</label>
-            <input class="text-input" id="game-id" name="game_user_id" list="game-id-history"
+            <input class="text-input" id="game-id" name="game_user_id"
                    inputmode="numeric" autocomplete="off" placeholder="19 位数字 ID" required>
-            <datalist id="game-id-history"></datalist>
           </div>
 
           <div class="control-card__group">

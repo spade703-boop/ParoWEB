@@ -83,14 +83,21 @@ function migrateLegacyCookies() {
 }
 
 function rememberEntry(qq, gameUserId) {
-  const entries = readHistory().filter((entry) => entry.qq !== qq);
+  // 按「QQ + 游戏 ID」配对去重：一个 QQ 可以有多个角色，换号上传不能覆盖上一条。
+  const entries = readHistory().filter(
+    (entry) => !(entry.qq === qq && entry.gameUserId === gameUserId)
+  );
   entries.unshift({ qq, gameUserId, at: Date.now() });
   writeHistory(entries);
   renderHistory();
 }
 
-function forgetEntry(qq) {
-  writeHistory(readHistory().filter((entry) => entry.qq !== qq));
+function forgetEntry(entry) {
+  writeHistory(
+    readHistory().filter(
+      (item) => !(item.qq === entry.qq && item.gameUserId === entry.gameUserId)
+    )
+  );
   renderHistory();
 }
 
@@ -98,30 +105,58 @@ function applyEntry(entry, { focus = true } = {}) {
   el.qq.value = entry.qq;
   if (entry.gameUserId) el.gameId.value = entry.gameUserId;
   el.uploadStatus.classList.remove("is-ok");
-  if (focus) el.qq.focus();
+  if (focus) {
+    el.qq.focus();
+    closeSuggest();
+  }
+}
+
+function matchingEntries(query) {
+  const text = digitsOf(query);
+  const entries = readHistory();
+  if (!text) return entries;
+  return entries.filter(
+    (entry) =>
+      entry.qq.startsWith(text) || (entry.gameUserId || "").startsWith(text)
+  );
+}
+
+function openSuggest() {
+  const entries = matchingEntries(el.qq.value).slice(0, 6);
+  el.qqSuggest.innerHTML = "";
+  if (!entries.length) {
+    closeSuggest();
+    return;
+  }
+  for (const entry of entries) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "suggest-item";
+    item.textContent = entry.gameUserId
+      ? `${entry.qq} · ${entry.gameUserId}`
+      : entry.qq;
+    // mousedown 早于 blur，避免点选时列表先被收起。
+    item.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      applyEntry(entry);
+    });
+    el.qqSuggest.appendChild(item);
+  }
+  el.qqSuggest.classList.remove("hidden");
+}
+
+function closeSuggest() {
+  el.qqSuggest.classList.add("hidden");
 }
 
 function renderHistory() {
   const entries = readHistory();
-  el.qqHistory.innerHTML = "";
-  el.gameIdHistory.innerHTML = "";
   el.recentEntries.innerHTML = "";
-
-  for (const entry of entries) {
-    const option = document.createElement("option");
-    option.value = entry.qq;
-    if (entry.gameUserId) option.label = `游戏 ID ${entry.gameUserId}`;
-    el.qqHistory.appendChild(option);
-
-    if (entry.gameUserId) {
-      const idOption = document.createElement("option");
-      idOption.value = entry.gameUserId;
-      el.gameIdHistory.appendChild(idOption);
-    }
-  }
+  el.qqSuggest.innerHTML = "";
 
   if (!entries.length) {
     el.recentEntries.classList.add("hidden");
+    closeSuggest();
     return;
   }
   el.recentEntries.classList.remove("hidden");
@@ -155,7 +190,7 @@ function renderHistory() {
     });
     remove.addEventListener("click", (event) => {
       event.stopPropagation();
-      forgetEntry(entry.qq);
+      forgetEntry(entry);
     });
 
     chip.append(label, remove);
@@ -186,8 +221,7 @@ const el = {
   uploadForm: $("#upload-form"),
   qq: $("#qq"),
   gameId: $("#game-id"),
-  qqHistory: $("#qq-history"),
-  gameIdHistory: $("#game-id-history"),
+  qqSuggest: $("#qq-suggest"),
   recentEntries: $("#recent-entries"),
   dropZone: $("#drop-zone"),
   dropTitle: $("#drop-title"),
@@ -278,7 +312,12 @@ function showWorkspace() {
   el.gate.classList.add("hidden");
   el.workspace.classList.remove("hidden");
   setStatus(el.gateStatus, "");
-  window.setTimeout(() => el.qq.focus(), 0);
+  window.setTimeout(() => {
+    // 进入页面时自动聚焦输入框，但不弹出建议——只有用户主动点开才显示。
+    suppressSuggestOnFocus = true;
+    el.qq.focus();
+    suppressSuggestOnFocus = false;
+  }, 0);
 }
 
 function shakeGate() {
@@ -338,11 +377,23 @@ el.gateForm.addEventListener("submit", async (event) => {
 
 /* ------------------------------------------------------------------ 本机记忆 */
 
+let suppressSuggestOnFocus = false;
+
+el.qq.addEventListener("focus", () => {
+  if (!suppressSuggestOnFocus) openSuggest();
+});
 el.qq.addEventListener("input", () => {
   // 从历史里选中已记录的 QQ 时，同时带出对应的游戏 ID。
   const entry = readHistory().find((item) => item.qq === digitsOf(el.qq.value));
   if (entry && entry.gameUserId) el.gameId.value = entry.gameUserId;
   el.uploadStatus.classList.remove("is-ok");
+  openSuggest();
+});
+el.qq.addEventListener("blur", () => window.setTimeout(closeSuggest, 120));
+document.addEventListener("click", (event) => {
+  if (event.target !== el.qq && !el.qqSuggest.contains(event.target)) {
+    closeSuggest();
+  }
 });
 
 el.gameId.addEventListener("input", () => {

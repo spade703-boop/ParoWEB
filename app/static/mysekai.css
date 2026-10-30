@@ -91,6 +91,45 @@
   cursor: not-allowed;
 }
 
+/* ---------- 输入建议 ---------- */
+
+.input-suggest {
+  position: relative;
+}
+
+.suggest-list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 0 10px 24px rgba(40, 32, 60, .12);
+  max-height: 232px;
+  overflow-y: auto;
+}
+
+.suggest-item {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.suggest-item:hover,
+.suggest-item:focus-visible {
+  background: var(--paper-deep);
+  outline: none;
+}
+
 /* ---------- 最近输入 ---------- */
 
 .recent-entries {
