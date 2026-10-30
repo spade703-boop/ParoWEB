@@ -141,8 +141,10 @@ CREATE TABLE IF NOT EXISTS mysekai_highlight_materials (
 );
 
 CREATE TABLE IF NOT EXISTS mysekai_convert_watches (
-    qq TEXT PRIMARY KEY,
-    enabled_at TEXT NOT NULL
+    qq TEXT NOT NULL,
+    game_user_id TEXT NOT NULL,
+    enabled_at TEXT NOT NULL,
+    PRIMARY KEY (qq, game_user_id)
 );
 
 CREATE TABLE IF NOT EXISTS mysekai_convert_slots (
@@ -279,6 +281,7 @@ class SQLiteRepository:
             await connection.execute("PRAGMA journal_mode = WAL")
             await connection.executescript(SCHEMA)
             await self._migrate_bindings_to_multi_role(connection)
+            await self._migrate_convert_watches_to_roles(connection)
             await self._migrate_role_scoped_caches(connection)
             # CREATE TABLE IF NOT EXISTS 不会给已有库补列，老库要靠这里补上。
             # 用 PRAGMA 判断而不是吞 duplicate column 异常：并发下吞异常会把真正的
@@ -881,6 +884,84 @@ class SQLiteRepository:
         ).fetchall()
         return {row["name"] for row in rows if int(row["pk"] or 0)}
 
+    async def _migrate_convert_watches_to_roles(self, connection) -> None:
+        """Split the QQ-level convert subscription into one row per bound role.
+
+        The old table keyed on ``qq`` alone, so one subscription covered every
+        role. Expanding it to all currently bound roles matches what the old due
+        query did (``JOIN watches ON w.qq = b.qq``). A subscription whose QQ has
+        no binding left is dropped — consistent with "after unsubscribing
+        everything, a newly bound role does not auto-subscribe".
+        """
+        if await self._has_table(connection, "mysekai_convert_watches_legacy"):
+            await self._recover_interrupted_convert_watch_migration(connection)
+        if await self._primary_key(connection, "mysekai_convert_watches") != {"qq"}:
+            return
+        await self._snapshot_before_convert_watch_migration(connection)
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            await connection.execute(
+                "ALTER TABLE mysekai_convert_watches RENAME TO mysekai_convert_watches_legacy"
+            )
+            await connection.execute(
+                """
+                CREATE TABLE mysekai_convert_watches (
+                    qq TEXT NOT NULL,
+                    game_user_id TEXT NOT NULL,
+                    enabled_at TEXT NOT NULL,
+                    PRIMARY KEY (qq, game_user_id)
+                )
+                """
+            )
+            await self._copy_legacy_convert_watches(connection)
+            await connection.execute("DROP TABLE mysekai_convert_watches_legacy")
+            await connection.commit()
+        except Exception:
+            await connection.rollback()
+            raise
+
+    async def _copy_legacy_convert_watches(self, connection) -> None:
+        await connection.execute(
+            """
+            INSERT OR IGNORE INTO mysekai_convert_watches(qq, game_user_id, enabled_at)
+            SELECT w.qq, b.game_user_id, w.enabled_at
+              FROM mysekai_convert_watches_legacy w
+              JOIN mysekai_bindings b ON b.qq = w.qq
+            """
+        )
+
+    async def _recover_interrupted_convert_watch_migration(self, connection) -> None:
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            await connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mysekai_convert_watches (
+                    qq TEXT NOT NULL,
+                    game_user_id TEXT NOT NULL,
+                    enabled_at TEXT NOT NULL,
+                    PRIMARY KEY (qq, game_user_id)
+                )
+                """
+            )
+            await self._copy_legacy_convert_watches(connection)
+            await connection.execute("DROP TABLE mysekai_convert_watches_legacy")
+            await connection.commit()
+        except Exception:
+            await connection.rollback()
+            raise
+
+    async def _snapshot_before_convert_watch_migration(self, connection) -> None:
+        backup = self.database_path.with_name(
+            self.database_path.name + ".pre-convert-role-watch.bak"
+        )
+        if backup.exists():
+            return
+        try:
+            await connection.execute("VACUUM INTO ?", (str(backup),))
+        except Exception:
+            # 备份只是额外保险；迁移本身在事务里，失败会回滚。
+            pass
+
     async def _migrate_role_scoped_caches(self, connection) -> None:
         """Give ``latest_capture`` and ``visit_baselines`` a role in the key.
 
@@ -1023,6 +1104,32 @@ class SQLiteRepository:
                     """,
                     (qq, server, game_user_id, now),
                 )
+                # 该 QQ 还有角色在订阅转换机提醒时，新角色自动纳入，
+                # 避免用户为每个新号再订阅一次。与绑定写入同一事务。
+                watching = await (
+                    await connection.execute(
+                        "SELECT 1 FROM mysekai_convert_watches WHERE qq = ? LIMIT 1",
+                        (qq,),
+                    )
+                ).fetchone()
+                if watching is not None:
+                    await connection.execute(
+                        """
+                        INSERT OR IGNORE INTO mysekai_convert_watches(
+                            qq, game_user_id, enabled_at
+                        ) VALUES (?, ?, ?)
+                        """,
+                        (qq, game_user_id, now),
+                    )
+                    # 这个 game id 之前可能留下过陈旧槽位，别在纳入瞬间补推。
+                    await connection.execute(
+                        """
+                        UPDATE mysekai_convert_slots
+                           SET notified = 1
+                         WHERE game_user_id = ? AND finish_at_ms <= ?
+                        """,
+                        (game_user_id, int(time.time() * 1000)),
+                    )
                 await connection.commit()
                 return None
             except Exception:
@@ -1230,6 +1337,19 @@ class SQLiteRepository:
                     """,
                     (qq, target),
                 )
+                # 角色没了，它的订阅必须一起删：否则「该 QQ 还有角色在订阅」
+                # 会永远成立，之后新绑的角色会被错误地自动纳入。
+                await connection.execute(
+                    """
+                    DELETE FROM mysekai_convert_watches
+                     WHERE qq = ? AND game_user_id = ?
+                    """,
+                    (qq, target),
+                )
+                await connection.execute(
+                    "DELETE FROM mysekai_convert_slots WHERE game_user_id = ?",
+                    (target,),
+                )
                 remaining = await (
                     await connection.execute(
                         """
@@ -1351,36 +1471,78 @@ class SQLiteRepository:
             ).fetchone()
         return str(row[0]) if row is not None else None
 
-    async def set_mysekai_convert_watch(self, qq: str, enabled: bool) -> None:
-        """Turn the converter-completion watch on or off for one QQ."""
+    async def set_mysekai_convert_watch(
+        self, qq: str, enabled: bool, game_user_id: str | None = None
+    ) -> list[str]:
+        """Turn the converter-completion watch on or off.
+
+        ``game_user_id=None`` covers every role bound to the QQ (or clears them
+        all); passing one id scopes the change to that role. Returns the role
+        ids the call touched, in binding order, so the caller can render uN.
+        """
+        now_ms = int(time.time() * 1000)
         async with self.connect() as connection:
-            if enabled:
-                await connection.execute(
-                    """
-                    INSERT INTO mysekai_convert_watches(qq, enabled_at)
-                    VALUES (?, ?)
-                    ON CONFLICT(qq) DO UPDATE SET enabled_at = excluded.enabled_at
-                    """,
-                    (qq, utc_now()),
-                )
-                # 订阅这一刻之前就已完成（甚至已领取）的槽不再补推，
-                # 否则刚订阅就被历史槽刷屏。
-                await connection.execute(
-                    """
-                    UPDATE mysekai_convert_slots
-                       SET notified = 1
-                     WHERE finish_at_ms <= ?
-                       AND game_user_id IN (
-                             SELECT game_user_id FROM mysekai_bindings WHERE qq = ?
-                       )
-                    """,
-                    (int(time.time() * 1000), qq),
-                )
-            else:
-                await connection.execute(
-                    "DELETE FROM mysekai_convert_watches WHERE qq = ?", (qq,)
-                )
-            await connection.commit()
+            await connection.execute("BEGIN IMMEDIATE")
+            try:
+                if enabled:
+                    rows = await (
+                        await connection.execute(
+                            """
+                            SELECT game_user_id FROM mysekai_bindings
+                             WHERE qq = ?
+                             ORDER BY created_at ASC, game_user_id ASC
+                            """,
+                            (qq,),
+                        )
+                    ).fetchall()
+                    targets = [row["game_user_id"] for row in rows]
+                    if game_user_id is not None:
+                        targets = [game_user_id]
+                    for target in targets:
+                        await connection.execute(
+                            """
+                            INSERT INTO mysekai_convert_watches(
+                                qq, game_user_id, enabled_at
+                            ) VALUES (?, ?, ?)
+                            ON CONFLICT(qq, game_user_id) DO UPDATE SET
+                                enabled_at = excluded.enabled_at
+                            """,
+                            (qq, target, utc_now()),
+                        )
+                    if targets:
+                        # 订阅这一刻之前就已完成（甚至已领取）的槽不再补推，
+                        # 否则刚订阅就被历史槽刷屏。范围必须与本次订阅一致，
+                        # 否则只订 u2 会把 u1 的待推槽一起静音。
+                        placeholders = ",".join("?" for _ in targets)
+                        await connection.execute(
+                            f"""
+                            UPDATE mysekai_convert_slots
+                               SET notified = 1
+                             WHERE finish_at_ms <= ?
+                               AND game_user_id IN ({placeholders})
+                            """,
+                            (now_ms, *targets),
+                        )
+                else:
+                    if game_user_id is None:
+                        await connection.execute(
+                            "DELETE FROM mysekai_convert_watches WHERE qq = ?",
+                            (qq,),
+                        )
+                    else:
+                        await connection.execute(
+                            """
+                            DELETE FROM mysekai_convert_watches
+                             WHERE qq = ? AND game_user_id = ?
+                            """,
+                            (qq, game_user_id),
+                        )
+                    targets = []
+                await connection.commit()
+            except Exception:
+                await connection.rollback()
+                raise
+        return targets
 
     async def clear_mysekai_water_watches(self) -> int:
         """Turn the watering watch off for every QQ.
@@ -1684,11 +1846,15 @@ class SQLiteRepository:
             )
             await connection.commit()
 
-    async def is_mysekai_convert_watch(self, qq: str) -> bool:
+    async def is_mysekai_convert_watch(self, qq: str, game_user_id: str) -> bool:
         async with self.connect() as connection:
             row = await (
                 await connection.execute(
-                    "SELECT 1 FROM mysekai_convert_watches WHERE qq = ?", (qq,)
+                    """
+                    SELECT 1 FROM mysekai_convert_watches
+                     WHERE qq = ? AND game_user_id = ?
+                    """,
+                    (qq, game_user_id),
                 )
             ).fetchone()
         return row is not None
@@ -1779,7 +1945,8 @@ class SQLiteRepository:
                   FROM mysekai_convert_slots s
                   JOIN mysekai_bindings b
                     ON b.game_user_id = s.game_user_id AND b.server = 'cn'
-                  JOIN mysekai_convert_watches w ON w.qq = b.qq
+                  JOIN mysekai_convert_watches w
+                    ON w.qq = b.qq AND w.game_user_id = b.game_user_id
                  WHERE s.notified = 0 AND s.finish_at_ms <= ?
                  ORDER BY s.finish_at_ms
                 """,

@@ -36,8 +36,9 @@ async def _repository(tmp_path: Path) -> SQLiteRepository:
             (QQ, GAME, STAMP, STAMP),
         )
         await connection.execute(
-            "INSERT INTO mysekai_convert_watches(qq, enabled_at) VALUES (?, ?)",
-            (QQ, STAMP),
+            "INSERT INTO mysekai_convert_watches(qq, game_user_id, enabled_at) "
+            "VALUES (?, ?, ?)",
+            (QQ, GAME, STAMP),
         )
         await connection.commit()
     return repository

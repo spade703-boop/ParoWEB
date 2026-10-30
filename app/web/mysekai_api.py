@@ -65,6 +65,15 @@ class WatchRequest(BaseModel):
     enabled: bool
 
 
+class ConvertWatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qq: str = Field(pattern=QQ_PATTERN)
+    enabled: bool
+    #: Omitted means every role bound to the QQ.
+    game_user_id: str | None = Field(default=None, pattern=GAME_ID_PATTERN)
+
+
 class WatchQueryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -357,17 +366,19 @@ async def water_watch_status(payload: WatchQueryRequest, request: Request):
 
 
 @internal_router.post("/convert-watch")
-async def convert_watch(payload: WatchRequest, request: Request):
-    """订阅/取消订阅转换机完成提醒。"""
+async def convert_watch(payload: ConvertWatchRequest, request: Request):
+    """订阅/取消订阅转换机完成提醒（不带 game_user_id 时覆盖全部角色）。"""
     auth_error = _internal_auth_error(request)
     if auth_error is not None:
         return auth_error
     service = _mysekai(request)
     try:
-        await service.set_convert_watch(payload.qq, payload.enabled)
+        result = await service.set_convert_watch(
+            payload.qq, payload.enabled, payload.game_user_id
+        )
     except MysekaiError as exc:
         return error_response(exc.status, exc.code, str(exc), exc.details)
-    return {"ok": True, "enabled": payload.enabled}
+    return {"ok": True, **result}
 
 
 @internal_router.get("/convert-due")

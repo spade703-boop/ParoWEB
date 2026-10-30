@@ -1211,32 +1211,58 @@ class MysekaiService:
         )
 
     # ------------------------------------------------------------------ data
-    async def set_convert_watch(self, qq: str, enabled: bool) -> None:
+    async def set_convert_watch(
+        self, qq: str, enabled: bool, game_user_id: str | None = None
+    ) -> dict:
         """订阅或取消转换机完成提醒。
 
-        订阅时顺手把最近一次抓包里的槽位写进提醒表：玩家完全可能是先上传
-        抓包、看到槽位在转，才决定订阅，这批数据已经在
-        ``mysekai_catalog_state`` 里，不该要求他再传一次。订阅之前就已走完
-        的槽不补推，只提醒还在转的。
+        ``game_user_id=None`` 作用于该 QQ 的全部已绑定角色，指定时只影响该角色。
+        订阅时顺手把每个角色最近一次抓包里的槽位写进提醒表：玩家完全可能是先
+        上传抓包、看到槽位在转，才决定订阅。订阅之前就已走完的槽不补推。
         """
-        binding = await self.repository.get_mysekai_binding(qq)
-        if enabled and binding is None:
+        bindings = await self.repository.list_mysekai_bindings(qq)
+        if enabled and not bindings:
             raise MysekaiError(
                 "请先绑定游戏账号，再订阅转换机提醒。",
                 code="not_bound",
                 status=409,
             )
-        await self.repository.set_mysekai_convert_watch(qq, enabled)
-        if not enabled or binding is None:
-            return
-        state = await self.repository.get_mysekai_catalog_state(
-            binding["server"], binding["game_user_id"]
+        if enabled and game_user_id is not None:
+            if not any(row["game_user_id"] == game_user_id for row in bindings):
+                raise BindingNotFound("这个游戏 ID 不属于这个 QQ 的绑定")
+
+        targets = await self.repository.set_mysekai_convert_watch(
+            qq, enabled, game_user_id
         )
-        slots = (state or {}).get("convert_slots") or []
-        if slots:
-            await self.repository.record_mysekai_convert_slots(
-                binding["game_user_id"], slots, quiet_past=True
-            )
+        roles = [
+            {"label": f"u{index}", "game_user_id": row["game_user_id"]}
+            for index, row in enumerate(bindings, 1)
+        ]
+
+        if enabled:
+            subscribed = set(targets)
+            for row in bindings:
+                if subscribed and row["game_user_id"] not in subscribed:
+                    continue
+                state = await self.repository.get_mysekai_catalog_state(
+                    row["server"], row["game_user_id"]
+                )
+                slots = (state or {}).get("convert_slots") or []
+                if slots:
+                    await self.repository.record_mysekai_convert_slots(
+                        row["game_user_id"], slots, quiet_past=True
+                    )
+
+        return {
+            "enabled": enabled,
+            "game_user_id": game_user_id,
+            "roles": roles,
+            "subscribed": [
+                f"u{index}"
+                for index, row in enumerate(bindings, 1)
+                if row["game_user_id"] in set(targets)
+            ],
+        }
 
     async def reset_water_watches(self) -> dict:
         """关闭全群浇水监听；轮次历史保留，重新开启后从头计数。"""
@@ -1736,7 +1762,9 @@ class MysekaiService:
             mysekai_rank=state.get("mysekai_rank"),
             refreshed_at_ms=state.get("refreshed_at_ms"),
         )
-        if await self.repository.is_mysekai_convert_watch(binding["qq"]):
+        if await self.repository.is_mysekai_convert_watch(
+            binding["qq"], game_user_id
+        ):
             await self.repository.record_mysekai_convert_slots(
                 game_user_id, slots
             )
@@ -1951,7 +1979,9 @@ class MysekaiService:
                 mysekai_rank=result.catalog_state.get("mysekai_rank"),
                 refreshed_at_ms=result.catalog_state.get("refreshed_at_ms"),
             )
-        if result.catalog_state is not None and await self.repository.is_mysekai_convert_watch(qq):
+        if result.catalog_state is not None and await self.repository.is_mysekai_convert_watch(
+            qq, binding["game_user_id"]
+        ):
             slots = result.catalog_state.get("convert_slots")
             if slots:
                 await self.repository.record_mysekai_convert_slots(
