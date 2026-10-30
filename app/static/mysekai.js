@@ -89,7 +89,7 @@ function rememberEntry(qq, gameUserId) {
   );
   entries.unshift({ qq, gameUserId, at: Date.now() });
   writeHistory(entries);
-  renderHistory();
+  if (!el.qqSuggest.classList.contains("hidden")) openSuggest();
 }
 
 function forgetEntry(entry) {
@@ -98,7 +98,7 @@ function forgetEntry(entry) {
       (item) => !(item.qq === entry.qq && item.gameUserId === entry.gameUserId)
     )
   );
-  renderHistory();
+  openSuggest();
 }
 
 function applyEntry(entry, { focus = true } = {}) {
@@ -129,77 +129,41 @@ function openSuggest() {
     return;
   }
   for (const entry of entries) {
-    const item = document.createElement("button");
-    item.type = "button";
+    const item = document.createElement("div");
     item.className = "suggest-item";
-    item.textContent = entry.gameUserId
+
+    const label = document.createElement("span");
+    label.className = "suggest-item__label";
+    label.textContent = entry.gameUserId
       ? `${entry.qq} | ${entry.gameUserId}`
       : entry.qq;
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "suggest-item__remove";
+    remove.setAttribute("aria-label", `删除记录 ${entry.qq}`);
+    remove.textContent = "×";
+
     // mousedown 早于 blur，避免点选时列表先被收起。
     item.addEventListener("mousedown", (event) => {
+      if (event.target === remove) return;
       event.preventDefault();
       applyEntry(entry);
     });
+    remove.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      forgetEntry(entry);
+    });
+
+    item.append(label, remove);
     el.qqSuggest.appendChild(item);
   }
-  // 列表展开时压住芯片：用表单级 class + CSS，比改芯片自身的 class 更抗重排。
-  el.uploadForm.classList.add("suggest-open");
   el.qqSuggest.classList.remove("hidden");
 }
 
 function closeSuggest() {
   el.qqSuggest.classList.add("hidden");
-  el.uploadForm.classList.remove("suggest-open");
-  if (readHistory().length) el.recentEntries.classList.remove("hidden");
-}
-
-function renderHistory() {
-  const entries = readHistory();
-  el.recentEntries.innerHTML = "";
-  el.qqSuggest.innerHTML = "";
-
-  if (!entries.length) {
-    el.recentEntries.classList.add("hidden");
-    closeSuggest();
-    return;
-  }
-  el.recentEntries.classList.remove("hidden");
-
-  for (const entry of entries.slice(0, 5)) {
-    const chip = document.createElement("span");
-    chip.className = "recent-chip";
-    chip.tabIndex = 0;
-    chip.setAttribute("role", "button");
-    chip.title = entry.gameUserId
-      ? `填充 QQ ${entry.qq} 与游戏 ID ${entry.gameUserId}`
-      : `填充 QQ ${entry.qq}`;
-
-    const label = document.createElement("span");
-    label.textContent = entry.gameUserId ? `${entry.qq} | ${entry.gameUserId}` : entry.qq;
-
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "recent-chip__remove";
-    remove.setAttribute("aria-label", `删除记录 ${entry.qq}`);
-    remove.textContent = "×";
-
-    chip.addEventListener("click", (event) => {
-      if (event.target !== remove) applyEntry(entry);
-    });
-    chip.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        applyEntry(entry);
-      }
-    });
-    remove.addEventListener("click", (event) => {
-      event.stopPropagation();
-      forgetEntry(entry);
-    });
-
-    chip.append(label, remove);
-    el.recentEntries.appendChild(chip);
-  }
 }
 
 function restoreInputs() {
@@ -226,7 +190,6 @@ const el = {
   qq: $("#qq"),
   gameId: $("#game-id"),
   qqSuggest: $("#qq-suggest"),
-  recentEntries: $("#recent-entries"),
   dropZone: $("#drop-zone"),
   dropTitle: $("#drop-title"),
   fileInput: $("#file-input"),
@@ -634,7 +597,6 @@ async function upgradeIosLink() {
 
 async function initialize() {
   migrateLegacyCookies();
-  renderHistory();
   restoreInputs();
   try {
     const data = await api("/api/v1/mysekai/session");

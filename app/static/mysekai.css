@@ -108,72 +108,49 @@
   overflow-y: auto;
 }
 
+/* ---------- 输入建议 ---------- */
+
 .suggest-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 10px 12px;
-  border: none;
   border-radius: 8px;
-  background: transparent;
   color: var(--ink);
   font-size: 14px;
   text-align: left;
   cursor: pointer;
 }
-.suggest-item:hover,
-.suggest-item:focus-visible {
+.suggest-item:hover {
   background: var(--paper-deep);
-  outline: none;
 }
-
-/* ---------- 最近输入 ---------- */
-
-.recent-entries {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
+.suggest-item__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
-/* 建议列表展开时隐藏芯片，避免同一组数据出现两次。 */
-.upload-card.suggest-open .recent-entries {
-  display: none !important;
-}
-.recent-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--paper-deep);
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
-  cursor: pointer;
-  transition: border-color .15s ease, color .15s ease;
-}
-.recent-chip:hover,
-.recent-chip:focus-visible {
-  border-color: var(--toya);
-  color: var(--ink);
-  outline: none;
-}
-.recent-chip__remove {
+.suggest-item__remove {
+  flex: none;
   display: inline-grid;
   place-items: center;
-  width: 16px;
-  height: 16px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: none;
   border-radius: 50%;
   background: transparent;
   color: var(--faint);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
 }
-.recent-chip__remove:hover { background: var(--line); color: var(--ink); }
+.suggest-item__remove:hover {
+  background: var(--line);
+  color: var(--ink);
+}
 
 .form-status.is-ok { color: #2f7d4f; }
 
