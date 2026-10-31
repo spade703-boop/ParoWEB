@@ -115,16 +115,6 @@ CREATE TABLE IF NOT EXISTS mysekai_visit_totals (
     PRIMARY KEY (server, game_user_id)
 );
 
--- 月卡缓存：抓包只在月卡变化时下发 `userMysekaiColorfulPass`，这里按角色
--- 记住最近一次见到的到期时间，资料卡才有一个稳定状态可显示。
-CREATE TABLE IF NOT EXISTS mysekai_pass_state (
-    server TEXT NOT NULL,
-    game_user_id TEXT NOT NULL,
-    expired_at_ms INTEGER NOT NULL,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (server, game_user_id)
-);
-
 -- 来访基线：`day` 是游戏日（05:00 到次日 04:59 的归属日期），不是自然日。
 CREATE TABLE IF NOT EXISTS mysekai_visit_baselines (
     qq TEXT NOT NULL,
@@ -1479,40 +1469,6 @@ class SQLiteRepository:
                     captured_at_ms,
                     utc_now(),
                 ),
-            )
-            await connection.commit()
-
-    async def get_mysekai_pass_expiry(
-        self, server: str, game_user_id: str
-    ) -> int | None:
-        """This role's last-seen monthly-pass expiry, or ``None`` if never seen."""
-        async with self.connect() as connection:
-            row = await (
-                await connection.execute(
-                    """
-                    SELECT expired_at_ms FROM mysekai_pass_state
-                     WHERE server = ? AND game_user_id = ?
-                    """,
-                    (server, game_user_id),
-                )
-            ).fetchone()
-        return None if row is None else int(row["expired_at_ms"])
-
-    async def set_mysekai_pass_expiry(
-        self, server: str, game_user_id: str, expired_at_ms: int
-    ) -> None:
-        """Remember the expiry the capture just carried (renewals update it)."""
-        async with self.connect() as connection:
-            await connection.execute(
-                """
-                INSERT INTO mysekai_pass_state(
-                    server, game_user_id, expired_at_ms, updated_at
-                ) VALUES (?, ?, ?, ?)
-                ON CONFLICT(server, game_user_id) DO UPDATE SET
-                    expired_at_ms = excluded.expired_at_ms,
-                    updated_at = excluded.updated_at
-                """,
-                (server, game_user_id, int(expired_at_ms), utc_now()),
             )
             await connection.commit()
 

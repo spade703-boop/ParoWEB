@@ -1116,40 +1116,6 @@ def _profile_header(headers: dict) -> dict:
     return _json.loads(base64.urlsafe_b64decode(padded))
 
 
-async def test_cached_pass_expiry_rides_the_profile_header(
-    client: httpx.AsyncClient,
-) -> None:
-    """月卡只在变化时下发：第一次记下来，后面每次上传都带上缓存值。"""
-    headers: list[dict] = []
-    service = client._transport.app.state.services.mysekai  # type: ignore[attr-defined]
-    service.transport = _mock_transport(
-        submit_headers=headers,
-        submit_colorful_pass={"pass_id": 1, "expired_at_ms": 1794000000000},
-    )
-    await _bind(client)
-    await _login(client)
-
-    payload = {
-        "qq": QQ,
-        "game_user_id": GAME_ID,
-        "region": "cn",
-        "file_base64": base64.b64encode(b"capture").decode(),
-    }
-    first = await client.post(
-        "/api/v1/mysekai/submit", json=payload, headers={"Origin": "http://testserver"}
-    )
-    assert first.status_code == 200, first.text
-
-    service.transport = _mock_transport(submit_headers=headers)  # 之后不再下发月卡
-    second = await client.post(
-        "/api/v1/mysekai/submit", json=payload, headers={"Origin": "http://testserver"}
-    )
-    assert second.status_code == 200, second.text
-
-    assert _profile_header(headers[0]).get("pass_expired_at_ms") is None
-    assert _profile_header(headers[1])["pass_expired_at_ms"] == 1794000000000
-
-
 async def test_visit_chart_uses_the_last_capture(client: httpx.AsyncClient) -> None:
     """来访排行图取该角色最近一次抓包存下的 visitCount。"""
     service = client._transport.app.state.services.mysekai  # type: ignore[attr-defined]
@@ -1192,3 +1158,28 @@ async def test_visit_chart_without_a_capture_reports_no_capture(
 
     assert chart.status_code == 404
     assert chart.json()["error"]["code"] == "no_capture"
+
+
+async def test_visit_totals_accumulate_across_uploads(client: httpx.AsyncClient) -> None:
+    """累计计数只增不减：当天名单清空后，来过一次的角色仍留在统计里。"""
+    service = client._transport.app.state.services.mysekai  # type: ignore[attr-defined]
+    await _bind(client)
+    await _login(client)
+    payload = {
+        "qq": QQ,
+        "game_user_id": GAME_ID,
+        "region": "cn",
+        "file_base64": base64.b64encode(b"capture").decode(),
+    }
+
+    for counts in ({"1": 7, "2": 10}, {"2": 12}):
+        service.transport = _mock_transport(submit_visit_counts=counts)
+        response = await client.post(
+            "/api/v1/mysekai/submit", json=payload, headers={"Origin": "http://testserver"}
+        )
+        assert response.status_code == 200, response.text
+
+    repository = client._transport.app.state.services.repository  # type: ignore[attr-defined]
+    row = await repository.get_mysekai_visit_totals("cn", GAME_ID)
+    assert row is not None
+    assert row["groups"] == {"1": 7, "2": 12}
