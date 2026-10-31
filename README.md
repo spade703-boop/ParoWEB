@@ -205,7 +205,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 - 生产真源 = Bot 的 data 目录（`PARO_BOT_DATA_DIR`）；仓库内 `content/` 只是本地副本，改它对线上无效。
 - `paro_pools.json`（派生条目）、`paro_config.json`（彩蛋概率）放在 `data/paro/`；头像放在
-  `data/images/paro_avatars/{彰人,冬弥,fox&rabbit}/`。
+  `data/images/paro_avatars/{彰人,冬弥,fox&rabbit,dog&fox}/`。
 - 改 JSON 或换头像后**无需重启**：网站按文件签名热重载，图片 URL 自带 `?v=<修改时间>`，访客不用清缓存。
 - ⚠️ Bot 侧两个 JSON 是内存缓存，改名或加减派生需要超级用户发一次「重载配置 数据」；**只换图不用发**。
 - ⚠️ 共用图片一律存 `.png` / `.jpg` / `.jpeg`（Bot 不认 `.webp`）；文件需对 UID 10001 可读（`install -m 644`）。
@@ -215,17 +215,20 @@ docker compose -f docker-compose.prod.yml up -d --build
 <summary>彩蛋配置怎么写（细节）</summary>
 
 `paro_config.json` 的 `egg_categories`：每个大类给 `id` / `rate` / `priority` / `result_type` / `outcomes`。
-当前 `foxrabbit` 3%（priority 100）+ `cooking` 3%（priority 0）。
+当前 `foxrabbit` 3%（priority 100）+ `dogfox` 3%（priority 50）+
+`cooking` 3%（priority 0），总彩蛋率 9%。
 
 - 一条抽取**只取一次随机数**，按 `priority` 降序累加 `rate` 划互斥区间 —— 不要拆成两次判定。
-- `rate` 是占单次抽取的绝对比例，两类相加就是 6%。
+- `rate` 是占单次抽取的绝对比例，三个大类相加就是 9%。
 - `result_type=special` 在 `outcomes` 内按 `weight` 加权选一个；`cooking` 直接产出普通配对做饭。
-- `counts_as_cooking` 只影响统计与展示，不参与概率（只有狐兔饭是 `true`）。
+- `asset_dir` 指向该大类在 `paro_avatars/` 下的素材目录；`layout` 支持 `single` / `pair` / `wide`。
+- `accents` 声明标签使用橙色 `a` 或蓝色 `t`；狗狐沿用狗橙、狐蓝。
+- `counts_as_cooking` 只影响统计与展示，不参与概率（狐兔饭、狗狐饭为 `true`）。
 - `unique_per_draw: true` 表示同一次抽取内该结果最多出现一次，实现是摇之前先剔除已命中的唯一分支。
 - 约束：大类 `id` 唯一、结果 `id` 跨大类全局唯一、`weight` 为正数、`rate` 之和 ≤ 1、`priority` 为整数。
 - 配错了不会崩：热重载失败时保留上一份有效快照，日志打 `Content reload failed`。
 
-多图轮换：主图 `狐&兔.png` + 变体 `狐&兔_2.png`（下划线后必须是纯数字）。轮换按 `assets` 每个槽位各轮各的，
+多图轮换：主图 `狐&兔.png` / `狗&狐.png` + `_2` 变体（下划线后必须是纯数字）。轮换按 `assets` 每个槽位各轮各的，
 抽中那张**存进记录**、历史回看永远是当时那张；统计汇总与导出固定用主图。
 
 </details>
@@ -245,7 +248,6 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 ## 后续规划
 
-- 新增特殊彩蛋：狗狐
 - 新增特殊彩蛋：派生随机变成狐 / 兔形态
 
 ## 说明

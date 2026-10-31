@@ -199,6 +199,24 @@
     context.fillText(String(fallback || "?").slice(0, 1), x + size / 2, y + size / 2);
   }
 
+  function drawWideSpecial(context, image, fallback, centerX, centerY, maxWidth, maxHeight) {
+    if (!image) {
+      drawAvatar(context, null, fallback, centerX - 56, centerY - 56, 112, COLORS.specialInk);
+      return;
+    }
+    const scale = Math.min(maxWidth / image.naturalWidth, maxHeight / image.naturalHeight);
+    const width = image.naturalWidth * scale;
+    const height = image.naturalHeight * scale;
+    const x = centerX - width / 2;
+    const y = centerY - height / 2;
+    fillRounded(context, x, y, width, height, 18, COLORS.cardDeep, COLORS.lineSoft, 2);
+    context.save();
+    roundedPath(context, x, y, width, height, 18);
+    context.clip();
+    context.drawImage(image, x, y, width, height);
+    context.restore();
+  }
+
   function drawBadge(context, x, y, text, background, foreground) {
     context.font = `700 24px ${FONT}`;
     const width = Math.max(116, context.measureText(text).width + 54);
@@ -281,27 +299,39 @@
 
   function drawSpecialCard(context, item, assets, y) {
     const height = itemHeight(item);
-    const foxbun = item.special_type === "foxbun";
+    const specialMeal = Boolean(item.counts_as_cooking);
     const textX = MARGIN + 450;
     const textWidth = WIDTH - MARGIN - 34 - textX;
     fillRounded(context, MARGIN, y, CONTENT_WIDTH, height, 28, COLORS.specialBg, COLORS.specialLine, 2);
     const urls = item.special_asset_urls || [];
-    const size = 112;
-    const gap = 14;
-    const count = Math.max(1, Math.min(3, urls.length));
-    const groupWidth = count * size + (count - 1) * gap;
-    const startX = MARGIN + 300 - groupWidth / 2;
-    for (let index = 0; index < count; index += 1) {
-      const url = urls[index];
-      drawAvatar(context, assets.get(url), item.special_label, startX + index * (size + gap), y + 68, size, COLORS.specialInk);
+    if (item.special_layout === "wide") {
+      const url = urls[0];
+      drawWideSpecial(context, assets.get(url), item.special_label, MARGIN + 300, y + 125, 260, 150);
+    } else {
+      const size = 112;
+      const gap = 14;
+      const count = Math.max(1, Math.min(3, urls.length));
+      const groupWidth = count * size + (count - 1) * gap;
+      const startX = MARGIN + 300 - groupWidth / 2;
+      for (let index = 0; index < count; index += 1) {
+        const url = urls[index];
+        drawAvatar(context, assets.get(url), item.special_label, startX + index * (size + gap), y + 68, size, COLORS.specialInk);
+      }
     }
 
     context.textAlign = "left";
     context.textBaseline = "alphabetic";
     context.font = `700 34px ${FONT}`;
-    const title = foxbun ? "发现了一对正在贴贴的狐兔" : truncate(context, item.special_label || "特殊结果", textWidth);
+    const title = specialMeal
+      ? truncate(context, item.special_message || item.special_label || "特殊结果", textWidth)
+      : truncate(context, item.special_label || "特殊结果", textWidth);
     context.font = `400 25px ${FONT}`;
-    const bodyLines = wrapLines(context, foxbun ? "快来做狐兔饭吧！" : item.special_message || "", textWidth, 2);
+    const bodyLines = wrapLines(
+      context,
+      specialMeal ? `快来做${item.special_label || "这份饭"}吧！` : item.special_message || "",
+      textWidth,
+      2,
+    );
     const textOffsetY = specialTextOffsetY(bodyLines.length);
 
     context.fillStyle = COLORS.specialInk;
@@ -314,7 +344,7 @@
       context.fillText(line, textX, y + SPECIAL_BODY_BASE + textOffsetY + index * SPECIAL_BODY_STEP);
     });
     if (item.counts_as_cooking) {
-      drawBadge(context, MARGIN + CONTENT_WIDTH - 18, y + 18, foxbun ? "★ 做饭" : "★ 计入做饭", COLORS.cookChip, COLORS.cookText);
+      drawBadge(context, MARGIN + CONTENT_WIDTH - 18, y + 18, "★ 做饭", COLORS.cookChip, COLORS.cookText);
     }
   }
 

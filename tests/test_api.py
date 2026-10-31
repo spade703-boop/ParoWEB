@@ -98,9 +98,14 @@ async def test_session_catalog_draw_profile_and_clear(client: httpx.AsyncClient)
     assert catalog_payload["akito"]
     assert [category["id"] for category in catalog_payload["egg_categories"]] == [
         "foxrabbit",
+        "dogfox",
         "cooking",
     ]
-    assert [category["rate"] for category in catalog_payload["egg_categories"]] == [0.03, 0.03]
+    assert [category["rate"] for category in catalog_payload["egg_categories"]] == [
+        0.03,
+        0.03,
+        0.03,
+    ]
     assert catalog_payload["egg_categories"][0]["outcomes"] == [
         "fox",
         "rabbit",
@@ -109,11 +114,22 @@ async def test_session_catalog_draw_profile_and_clear(client: httpx.AsyncClient)
         "pancake",
         "cookie",
     ]
+    assert catalog_payload["egg_categories"][1]["outcomes"] == [
+        "dog",
+        "gori",
+        "doggori",
+        "doggoribun",
+    ]
     special_outcomes = {
         outcome["id"]: outcome for outcome in catalog_payload["special_outcomes"]
     }
     assert special_outcomes["fox"]["category_id"] == "foxrabbit"
     assert special_outcomes["foxbun"]["counts_as_cooking"] is True
+    assert special_outcomes["doggori"]["category_id"] == "dogfox"
+    assert special_outcomes["doggori"]["layout"] == "pair"
+    assert special_outcomes["doggoribun"]["counts_as_cooking"] is True
+    assert special_outcomes["doggoribun"]["layout"] == "wide"
+    assert special_outcomes["doggoribun"]["accents"] == {"dog": "a", "fox": "t"}
     # 松饼 / 曲奇 是过路彩蛋：不计入做饭，文案带硬换行，前端按行渲染
     assert special_outcomes["pancake"]["counts_as_cooking"] is False
     assert special_outcomes["cookie"]["counts_as_cooking"] is False

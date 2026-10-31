@@ -495,6 +495,10 @@ html.no-js .picker__panel { display: none; }
   width: 84px; height: 84px; border-radius: 12px; object-fit: cover;
   background: var(--paper-deep);
 }
+.special-icons.is-wide { min-width: min(280px, 34vw); justify-content: center; }
+.special-icons.is-wide img {
+  width: auto; height: auto; max-width: min(280px, 34vw); max-height: 150px; object-fit: contain;
+}
 .special-icons .fallback {
   width: 84px; height: 84px; border-radius: 12px; display: grid; place-items: center;
   background: var(--sp-chip); color: var(--sp-ink); font-size: 30px;
@@ -710,7 +714,7 @@ html.no-js .picker__panel { display: none; }
 .community-updated { margin: 0; color: var(--faint); font-size: 11.5px; }
 
 /* 单人纪录：框体、字号、跨端逻辑全部沿用上方的 .community-total，这里只补差额 */
-.community-total--record { margin-top: 12px; }
+.community-total--record { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 12px; }
 .community-total__value { display: inline-flex; align-items: baseline; gap: 4px; }
 .community-total__lead { color: var(--muted); font-size: 13px; font-weight: 700; }
 .community-total__value small { color: var(--muted); font-size: 14px; font-weight: 700; }
@@ -1027,6 +1031,8 @@ dialog::backdrop { background: rgba(30, 28, 25, .48); backdrop-filter: blur(3px)
 
   .special-body { gap: 11px; }
   .special-icons img, .special-icons .fallback { width: 64px; height: 64px; }
+  .special-icons.is-wide { min-width: min(160px, 36vw); }
+  .special-icons.is-wide img { width: auto; height: auto; max-width: min(160px, 36vw); max-height: 110px; }
   .special-text strong { font-size: 14px; }
   .special-text p { font-size: 11px; }
 
@@ -1096,6 +1102,11 @@ dialog::backdrop { background: rgba(30, 28, 25, .48); backdrop-filter: blur(3px)
    → 视口 760 以上（平板竖屏 768/834）仍是一行四张，手机才换行。 */
 @media (max-width: 759px) {
   .pool-grid--special { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .community-total--record { grid-template-columns: minmax(0, 1fr); }
+  .community-total--record .community-total__item + .community-total__item {
+    margin: 14px 0 0; padding: 14px 0 0;
+    border-top: 1px solid var(--line); border-left: 0;
+  }
 }
 
 @media (max-width: 560px) {

@@ -76,6 +76,9 @@ class DrawService:
                     "special_type": result.special_type,
                     "special_label": outcome_map[result.special_type].label if result.special_type else None,
                     "special_message": outcome_map[result.special_type].message if result.special_type else None,
+                    "special_layout": outcome_map[result.special_type].layout if result.special_type else None,
+                    "special_tags": list(outcome_map[result.special_type].tags) if result.special_type else [],
+                    "special_accents": outcome_map[result.special_type].accents if result.special_type else {},
                     "special_asset_urls": snapshot.asset_urls_for(
                         result.special_type, result.special_asset_stems
                     ),

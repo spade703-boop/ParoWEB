@@ -131,6 +131,7 @@ const el = {
   recordGrid: $("#record-grid"),
   recordCooking: $("#record-cooking"),
   recordFoxrabbit: $("#record-foxrabbit"),
+  recordDogfox: $("#record-dogfox"),
   communityCookPairList: $("#community-cook-pair-list"),
   resultArea: $('[data-view="draw"] .result-area'),
   statsScopeButtons: $$('[data-stats-scope]'),
@@ -369,15 +370,18 @@ function buildPairRow(result) {
 }
 
 function buildSpecialRow(result) {
+  const layout = ["single", "pair", "wide"].includes(result.special_layout)
+    ? result.special_layout
+    : "single";
   const article = document.createElement("article");
-  article.className = "row row--special";
+  article.className = `row row--special row--special-${layout}`;
 
   const main = div("row__main");
   const index = div("row__index");
   index.append(span("row__num", `#${result.position}`));
 
   const body = div("special-body");
-  const icons = div("special-icons");
+  const icons = div(`special-icons is-${layout}`);
   const urls = result.special_asset_urls || [];
   if (urls.length) {
     urls.forEach((url) => icons.append(rawAvatar(url, result.special_label, "fallback")));
@@ -756,6 +760,7 @@ function poolCard(item) {
 
 function eggCategoryLabel(category) {
   if (category.id === "foxrabbit") return "狐兔类";
+  if (category.id === "dogfox") return "狗狐类";
   if (category.id === "cooking") return "普通做饭";
   return category.id;
 }
@@ -768,12 +773,6 @@ function formatEggRate(rate) {
 function eggRateOf(id) {
   const category = (state.catalog?.egg_categories || []).find((item) => item.id === id);
   return category ? formatEggRate(category.rate) : "";
-}
-
-// 目前只有一个特殊彩蛋大类，叫得出名字就写「狐兔类彩蛋」；以后加了新大类再退成泛称。
-function specialCategoryLabel() {
-  const categories = (state.catalog?.egg_categories || []).filter((item) => item.result_type === "special");
-  return categories.length === 1 ? `${eggCategoryLabel(categories[0])}彩蛋` : "特殊彩蛋";
 }
 
 function setStackOpen(stack, open) {
@@ -827,8 +826,9 @@ function iconStack(urls, label) {
 }
 
 function specialCard(item) {
-  const card = div(`special-card${item.counts_as_cooking ? " is-cook" : ""}`);
-  const icons = div("special-card__icons");
+  const layout = ["single", "pair", "wide"].includes(item.layout) ? item.layout : "single";
+  const card = div(`special-card is-${layout}${item.counts_as_cooking ? " is-cook" : ""}`);
+  const icons = div(`special-card__icons is-${layout}`);
   const groups = (item.variant_urls || []).filter((group) => group && group.length);
   const piles = groups.length ? groups : (item.asset_urls || []).map((url) => [url]);
   if (!piles.length) icons.append(rawAvatar(null, item.label, "fallback"));
@@ -899,17 +899,21 @@ function renderPoolDesktop(matches) {
   });
 
   if (filter === "all" || filter === "special") {
-    const specials = matches.special;
-    if (specials.length) {
+    const categories = (state.catalog.egg_categories || []).filter(
+      (category) => category.result_type === "special",
+    );
+    categories.forEach((category) => {
+      const specials = matches.special.filter((item) => item.category_id === category.id);
+      if (!specials.length) return;
       const section = document.createElement("section");
       section.className = "pool-section";
       const head = div("pool-section__head");
       const wrap = div("pool-section__title");
       wrap.append(span("pool-section__dot dot-special"));
       const heading = document.createElement("h2");
-      heading.textContent = "特殊结果";
+      heading.textContent = `${eggCategoryLabel(category)}彩蛋`;
       wrap.append(heading);
-      wrap.append(span("pool-section__count", `${specialCategoryLabel()}共有${specials.length}种`));
+      wrap.append(span("pool-section__count", `共有 ${specials.length} 种`));
       head.append(wrap);
       const note = span("pool-section__count", "抽中时占掉一个抽取位，不组成配对");
       head.append(note);
@@ -919,7 +923,7 @@ function renderPoolDesktop(matches) {
       specials.forEach((item) => grid.append(specialCard(item)));
       section.append(grid);
       nodes.push(section);
-    }
+    });
   }
 
   el.poolPager.classList.add("hidden");
@@ -1041,11 +1045,15 @@ function renderPool() {
     return;
   }
   const counts = poolCounts();
-  const cooking = eggRateOf("cooking");
-  const foxrabbit = eggRateOf("foxrabbit");
   let summary = `共 ${counts.all} 个派生：彰人 ${counts.akito} / 冬弥 ${counts.toya}`;
-  if (cooking && foxrabbit) {
-    summary += `　有${cooking}概率抽到做饭，另有${foxrabbit}概率抽到狐兔彩蛋`;
+  const chanceParts = (state.catalog.egg_categories || []).map((category) => {
+    const label = category.result_type === "cooking"
+      ? "做饭"
+      : `${eggCategoryLabel(category)}彩蛋`;
+    return `${formatEggRate(category.rate)}概率抽到${label}`;
+  });
+  if (chanceParts.length) {
+    summary += `　有${chanceParts.join("，另有")}`;
   }
   el.poolSummary.textContent = summary;
   const matches = poolMatches();
@@ -1260,6 +1268,7 @@ function renderRecordHolders(stats) {
   el.recordGrid.classList.remove("hidden");
   paintRecordValue(el.recordCooking, holders.cooking);
   paintRecordValue(el.recordFoxrabbit, holders.specials?.foxrabbit);
+  paintRecordValue(el.recordDogfox, holders.specials?.doggori);
 }
 
 function renderCommunityStats(message = null) {

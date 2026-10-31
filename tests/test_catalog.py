@@ -227,7 +227,11 @@ def test_invalid_new_catalog_is_rejected(tmp_path, config: dict) -> None:
 
 
 def _fox_assets(tmp_path, filenames: dict[str, int]) -> None:
-    folder = tmp_path / "images" / "paro_avatars" / "fox&rabbit"
+    _special_assets(tmp_path, "fox&rabbit", filenames)
+
+
+def _special_assets(tmp_path, folder_name: str, filenames: dict[str, int]) -> None:
+    folder = tmp_path / "images" / "paro_avatars" / folder_name
     folder.mkdir(parents=True, exist_ok=True)
     for name, size in filenames.items():
         (folder / name).write_bytes(b"\0" * size)
@@ -305,6 +309,57 @@ def test_unique_per_draw_is_parsed_and_defaults_to_false(tmp_path) -> None:
     snapshot = CatalogService(tmp_path).snapshot
     flags = {outcome.id: outcome.unique_per_draw for outcome in snapshot.special_outcomes}
     assert flags == {"marked": True, "plain": False}
+
+
+def test_special_category_uses_configured_directory_layout_and_accents(tmp_path) -> None:
+    _write_catalog(
+        tmp_path,
+        config={
+            "egg_categories": [
+                _special_category(
+                    "dogfox",
+                    rate=0.03,
+                    asset_dir="dog&fox",
+                    accents={"dog": "a", "fox": "t"},
+                    outcomes=[
+                        _outcome("dog", tags=["dog"], assets=["狗"], layout="single"),
+                        _outcome(
+                            "doggori",
+                            tags=["dog", "fox"],
+                            assets=["狗", "狐"],
+                            layout="pair",
+                        ),
+                        _outcome(
+                            "doggoribun",
+                            tags=["dog", "fox"],
+                            assets=["狗&狐"],
+                            layout="wide",
+                            counts_as_cooking=True,
+                        ),
+                    ],
+                )
+            ]
+        },
+    )
+    _special_assets(
+        tmp_path,
+        "dog&fox",
+        {"狗.png": 16, "狐.png": 16, "狗&狐.png": 16, "狗&狐_2.png": 16},
+    )
+
+    snapshot = CatalogService(tmp_path).snapshot
+    doggori = snapshot.outcome_map()["doggori"]
+    doggoribun = snapshot.outcome_map()["doggoribun"]
+
+    assert doggori.asset_dir == "dog&fox"
+    assert doggori.layout == "pair"
+    assert doggori.accents == {"dog": "a", "fox": "t"}
+    assert all("dog&fox" in url for url in snapshot.special_assets["doggori"])
+    assert tuple(snapshot.special_variant_urls["doggoribun"]["狗&狐"]) == (
+        "狗&狐",
+        "狗&狐_2",
+    )
+    assert doggoribun.counts_as_cooking is True
 
 
 def test_failed_hot_reload_keeps_previous_snapshot(tmp_path) -> None:

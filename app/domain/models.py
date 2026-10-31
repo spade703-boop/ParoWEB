@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 
@@ -21,6 +21,10 @@ class SpecialOutcome:
     counts_as_cooking: bool
     # 同一次抽取内该结果最多出现一次（狐兔饭用）。默认 False，老配置不受影响。
     unique_per_draw: bool = False
+    # 素材目录、布局与配色都由大类配置下发；默认值兼容旧版狐兔配置。
+    asset_dir: str = "fox&rabbit"
+    layout: Literal["single", "pair", "wide"] = "single"
+    accents: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

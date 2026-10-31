@@ -5,11 +5,14 @@
       "rate": 0.03,
       "priority": 100,
       "result_type": "special",
+      "asset_dir": "fox&rabbit",
+      "accents": { "fox": "a", "rabbit": "t" },
       "outcomes": [
         {
           "id": "fox",
           "label": "狐狸",
           "weight": 1,
+          "layout": "single",
           "tags": ["fox"],
           "assets": ["狐"],
           "message": "一只得意的狐狸赶走了这里的派生。",
@@ -20,6 +23,7 @@
           "id": "rabbit",
           "label": "兔子",
           "weight": 1,
+          "layout": "single",
           "tags": ["rabbit"],
           "assets": ["兔"],
           "message": "一只圆圆的兔子挡住了这里的派生。",
@@ -30,6 +34,7 @@
           "id": "foxrabbit",
           "label": "狐兔",
           "weight": 1,
+          "layout": "pair",
           "tags": ["fox", "rabbit"],
           "assets": ["狐", "兔"],
           "message": "一对眼熟的狐兔出现在了这里……",
@@ -40,6 +45,7 @@
           "id": "foxbun",
           "label": "狐兔饭",
           "weight": 1,
+          "layout": "wide",
           "tags": ["fox", "rabbit"],
           "assets": ["狐&兔"],
           "message": "发现了一对正在贴贴的狐兔！",
@@ -51,6 +57,7 @@
           "id": "pancake",
           "label": "松饼",
           "weight": 1,
+          "layout": "single",
           "tags": ["fox"],
           "assets": ["松饼"],
           "message": "这里只有一盘松饼。\n也许是某只狐狸放在这里的。",
@@ -60,10 +67,62 @@
           "id": "cookie",
           "label": "曲奇",
           "weight": 1,
+          "layout": "single",
           "tags": ["rabbit"],
           "assets": ["曲奇"],
           "message": "这里只有一盘曲奇。\n也许是某只兔子放在这里的。",
           "counts_as_cooking": false
+        }
+      ]
+    },
+    {
+      "id": "dogfox",
+      "rate": 0.03,
+      "priority": 50,
+      "result_type": "special",
+      "asset_dir": "dog&fox",
+      "accents": { "dog": "a", "fox": "t" },
+      "outcomes": [
+        {
+          "id": "dog",
+          "label": "狗",
+          "weight": 1,
+          "layout": "single",
+          "tags": ["dog"],
+          "assets": ["狗"],
+          "message": "一只飞过的狗宾遮住了这里的派生。",
+          "counts_as_cooking": false
+        },
+        {
+          "id": "gori",
+          "label": "狐",
+          "weight": 1,
+          "layout": "single",
+          "tags": ["fox"],
+          "assets": ["狐"],
+          "message": "一只能干的狐狸正在这里找松饼材料。",
+          "counts_as_cooking": false
+        },
+        {
+          "id": "doggori",
+          "label": "狗狐",
+          "weight": 1,
+          "layout": "pair",
+          "tags": ["dog", "fox"],
+          "assets": ["狗", "狐"],
+          "message": "一对眼熟的狗狐出现在了这里……",
+          "counts_as_cooking": false
+        },
+        {
+          "id": "doggoribun",
+          "label": "狗狐饭",
+          "weight": 1,
+          "layout": "wide",
+          "tags": ["dog", "fox"],
+          "assets": ["狗&狐"],
+          "message": "发现了一对正在贴贴的狗狐！",
+          "counts_as_cooking": true,
+          "unique_per_draw": true
         }
       ]
     },

@@ -108,12 +108,13 @@ class CatalogService:
             outcome.id: tuple(
                 url
                 for asset in outcome.assets
-                if (url := self._asset_url("fox&rabbit", asset)) is not None
+                if (url := self._asset_url(outcome.asset_dir, asset)) is not None
             )
             for outcome in outcomes
         }
         special_variant_urls = {
-            outcome.id: self._stem_urls(outcome.assets) for outcome in outcomes
+            outcome.id: self._stem_urls(outcome.asset_dir, outcome.assets)
+            for outcome in outcomes
         }
         digest = hashlib.sha256(pools_bytes + b"\0" + config_bytes).hexdigest()[:16]
         return CatalogSnapshot(
@@ -126,13 +127,15 @@ class CatalogService:
             special_variant_urls=special_variant_urls,
         )
 
-    def _stem_urls(self, assets: tuple[str, ...]) -> dict[str, dict[str, str]]:
+    def _stem_urls(
+        self, folder: str, assets: tuple[str, ...]
+    ) -> dict[str, dict[str, str]]:
         """按 assets 槽位分组收候选图：{槽位: {stem: URL}}，主图在最前。"""
         grouped: dict[str, dict[str, str]] = {}
         for asset in assets:
             urls: dict[str, str] = {}
-            for stem in self._variant_stems("fox&rabbit", asset):
-                url = self._asset_url("fox&rabbit", stem)
+            for stem in self._variant_stems(folder, asset):
+                url = self._asset_url(folder, stem)
                 if url is not None:
                     urls[stem] = url
             grouped[asset] = urls
@@ -211,8 +214,31 @@ class CatalogService:
                 raise CatalogError("彩蛋大类 result_type 必须是 special 或 cooking")
             priority = cls._validate_priority(item.get("priority"), category_id)
             rate = cls._validate_rate(item.get("rate"), f"彩蛋大类 {category_id} 的 rate")
+            asset_dir = str(item.get("asset_dir") or "fox&rabbit").strip()
+            if (
+                not asset_dir
+                or asset_dir in {".", ".."}
+                or any(character in asset_dir for character in '<>:"/\\|?*')
+            ):
+                raise CatalogError(f"彩蛋大类 {category_id} 的 asset_dir 不是合法目录名")
+            raw_accents = item.get("accents", {})
+            if not isinstance(raw_accents, dict):
+                raise CatalogError(f"彩蛋大类 {category_id} 的 accents 必须是对象")
+            accents = {
+                str(tag).strip(): str(accent).strip()
+                for tag, accent in raw_accents.items()
+                if str(tag).strip()
+            }
+            if any(accent not in {"a", "t"} for accent in accents.values()):
+                raise CatalogError(f"彩蛋大类 {category_id} 的 accents 只支持 a 或 t")
             outcomes = (
-                cls._validate_outcomes(item.get("outcomes"), category_id, seen_outcome_ids)
+                cls._validate_outcomes(
+                    item.get("outcomes"),
+                    category_id,
+                    seen_outcome_ids,
+                    asset_dir=asset_dir,
+                    accents=accents,
+                )
                 if result_type == "special"
                 else ()
             )
@@ -236,6 +262,9 @@ class CatalogService:
         raw: object,
         category_id: str,
         seen_ids: set[str],
+        *,
+        asset_dir: str,
+        accents: dict[str, str],
     ) -> tuple[SpecialOutcome, ...]:
         if not isinstance(raw, list) or not raw:
             raise CatalogError(f"特殊彩蛋大类 {category_id} 的 outcomes 必须是非空列表")
@@ -258,6 +287,19 @@ class CatalogService:
             assets = tuple(str(asset).strip() for asset in raw_assets if str(asset).strip())
             if not math.isfinite(weight) or weight <= 0:
                 raise CatalogError("特殊结果权重必须是有限正数")
+            raw_layout = item.get("layout")
+            if raw_layout is None:
+                layout = (
+                    "pair"
+                    if len(assets) > 1
+                    else "wide"
+                    if len(assets) == 1 and "&" in assets[0]
+                    else "single"
+                )
+            else:
+                layout = str(raw_layout).strip()
+            if layout not in {"single", "pair", "wide"}:
+                raise CatalogError("特殊结果 layout 必须是 single、pair 或 wide")
             outcomes.append(
                 SpecialOutcome(
                     id=outcome_id,
@@ -269,6 +311,9 @@ class CatalogService:
                     message=str(item.get("message") or item.get("label") or outcome_id),
                     counts_as_cooking=bool(item.get("counts_as_cooking", False)),
                     unique_per_draw=bool(item.get("unique_per_draw", False)),
+                    asset_dir=asset_dir,
+                    layout=layout,
+                    accents=dict(accents),
                 )
             )
             seen_ids.add(outcome_id)
