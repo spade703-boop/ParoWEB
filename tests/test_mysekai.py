@@ -135,6 +135,8 @@ def _mock_transport(
                 body["visit_counts"] = submit_visit_counts
             body["colorful_pass"] = submit_colorful_pass
             return httpx.Response(200, json=body)
+        if path == "/render/mysekai/visits":
+            return httpx.Response(200, content=TINY_PNG, headers={"content-type": "image/png"})
         if path == "/convert-state":
             if convert_state is None:
                 return httpx.Response(422, json={"error": "no convert state"})
@@ -1146,3 +1148,47 @@ async def test_cached_pass_expiry_rides_the_profile_header(
 
     assert _profile_header(headers[0]).get("pass_expired_at_ms") is None
     assert _profile_header(headers[1])["pass_expired_at_ms"] == 1794000000000
+
+
+async def test_visit_chart_uses_the_last_capture(client: httpx.AsyncClient) -> None:
+    """来访排行图取该角色最近一次抓包存下的 visitCount。"""
+    service = client._transport.app.state.services.mysekai  # type: ignore[attr-defined]
+    service.transport = _mock_transport(submit_visit_counts={"2": 534, "4": 492})
+    await _bind(client)
+    await _login(client)
+    response = await client.post(
+        "/api/v1/mysekai/submit",
+        json={
+            "qq": QQ,
+            "game_user_id": GAME_ID,
+            "region": "cn",
+            "file_base64": base64.b64encode(b"capture").decode(),
+        },
+        headers={"Origin": "http://testserver"},
+    )
+    assert response.status_code == 200, response.text
+
+    chart = await client.post(
+        "/internal/v1/mysekai/visits",
+        json={"qq": QQ, "game_user_id": GAME_ID},
+        headers={"Authorization": f"Bearer {BOT_TOKEN}"},
+    )
+
+    assert chart.status_code == 200, chart.text
+    payload = chart.json()
+    assert payload["png"]
+    assert payload["role_label"]
+
+
+async def test_visit_chart_without_a_capture_reports_no_capture(
+    client: httpx.AsyncClient,
+) -> None:
+    await _bind(client)
+    chart = await client.post(
+        "/internal/v1/mysekai/visits",
+        json={"qq": QQ, "game_user_id": GAME_ID},
+        headers={"Authorization": f"Bearer {BOT_TOKEN}"},
+    )
+
+    assert chart.status_code == 404
+    assert chart.json()["error"]["code"] == "no_capture"

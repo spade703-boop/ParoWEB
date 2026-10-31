@@ -105,6 +105,16 @@ CREATE TABLE IF NOT EXISTS mysekai_uploads (
 CREATE INDEX IF NOT EXISTS idx_mysekai_uploads_qq_created
     ON mysekai_uploads(qq, created_at DESC);
 
+-- 来访次数：抓包里每个角色的累计 visitCount，按角色保存最近一次，供来访排行图。
+CREATE TABLE IF NOT EXISTS mysekai_visit_totals (
+    server TEXT NOT NULL,
+    game_user_id TEXT NOT NULL,
+    groups TEXT NOT NULL,
+    captured_at_ms INTEGER,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (server, game_user_id)
+);
+
 -- 月卡缓存：抓包只在月卡变化时下发 `userMysekaiColorfulPass`，这里按角色
 -- 记住最近一次见到的到期时间，资料卡才有一个稳定状态可显示。
 CREATE TABLE IF NOT EXISTS mysekai_pass_state (
@@ -1419,6 +1429,58 @@ class SQLiteRepository:
             except Exception:
                 await connection.rollback()
                 raise
+
+    async def get_mysekai_visit_totals(
+        self, server: str, game_user_id: str
+    ) -> dict | None:
+        """``{"groups": {group_id: count}, "captured_at_ms": int | None}``."""
+        async with self.connect() as connection:
+            row = await (
+                await connection.execute(
+                    """
+                    SELECT groups, captured_at_ms FROM mysekai_visit_totals
+                     WHERE server = ? AND game_user_id = ?
+                    """,
+                    (server, game_user_id),
+                )
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            groups = json.loads(row["groups"])
+        except (ValueError, TypeError):
+            return None
+        if not isinstance(groups, dict):
+            return None
+        return {"groups": groups, "captured_at_ms": row["captured_at_ms"]}
+
+    async def set_mysekai_visit_totals(
+        self,
+        server: str,
+        game_user_id: str,
+        groups: dict,
+        captured_at_ms: int | None,
+    ) -> None:
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO mysekai_visit_totals(
+                    server, game_user_id, groups, captured_at_ms, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(server, game_user_id) DO UPDATE SET
+                    groups = excluded.groups,
+                    captured_at_ms = excluded.captured_at_ms,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    server,
+                    game_user_id,
+                    json.dumps(groups, separators=(",", ":")),
+                    captured_at_ms,
+                    utc_now(),
+                ),
+            )
+            await connection.commit()
 
     async def get_mysekai_pass_expiry(
         self, server: str, game_user_id: str

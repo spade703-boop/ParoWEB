@@ -1661,6 +1661,46 @@ class MysekaiService:
             "role_label": await self._role_label(qq, binding["game_user_id"]),
         }
 
+    async def visit_chart(self, qq: str, game_user_id: str | None = None) -> dict:
+        """Render the character visit-count ranking from the last capture.
+
+        ``game_user_id`` selects one of the QQ's roles; omitting it uses the
+        current one, same as every other query command.
+        """
+        binding = await self._binding_for_role(qq, game_user_id)
+        row = await self.repository.get_mysekai_visit_totals(
+            binding["server"], binding["game_user_id"]
+        )
+        if row is None or not row["groups"]:
+            raise MysekaiError(
+                "还没有上传过烤森抓包", code="no_capture", status=404
+            )
+        payload = {
+            "role_label": await self._role_label(qq, binding["game_user_id"]),
+            "captured_at": format_capture_time(row["captured_at_ms"]),
+            "groups": row["groups"],
+        }
+        url = f"{self.settings.mysekai_service_url}/render/mysekai/visits"
+        try:
+            async with self._client(timeout=60.0) as client:
+                response = await client.post(url, json=payload)
+        except httpx.HTTPError:
+            raise UpstreamError("出图服务暂时不可用，请稍后再试") from None
+        if response.status_code == 404:
+            raise MysekaiError("还没有可用的来访记录", code="no_capture", status=404)
+        if response.status_code != 200:
+            logger.warning(
+                "mysekai visit chart failed status=%s body=%s",
+                response.status_code,
+                response.text[:300],
+            )
+            raise UpstreamError("出图服务暂时不可用，请稍后再试")
+        return {
+            "png": response.content,
+            "role_label": payload["role_label"],
+            "captured_at_ms": row["captured_at_ms"],
+        }
+
     async def birthday_progress_image(
         self, qq: str, game_user_id: str | None = None
     ) -> bytes:
@@ -1991,6 +2031,17 @@ class MysekaiService:
         if result.kind == "birthday_delivery":
             event_kind = "birthday_delivery"
             birthday_party_id = (result.birthday or {}).get("party_id")
+        if result.visit_counts:
+            captured_ms = (
+                (result.catalog_state or {}).get("refreshed_at_ms")
+                or int(time.time() * 1000)
+            )
+            await self.repository.set_mysekai_visit_totals(
+                server,
+                binding["game_user_id"],
+                result.visit_counts,
+                int(captured_ms),
+            )
         if result.colorful_pass is not None:
             expired_at = result.colorful_pass.get("expired_at_ms")
             if isinstance(expired_at, int) and expired_at > 0:

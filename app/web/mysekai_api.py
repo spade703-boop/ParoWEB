@@ -437,6 +437,25 @@ async def latest_capture(payload: LatestCaptureRequest, request: Request):
     }
 
 
+@internal_router.post("/visits")
+async def visit_chart(payload: LatestCaptureRequest, request: Request):
+    """Bot 指令：角色来访次数排行图（数据取该角色最近一次抓包）。"""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    service = _mysekai(request)
+    try:
+        result = await service.visit_chart(payload.qq, payload.game_user_id)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return {
+        "ok": True,
+        "role_label": result["role_label"],
+        "captured_at_ms": result["captured_at_ms"],
+        "png": base64.b64encode(result["png"]).decode("ascii"),
+    }
+
+
 @internal_router.post("/help")
 async def help_image(payload: HelpRequest, request: Request):
     """把 Bot 维护的指令清单渲染成一张帮助图。"""

@@ -130,6 +130,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "/internal/v1/mysekai/convert-reset",
                 "/internal/v1/mysekai/convert-done",
                 "/internal/v1/mysekai/latest-capture",
+                "/internal/v1/mysekai/visits",
                 "/internal/v1/mysekai/material-catalog",
                 "/internal/v1/mysekai/help",
                 "/internal/v1/mysekai/birthday-progress",
