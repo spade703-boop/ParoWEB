@@ -305,6 +305,11 @@ class SQLiteRepository:
                 logger.exception(
                     "MySekai schema migration failed; continuing with the current schema"
                 )
+            try:
+                # 历史来访计数来自每天的基线表；排行榜上线后群友立刻能看到全量数据。
+                await self.backfill_visit_totals()
+            except Exception:
+                logger.warning("来访次数回填失败", exc_info=True)
             # CREATE TABLE IF NOT EXISTS 不会给已有库补列，老库要靠这里补上。
             # 用 PRAGMA 判断而不是吞 duplicate column 异常：并发下吞异常会把真正的
             # SQLITE_READONLY 一起吞掉，以后没法排查。
@@ -1419,6 +1424,79 @@ class SQLiteRepository:
             except Exception:
                 await connection.rollback()
                 raise
+
+    async def backfill_visit_totals(self) -> int:
+        """Seed ``mysekai_visit_totals`` from the per-day visit baselines.
+
+        每次上传都会把当天的来访计数写成基线（``mysekai_visit_baselines``），
+        那是现成的历史数据：按角色逐组取最大值合并进来，排行功能一上线就能
+        看到群友过去的表现，不用等他们重新上传。幂等，启动时跑一次即可。
+        """
+        async with self.connect() as connection:
+            rows = await (
+                await connection.execute(
+                    """
+                    SELECT b.qq, b.game_user_id, b.day, b.payload, d.server
+                      FROM mysekai_visit_baselines b
+                      LEFT JOIN mysekai_bindings d
+                             ON d.qq = b.qq AND d.game_user_id = b.game_user_id
+                     ORDER BY b.day
+                    """
+                )
+            ).fetchall()
+            if not rows:
+                return 0
+            merged: dict[tuple[str, str], dict[str, int]] = {}
+            for row in rows:
+                try:
+                    payload = json.loads(row["payload"])
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                key = (row["server"] or "cn", row["game_user_id"])
+                bucket = merged.setdefault(key, {})
+                for group_id, count in payload.items():
+                    try:
+                        value = int(count)
+                    except (TypeError, ValueError):
+                        continue
+                    bucket[str(group_id)] = max(value, bucket.get(str(group_id), 0))
+            stored = 0
+            for (server, game_user_id), groups in merged.items():
+                existing = await (
+                    await connection.execute(
+                        "SELECT groups FROM mysekai_visit_totals"
+                        " WHERE server = ? AND game_user_id = ?",
+                        (server, game_user_id),
+                    )
+                ).fetchone()
+                if existing is not None:
+                    try:
+                        current = json.loads(existing["groups"])
+                    except (ValueError, TypeError):
+                        current = {}
+                    for group_id, value in current.items():
+                        groups[group_id] = max(int(value), groups.get(group_id, 0))
+                await connection.execute(
+                    """
+                    INSERT INTO mysekai_visit_totals(
+                        server, game_user_id, groups, captured_at_ms, updated_at
+                    ) VALUES (?, ?, ?, NULL, ?)
+                    ON CONFLICT(server, game_user_id) DO UPDATE SET
+                        groups = excluded.groups,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        server,
+                        game_user_id,
+                        json.dumps(groups, separators=(",", ":")),
+                        utc_now(),
+                    ),
+                )
+                stored += 1
+            await connection.commit()
+        return stored
 
     async def get_mysekai_visit_totals(
         self, server: str, game_user_id: str

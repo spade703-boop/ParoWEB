@@ -1183,3 +1183,28 @@ async def test_visit_totals_accumulate_across_uploads(client: httpx.AsyncClient)
     row = await repository.get_mysekai_visit_totals("cn", GAME_ID)
     assert row is not None
     assert row["groups"] == {"1": 7, "2": 12}
+
+
+async def test_visit_totals_backfill_from_daily_baselines(tmp_path) -> None:
+    """历史来访次数从每天的基线表回填，群友不用重新上传。"""
+    repository = SQLiteRepository(tmp_path / "test.sqlite3")
+    await repository.initialize()
+    await repository.create_mysekai_binding(
+        qq=QQ,
+        server="cn",
+        game_user_id=GAME_ID,
+        nickname=None,
+        deck_id=None,
+        leader_card_id=None,
+        leader_avatar=None,
+        profile_image_type=None,
+    )
+    await repository.set_mysekai_visit_baseline(QQ, GAME_ID, "2026-10-21", {"1": 5, "2": 9})
+    await repository.set_mysekai_visit_baseline(QQ, GAME_ID, "2026-10-22", {"2": 12})
+
+    stored = await repository.backfill_visit_totals()
+
+    row = await repository.get_mysekai_visit_totals("cn", GAME_ID)
+    assert row is not None
+    assert row["groups"] == {"1": 5, "2": 12}
+    assert stored == 1
