@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
+import time
+from dataclasses import replace
 from pathlib import Path
 
+from app.config import Settings
 from app.repositories.sqlite import SQLiteRepository
+from app.services.mysekai import MysekaiService
 
 QQ = "123456789"
 GAME_A = "7440000000000000001"
@@ -73,6 +77,31 @@ async def _watched(repository: SQLiteRepository) -> set[str]:
 async def _due(repository: SQLiteRepository, now_ms: int) -> set[int]:
     rows = await repository.due_mysekai_convert_slots(now_ms)
     return {int(row["slot_id"]) for row in rows}
+
+
+async def _notified(repository: SQLiteRepository, game_user_id: str) -> dict[int, int]:
+    async with repository.connect() as connection:
+        rows = await (
+            await connection.execute(
+                "SELECT slot_id, notified FROM mysekai_convert_slots"
+                " WHERE game_user_id = ?",
+                (game_user_id,),
+            )
+        ).fetchall()
+    return {int(row["slot_id"]): int(row["notified"]) for row in rows}
+
+
+async def _state_with_slots(
+    repository: SQLiteRepository, game_user_id: str, slots: list[dict]
+) -> None:
+    """Pretend this role uploaded a capture carrying those converter slots."""
+    await repository.set_mysekai_catalog_state(
+        server="cn",
+        game_user_id=game_user_id,
+        music_records=None,
+        blueprints=None,
+        convert_slots=slots,
+    )
 
 
 def _legacy_database(path: Path, *, with_bindings: bool = True) -> None:
@@ -216,3 +245,57 @@ async def test_after_unsubscribing_all_a_new_role_is_not_watched(
     await _bind(repository, game_c, STAMP + "2")
 
     assert await _watched(repository) == set()
+
+
+async def test_an_auto_included_role_backfills_its_slots(tmp_path: Path) -> None:
+    """绑定时被自动纳入订阅的角色，也要回填它自己抓包里的槽位。"""
+    repository = await _repository(tmp_path)
+    await repository.set_mysekai_convert_watch(QQ, True, GAME_A)
+    await repository.delete_mysekai_binding(QQ, GAME_B)
+
+    game_c = "7440000000000000003"
+    now_ms = int(time.time() * 1000)
+    await _state_with_slots(
+        repository,
+        game_c,
+        [_slot(1, now_ms - 60_000), _slot(2, now_ms + 3_600_000)],
+    )
+
+    await _bind(repository, game_c, STAMP + "2")
+
+    assert await _watched(repository) == {GAME_A, game_c}
+    # 走完的槽静音，还在转的槽等着推送。
+    assert await _notified(repository, game_c) == {1: 1, 2: 0}
+
+
+async def test_binding_without_a_watch_backfills_nothing(tmp_path: Path) -> None:
+    repository = await _repository(tmp_path)
+
+    game_c = "7440000000000000003"
+    await _state_with_slots(
+        repository, game_c, [_slot(1, int(time.time() * 1000) + 3_600_000)]
+    )
+
+    await _bind(repository, game_c, STAMP + "2")
+
+    assert await _notified(repository, game_c) == {}
+
+
+async def test_subscribing_backfills_every_bound_role(tmp_path: Path) -> None:
+    repository = await _repository(tmp_path)
+    now_ms = int(time.time() * 1000)
+    for game_id in (GAME_A, GAME_B):
+        await _state_with_slots(
+            repository, game_id, [_slot(1, now_ms + 3_600_000)]
+        )
+
+    service = MysekaiService(
+        replace(Settings.from_env(), database_path=tmp_path / "test.sqlite3"),
+        repository,
+    )
+    await service.set_convert_watch(QQ, True)
+
+    assert await _notified(repository, GAME_A) == {1: 0}
+    assert await _notified(repository, GAME_B) == {1: 0}
+
+

@@ -1061,6 +1061,7 @@ class SQLiteRepository:
         profile_image_type: str | None,
     ) -> str | None:
         now = utc_now()
+        auto_watched = False
         async with self.connect() as connection:
             await connection.execute("BEGIN IMMEDIATE")
             try:
@@ -1125,7 +1126,8 @@ class SQLiteRepository:
                         (qq,),
                     )
                 ).fetchone()
-                if watching is not None:
+                auto_watched = watching is not None
+                if auto_watched:
                     await connection.execute(
                         """
                         INSERT OR IGNORE INTO mysekai_convert_watches(
@@ -1144,10 +1146,20 @@ class SQLiteRepository:
                         (game_user_id, int(time.time() * 1000)),
                     )
                 await connection.commit()
-                return None
             except Exception:
                 await connection.rollback()
                 raise
+        if auto_watched:
+            # 纳入订阅等同于订阅：这个角色可能是在别的 QQ 下（或解绑前）
+            # 传过抓包，槽位已经在转了，回填后才推得出来。回填只是缓存，
+            # 失败不能把已经提交的绑定打回去。
+            try:
+                await self.backfill_mysekai_convert_slots(
+                    server, game_user_id, quiet_past=True
+                )
+            except Exception:
+                logger.warning("自动纳入订阅后回填槽位失败", exc_info=True)
+        return None
 
     async def get_mysekai_binding(self, qq: str) -> dict | None:
         """The QQ's current role: the explicit choice, else the newest binding."""
@@ -1937,6 +1949,26 @@ class SQLiteRepository:
                     ),
                 )
             await connection.commit()
+
+    async def backfill_mysekai_convert_slots(
+        self, server: str, game_user_id: str, *, quiet_past: bool = False
+    ) -> int:
+        """Refill a role's slots from its last capture when it starts watching.
+
+        Subscribing a role, or auto-including one at bind time, must pick up the
+        batches already running in that role's ``mysekai_catalog_state``: the
+        player may well have uploaded a capture first and opted in afterwards.
+        ``quiet_past`` is passed through, so batches finished before the opt-in
+        stay silent.
+        """
+        state = await self.get_mysekai_catalog_state(server, game_user_id)
+        slots = (state or {}).get("convert_slots") or []
+        if not slots:
+            return 0
+        await self.record_mysekai_convert_slots(
+            game_user_id, slots, quiet_past=quiet_past
+        )
+        return len(slots)
 
     async def due_mysekai_convert_slots(self, now_ms: int) -> list[dict]:
         """Finished slots of subscribed players, oldest finish first."""

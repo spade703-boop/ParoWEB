@@ -1244,14 +1244,9 @@ class MysekaiService:
             for row in bindings:
                 if subscribed and row["game_user_id"] not in subscribed:
                     continue
-                state = await self.repository.get_mysekai_catalog_state(
-                    row["server"], row["game_user_id"]
+                await self.repository.backfill_mysekai_convert_slots(
+                    row["server"], row["game_user_id"], quiet_past=True
                 )
-                slots = (state or {}).get("convert_slots") or []
-                if slots:
-                    await self.repository.record_mysekai_convert_slots(
-                        row["game_user_id"], slots, quiet_past=True
-                    )
 
         return {
             "enabled": enabled,
