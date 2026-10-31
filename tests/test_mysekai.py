@@ -68,6 +68,7 @@ def _mock_transport(
     convert_state: dict | None = None,
     submit_headers: list[dict] | None = None,
     submit_visit_counts: dict | None = None,
+    submit_colorful_pass: dict | None = None,
 ) -> httpx.MockTransport:
     suite_calls = 0
 
@@ -132,6 +133,7 @@ def _mock_transport(
                 body["birthday"] = submit_birthday
             if submit_visit_counts is not None:
                 body["visit_counts"] = submit_visit_counts
+            body["colorful_pass"] = submit_colorful_pass
             return httpx.Response(200, json=body)
         if path == "/convert-state":
             if convert_state is None:
@@ -1101,3 +1103,46 @@ async def test_material_catalog_endpoint_returns_png(client, monkeypatch) -> Non
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
     assert response.content == TINY_PNG
+
+
+def _profile_header(headers: dict) -> dict:
+    import base64
+    import json as _json
+
+    raw = headers["x-mysekai-profile"]
+    padded = raw + "=" * (-len(raw) % 4)
+    return _json.loads(base64.urlsafe_b64decode(padded))
+
+
+async def test_cached_pass_expiry_rides_the_profile_header(
+    client: httpx.AsyncClient,
+) -> None:
+    """月卡只在变化时下发：第一次记下来，后面每次上传都带上缓存值。"""
+    headers: list[dict] = []
+    service = client._transport.app.state.services.mysekai  # type: ignore[attr-defined]
+    service.transport = _mock_transport(
+        submit_headers=headers,
+        submit_colorful_pass={"pass_id": 1, "expired_at_ms": 1794000000000},
+    )
+    await _bind(client)
+    await _login(client)
+
+    payload = {
+        "qq": QQ,
+        "game_user_id": GAME_ID,
+        "region": "cn",
+        "file_base64": base64.b64encode(b"capture").decode(),
+    }
+    first = await client.post(
+        "/api/v1/mysekai/submit", json=payload, headers={"Origin": "http://testserver"}
+    )
+    assert first.status_code == 200, first.text
+
+    service.transport = _mock_transport(submit_headers=headers)  # 之后不再下发月卡
+    second = await client.post(
+        "/api/v1/mysekai/submit", json=payload, headers={"Origin": "http://testserver"}
+    )
+    assert second.status_code == 200, second.text
+
+    assert _profile_header(headers[0]).get("pass_expired_at_ms") is None
+    assert _profile_header(headers[1])["pass_expired_at_ms"] == 1794000000000

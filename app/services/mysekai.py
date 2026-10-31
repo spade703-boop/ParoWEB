@@ -253,6 +253,8 @@ class RenderResult:
     visit_counts: dict[str, int]
     birthday: dict | None = None
     catalog_state: dict | None = None
+    #: 本次抓包下发的月卡记录（只在变化时出现）；用于刷新缓存。
+    colorful_pass: dict | None = None
     kind: str = "snapshot"
     rare_png_base64: str | None = None
     birthday_png_base64: str | None = None
@@ -1593,6 +1595,11 @@ class MysekaiService:
                     str(key): int(value)
                     for key, value in (data.get("visit_counts") or {}).items()
                 },
+                colorful_pass=(
+                    data["colorful_pass"]
+                    if isinstance(data.get("colorful_pass"), dict)
+                    else None
+                ),
                 birthday=data.get("birthday"),
                 catalog_state=(
                     data["catalog_state"]
@@ -1955,6 +1962,10 @@ class MysekaiService:
             raise MysekaiError("响应体超过 4 MB")
         avatar = binding.get("leader_avatar")
         meta = await self.catalog_state_meta(server, game_user_id)
+        # 月卡记录只在变化时下发，卡片需要最近一次见到的到期时间。
+        pass_expiry = await self.repository.get_mysekai_pass_expiry(
+            server, binding["game_user_id"]
+        )
         profile_payload = {
             "nickname": binding.get("nickname"),
             "user_id": binding["game_user_id"],
@@ -1967,6 +1978,7 @@ class MysekaiService:
             "avatar_base64": avatar,
             # 这份抓包到达我们的时间；资料卡的「MySekai 数据」行。
             "mysekai_at": format_capture_time(int(time.time() * 1000)),
+            "pass_expired_at_ms": pass_expiry,
         }
         day = _game_day_key()
         visit_baseline = await self.repository.get_mysekai_visit_baseline(
@@ -1979,6 +1991,12 @@ class MysekaiService:
         if result.kind == "birthday_delivery":
             event_kind = "birthday_delivery"
             birthday_party_id = (result.birthday or {}).get("party_id")
+        if result.colorful_pass is not None:
+            expired_at = result.colorful_pass.get("expired_at_ms")
+            if isinstance(expired_at, int) and expired_at > 0:
+                await self.repository.set_mysekai_pass_expiry(
+                    server, binding["game_user_id"], expired_at
+                )
         if result.catalog_state is not None:
             await self.repository.set_mysekai_catalog_state(
                 server=server,
