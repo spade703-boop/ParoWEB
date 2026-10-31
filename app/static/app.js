@@ -1053,7 +1053,10 @@ function renderPool() {
     return `${formatEggRate(category.rate)}概率抽到${label}`;
   });
   if (chanceParts.length) {
-    summary += `　有${chanceParts.join("，另有")}`;
+    const chanceSummary = chanceParts
+      .map((part, index) => `${index === 0 ? "" : index === 1 ? "/" : "，另有"}${part}`)
+      .join("");
+    summary += `　有${chanceSummary}`;
   }
   el.poolSummary.textContent = summary;
   const matches = poolMatches();
