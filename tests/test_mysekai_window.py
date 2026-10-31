@@ -7,6 +7,7 @@ from app.services.mysekai_window import (
     CN,
     birthday_dates,
     flower_start_dates,
+    game_day_key,
     is_exempt,
     watch_is_open,
     watch_opens_at,
@@ -123,3 +124,13 @@ def test_watch_opens_one_hour_before_the_flower_window() -> None:
     assert watch_is_open(datetime(2026, 10, 23, 23, 0, tzinfo=CN), start=start, end=end) is True
     assert watch_is_open(datetime(2026, 10, 26, 23, 59, tzinfo=CN), start=start, end=end) is True
     assert watch_is_open(end, start=start, end=end) is False
+
+
+def test_game_day_starts_at_five_and_runs_until_the_next_five() -> None:
+    """记忆按游戏日结算：05:00 起算，17:00 的整图刷新不换天。"""
+    assert game_day_key(datetime(2026, 10, 23, 4, 59, tzinfo=CN)) == "2026-10-22"
+    assert game_day_key(datetime(2026, 10, 23, 5, 0, tzinfo=CN)) == "2026-10-23"
+    assert game_day_key(datetime(2026, 10, 23, 16, 59, tzinfo=CN)) == "2026-10-23"
+    assert game_day_key(datetime(2026, 10, 23, 17, 0, tzinfo=CN)) == "2026-10-23"
+    assert game_day_key(datetime(2026, 10, 23, 23, 59, tzinfo=CN)) == "2026-10-23"
+    assert game_day_key(datetime(2026, 10, 24, 0, 30, tzinfo=CN)) == "2026-10-23"

@@ -67,6 +67,7 @@ def _mock_transport(
     submit_birthday: dict | None = None,
     convert_state: dict | None = None,
     submit_headers: list[dict] | None = None,
+    submit_visit_counts: dict | None = None,
 ) -> httpx.MockTransport:
     suite_calls = 0
 
@@ -129,6 +130,8 @@ def _mock_transport(
             }
             if submit_birthday is not None:
                 body["birthday"] = submit_birthday
+            if submit_visit_counts is not None:
+                body["visit_counts"] = submit_visit_counts
             return httpx.Response(200, json=body)
         if path == "/convert-state":
             if convert_state is None:
@@ -403,6 +406,47 @@ async def test_submit_returns_images_and_records_upload(
         "points": 33,
         "drops": 177,
     }
+
+
+async def test_visit_baseline_is_keyed_by_game_day(
+    client: httpx.AsyncClient, monkeypatch
+) -> None:
+    """基线按游戏日（05:00 → 次日 04:59）分区，17:00 的刷新不清基线。
+
+    早上传过、下午再传仍然用同一条基线；到次日 05:00 才重记
+    （2026-10-31 用户说明：每个角色一天只能拿一份记忆）。
+    """
+    import app.services.mysekai as mysekai_module
+
+    service = client._transport.app.state.services.mysekai  # type: ignore[attr-defined]
+    service.transport = _mock_transport(submit_visit_counts={"1": 4})
+    await _bind(client)
+    await _login(client)
+
+    days = iter(["2026-10-23", "2026-10-23", "2026-10-24"])
+    monkeypatch.setattr(mysekai_module, "_game_day_key", lambda: next(days))
+
+    for _ in range(3):
+        response = await client.post(
+            "/api/v1/mysekai/submit",
+            json={
+                "qq": QQ,
+                "game_user_id": GAME_ID,
+                "region": "cn",
+                "file_base64": base64.b64encode(b"capture").decode(),
+            },
+            headers={"Origin": "http://testserver"},
+        )
+        assert response.status_code == 200, response.text
+
+    repository = client._transport.app.state.services.repository  # type: ignore[attr-defined]
+    async with repository.connect() as connection:
+        rows = await (
+            await connection.execute(
+                "SELECT day FROM mysekai_visit_baselines ORDER BY day"
+            )
+        ).fetchall()
+    assert [row["day"] for row in rows] == ["2026-10-23", "2026-10-24"]
 
 
 async def test_submit_records_the_role_that_uploaded(
@@ -810,8 +854,8 @@ async def test_module_link_builds_the_shadowrocket_scheme(tmp_path) -> None:
     assert INGEST_TOKEN in data["download_url"]
 
 
-async def test_visit_baseline_is_written_once_per_day(tmp_path) -> None:
-    """当天首次上传留下的基线不能被后续上传覆盖；角色之间也各记各的。"""
+async def test_visit_baseline_is_written_once_per_game_day(tmp_path) -> None:
+    """同一游戏日首次上传留下的基线不能被后续上传覆盖；角色之间也各记各的。"""
     repository = SQLiteRepository(tmp_path / "test.sqlite3")
     await repository.initialize()
 

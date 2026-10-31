@@ -39,6 +39,7 @@ from app.services.mysekai_window import (
     FLOWER_WINDOW,
     birthday_dates,
     current_flower_window,
+    game_day_key,
     is_exempt,
     watch_is_open,
     watch_opens_at,
@@ -337,9 +338,13 @@ class MysekaiGateData:
     fallback_used: bool
 
 
-def _today_key() -> str:
-    """The game day under UTC+8, used as the baseline partition."""
-    return datetime.now(_CN).strftime("%Y-%m-%d")
+def _game_day_key() -> str:
+    """The game day under UTC+8, used as the visit-baseline partition.
+
+    记忆每个角色每天只能拿一份，05:00 清零；自然日的 00:00 分界比游戏早
+    5 小时，按自然日记会错（2026-10-31）。
+    """
+    return game_day_key(datetime.now(_CN))
 
 
 def _b64url_encode(payload: bytes) -> str:
@@ -1963,7 +1968,7 @@ class MysekaiService:
             # 这份抓包到达我们的时间；资料卡的「MySekai 数据」行。
             "mysekai_at": format_capture_time(int(time.time() * 1000)),
         }
-        day = _today_key()
+        day = _game_day_key()
         visit_baseline = await self.repository.get_mysekai_visit_baseline(
             qq, binding["game_user_id"], day
         )

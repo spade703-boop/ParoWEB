@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS mysekai_uploads (
 CREATE INDEX IF NOT EXISTS idx_mysekai_uploads_qq_created
     ON mysekai_uploads(qq, created_at DESC);
 
+-- 来访基线：`day` 是游戏日（05:00 到次日 04:59 的归属日期），不是自然日。
 CREATE TABLE IF NOT EXISTS mysekai_visit_baselines (
     qq TEXT NOT NULL,
     game_user_id TEXT NOT NULL,
@@ -1412,7 +1413,12 @@ class SQLiteRepository:
     async def get_mysekai_visit_baseline(
         self, qq: str, game_user_id: str, day: str
     ) -> dict | None:
-        """The visit counts captured on this role's first upload of ``day``."""
+        """The visit counts captured on this role's first upload of ``day``.
+
+        ``day`` is the game day (05:00 → 04:59), not the calendar day: each
+        character hands out one memoria per game day, so a baseline only means
+        anything inside one game day.
+        """
         async with self.connect() as connection:
             row = await (
                 await connection.execute(
@@ -1434,7 +1440,7 @@ class SQLiteRepository:
     async def set_mysekai_visit_baseline(
         self, qq: str, game_user_id: str, day: str, payload: dict
     ) -> None:
-        """Record the day's first baseline; later uploads never overwrite it."""
+        """Record the game day's first baseline; later uploads never overwrite it."""
         async with self.connect() as connection:
             await connection.execute(
                 """

@@ -27,6 +27,20 @@ BIRTHDAYS: dict[int, tuple[int, int]] = {
 #: 国服两个固定刷新点（小时）。
 REFRESH_HOURS: tuple[int, ...] = (5, 17)
 
+#: 记忆按游戏日结算：05:00 开始，到次日 04:59。每个角色每天只能拿一份
+#: （月卡指定的来访角色可以拿两份），17:00 的整图刷新不清零记忆。
+GAME_DAY_START_HOUR: int = 5
+
+
+def game_day_key(now: datetime) -> str:
+    """The game day ``now`` belongs to, as ``YYYY-MM-DD``.
+
+    一天从 05:00 起算到次日 04:59。自然日的 00:00 分界比游戏早 5 小时：
+    凌晨那次上传会被算成「新的一天」，既有基线失效，又会把白天刚收过的
+    记忆当成还有（2026-10-31 用户反馈的记忆角色推送偏差）。
+    """
+    return (now - timedelta(hours=GAME_DAY_START_HOUR)).strftime("%Y-%m-%d")
+
 
 #: 生日花开放时长：生日前 72 小时开始，生日当天 00:00 下掉。
 FLOWER_WINDOW = timedelta(hours=72)
