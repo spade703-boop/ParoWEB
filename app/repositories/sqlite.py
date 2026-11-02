@@ -2312,8 +2312,9 @@ class SQLiteRepository:
             ) as cursor:
                 return await cursor.fetchone() is not None
 
-    #: 心跳超过这么久没刷新，就认为页面已经关了，播报回到群里。
-    WATCH_PRESENCE_SECONDS = 90
+    #: 心跳（每 15 秒一次）超过这么久没刷新，就认为页面已经关了。
+    #: 30 秒 = 容忍丢一次心跳；再短会把网络抖动误判成关闭。
+    WATCH_PRESENCE_SECONDS = 30
 
     async def touch_mysekai_watch_presence(self, qq: str) -> None:
         async with self.connect() as connection:

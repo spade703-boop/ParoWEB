@@ -228,7 +228,8 @@ async def test_presence_expires_so_group_pushes_resume(tmp_path) -> None:
         await repository.touch_mysekai_watch_presence(QQ)
 
         fresh = await repository.is_mysekai_watch_presence_fresh(QQ)
-        # 用一个不可能命中的窗口模拟「页面已经关了」
+        # 默认容忍 30 秒（两倍心跳间隔），更早就认为页面关了
+        assert repository.WATCH_PRESENCE_SECONDS == 30
         stale = await repository.is_mysekai_watch_presence_fresh(QQ, seconds=-1)
 
     assert fresh is True

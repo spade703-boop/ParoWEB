@@ -1297,7 +1297,7 @@ async def watch_stream(
             now = time.time()
             if now - heartbeat >= 15:
                 heartbeat = now
-                # 心跳同时续期「页面还开着」，关掉页面 90 秒后自动回到群播报。
+                # 心跳同时续期「页面还开着」，关掉页面 30 秒后自动回到群播报。
                 await repository.touch_mysekai_watch_presence(qq)
                 yield ": ping" + NL + NL
             await asyncio.sleep(1.0)
