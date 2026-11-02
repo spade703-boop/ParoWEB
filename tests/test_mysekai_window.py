@@ -8,7 +8,6 @@ from app.services.mysekai_window import (
     birthday_dates,
     flower_start_dates,
     game_day_key,
-    is_exempt,
     watch_is_open,
     watch_opens_at,
     window_key,
@@ -85,12 +84,6 @@ def test_birthday_calendar_is_complete() -> None:
     assert len(BIRTHDAYS) == 26
     assert date(2026, 11, 12) in birthday_dates(2026)
     assert date(2026, 12, 27) in birthday_dates(2026)
-
-
-def test_only_watched_users_during_a_birthday_are_exempt() -> None:
-    assert is_exempt(True, {"targets": []}) is True
-    assert is_exempt(True, None) is False
-    assert is_exempt(False, {"targets": []}) is False
 
 
 def test_flower_start_day_also_gets_a_midnight_window() -> None:

@@ -310,7 +310,8 @@ async def test_push_failure_releases_the_window(tmp_path) -> None:
     assert len(retry_payloads) == 1
 
 
-async def test_watched_user_in_birthday_window_bypasses_dedupe(tmp_path) -> None:
+async def test_watched_user_in_birthday_window_is_still_deduped(tmp_path) -> None:
+    """生日期间也一样去重：整图每窗口一次，稀有走独立轮次通知。"""
     birthday = {"targets": [], "round_key": "t1792723215029"}
     async with _app(
         tmp_path, submit_birthday=birthday, watch_on=True
@@ -318,8 +319,8 @@ async def test_watched_user_in_birthday_window_bypasses_dedupe(tmp_path) -> None
         await _submit(client)
         second = await _submit(client)
 
-    assert second["push"]["status"] == "sent"
-    assert len(push_payloads) == 2
+    assert second["push"]["status"] == "skipped"
+    assert len(push_payloads) == 1
 
 
 async def test_unwatched_user_in_birthday_window_is_still_deduped(tmp_path) -> None:

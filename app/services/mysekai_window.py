@@ -128,13 +128,3 @@ def window_key(
     if now.hour < REFRESH_HOURS[1]:
         return f"{today.isoformat()}-{REFRESH_HOURS[0]:02d}"
     return f"{today.isoformat()}-{REFRESH_HOURS[1]:02d}"
-
-
-def is_exempt(watch_on: bool, birthday: dict | None) -> bool:
-    """Whether this upload skips the once-per-window rule.
-
-    Only a player watering during an open birthday window is exempt: that is
-    when they re-upload to hunt rare drops. The window closes at the birthday
-    itself, so the exemption ends when the flowers come down.
-    """
-    return bool(watch_on and birthday)

@@ -40,7 +40,6 @@ from app.services.mysekai_window import (
     birthday_dates,
     current_flower_window,
     game_day_key,
-    is_exempt,
     watch_is_open,
     watch_opens_at,
     window_key,
@@ -2143,9 +2142,9 @@ class MysekaiService:
         moment = datetime.now(_CN)
         window = window_key(moment, birthdays=birthday_dates(moment.year))
         claimed = event_kind != "birthday_delivery"
-        if claimed and self.settings.mysekai_push_dedupe and not is_exempt(
-            watch_on, result.birthday
-        ):
+        # 生日期间也照常去重：整张地图每个刷新窗口推一次就够了，
+        # 稀有掉落走独立的轮次通知，不受这里影响。
+        if claimed and self.settings.mysekai_push_dedupe:
             try:
                 claimed = await self.repository.claim_mysekai_push_window(
                     binding["game_user_id"], window, upload_id
