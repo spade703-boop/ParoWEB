@@ -1331,11 +1331,18 @@ async def watch_link(payload: WatchQueryRequest, request: Request):
     binding = await service.repository.get_mysekai_binding(payload.qq)
     if binding is None:
         return error_response(404, "not_bound", "这个 QQ 还没有绑定游戏 ID")
+    # 打开看板就等同于参与监听：没开的顺手开掉（窗口规则与「开启监听」一致）。
+    try:
+        state = await service.set_water_watch(payload.qq, True)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
     token = _watch_token(request, payload.qq)
     base = str(request.base_url).rstrip("/")
     return {
         "ok": True,
         "url": f"{base}/roomlist/watch?qq={payload.qq}&t={token}",
+        "changed": bool(state.get("changed")),
+        "birthday": state.get("birthday"),
     }
 
 

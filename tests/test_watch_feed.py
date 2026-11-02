@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qs, urlparse
 
@@ -114,9 +117,15 @@ async def test_watch_page_is_served(tmp_path) -> None:
     assert "烤森浇水看板" in response.text
 
 
+def _token(qq: str) -> str:
+    """直接算令牌，避免走 watch-link（那会顺手开启监听）。"""
+    digest = hmac.new(b"session-secret", f"watch:{qq}".encode(), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest[:12]).decode().rstrip("=")
+
+
 async def test_feed_is_closed_with_the_watch(tmp_path) -> None:
     async with _app(tmp_path, watch=False) as (client, repository):
-        qq, token = await _link(client)
+        qq, token = QQ, _token(QQ)
 
         response = await client.get(
             f"/api/v1/mysekai/watch/feed?qq={qq}&t={token}&after=0"
@@ -149,3 +158,47 @@ async def test_each_qq_keeps_only_the_three_newest_images(tmp_path) -> None:
     assert kept == ["img2.png", "img3.png", "img4.png"]
     # 事件本身都还在，只是旧图被清空
     assert len(events) == 5
+
+
+async def test_watch_link_enables_the_watch_when_it_is_off(tmp_path, monkeypatch) -> None:
+    """群友不用先发「开启监听」，直接取看板就顺手开启。"""
+    from app.services.mysekai import MysekaiService
+
+    async def open_watch(self, qq, enabled):
+        assert enabled is True
+        return {
+            "enabled": True,
+            "changed": True,
+            "birthday": {"active": True, "character_name": "东云彰人"},
+        }
+
+    monkeypatch.setattr(MysekaiService, "set_water_watch", open_watch)
+    async with _app(tmp_path, watch=False) as (client, _repo):
+        response = await client.post(
+            "/internal/v1/mysekai/watch-link",
+            json={"qq": QQ},
+            headers={"Authorization": f"Bearer {BOT_TOKEN}"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["changed"] is True
+    assert "/roomlist/watch?qq=" in payload["url"]
+
+
+async def test_watch_link_reports_a_closed_window(tmp_path, monkeypatch) -> None:
+    from app.services.mysekai import MysekaiError, MysekaiService
+
+    async def open_watch(self, qq, enabled):
+        raise MysekaiError("现在还不能开启烤森监听", code="watch_window_closed", status=409)
+
+    monkeypatch.setattr(MysekaiService, "set_water_watch", open_watch)
+    async with _app(tmp_path, watch=False) as (client, _repo):
+        response = await client.post(
+            "/internal/v1/mysekai/watch-link",
+            json={"qq": QQ},
+            headers={"Authorization": f"Bearer {BOT_TOKEN}"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "watch_window_closed"
