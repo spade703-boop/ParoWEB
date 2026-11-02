@@ -1237,8 +1237,8 @@ async def watch_feed(request: Request, qq: str, t: str, after: int = 0):
         return error_response(
             410, "watch_closed", "浇水监听已关闭，看板链接已失效"
         )
-    # 打开看板即视为「改看网页」，之后这个 QQ 不再往群里推浇水播报。
-    await repository.set_mysekai_watch_web(qq)
+    # 每次拉取都刷新在线心跳：页面开着时才把播报留在看板。
+    await repository.touch_mysekai_watch_presence(qq)
     events = await repository.list_mysekai_watch_events(qq, after_id=after)
     enabled_at = await repository.mysekai_water_watch_enabled_at(qq)
     roles = []
@@ -1275,7 +1275,7 @@ async def watch_stream(
         return error_response(
             410, "watch_closed", "浇水监听已关闭，看板链接已失效"
         )
-    await repository.set_mysekai_watch_web(qq)
+    await repository.touch_mysekai_watch_presence(qq)
 
     async def events():
         last = int(after)
@@ -1297,6 +1297,8 @@ async def watch_stream(
             now = time.time()
             if now - heartbeat >= 15:
                 heartbeat = now
+                # 心跳同时续期「页面还开着」，关掉页面 90 秒后自动回到群播报。
+                await repository.touch_mysekai_watch_presence(qq)
                 yield ": ping" + NL + NL
             await asyncio.sleep(1.0)
 

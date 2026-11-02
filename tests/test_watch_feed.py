@@ -88,8 +88,8 @@ async def test_feed_returns_only_events_for_a_valid_token(tmp_path) -> None:
     assert payload["events"][0]["rounds"] == 3
     assert payload["roles"][0]["game_user_id"] == GAME_ID
     assert bad.status_code == 403
-    # 打开看板后这个 QQ 切到网页，群里不再推浇水播报
-    assert await repository.is_mysekai_watch_web(QQ) is True
+    # 页面拉取即刷新在线心跳，群里暂停浇水播报
+    assert await repository.is_mysekai_watch_presence_fresh(QQ) is True
 
 
 async def test_feed_after_id_skips_history(tmp_path) -> None:
@@ -131,7 +131,7 @@ async def test_feed_is_closed_with_the_watch(tmp_path) -> None:
             f"/api/v1/mysekai/watch/feed?qq={qq}&t={token}&after=0"
         )
         # 没开监听时不标记网页模式
-        page = await repository.is_mysekai_watch_web(QQ)
+        page = await repository.is_mysekai_watch_presence_fresh(QQ)
 
     assert response.status_code == 410
     assert response.json()["error"]["code"] == "watch_closed"
@@ -220,3 +220,16 @@ async def test_board_images_are_downscaled(tmp_path) -> None:
     with Image.open(BytesIO(thumb)) as image:
         assert max(image.size) == 900
     assert len(thumb) < len(buffer.getvalue())
+
+
+async def test_presence_expires_so_group_pushes_resume(tmp_path) -> None:
+    """页面关掉后心跳过期，播报自动回到群里。"""
+    async with _app(tmp_path) as (_client, repository):
+        await repository.touch_mysekai_watch_presence(QQ)
+
+        fresh = await repository.is_mysekai_watch_presence_fresh(QQ)
+        # 用一个不可能命中的窗口模拟「页面已经关了」
+        stale = await repository.is_mysekai_watch_presence_fresh(QQ, seconds=-1)
+
+    assert fresh is True
+    assert stale is False

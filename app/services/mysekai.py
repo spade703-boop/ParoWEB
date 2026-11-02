@@ -1285,8 +1285,8 @@ class MysekaiService:
             if not active:
                 return {"enabled": False, "changed": False, "birthday": None}
             await self.repository.set_mysekai_water_watch(qq, False)
-            # 关闭监听后看板链接一并失效。
-            await self.repository.clear_mysekai_watch_web(qq)
+            # 关闭监听后看板链接与在线心跳一并失效。
+            await self.repository.clear_mysekai_watch_presence(qq)
             return {"enabled": False, "changed": True, "birthday": None}
         if active:
             return {"enabled": True, "changed": False, "birthday": None}
@@ -2183,7 +2183,7 @@ class MysekaiService:
         )
         watch_result = {"status": "skipped", "message": "本次未触发浇水监听"}
         # 已经在用网页看板的 QQ，群里不再重复播报，只写看板事件。
-        web_board = await self.repository.is_mysekai_watch_web(qq)
+        web_board = await self.repository.is_mysekai_watch_presence_fresh(qq)
         if watch_on and result.birthday and event_kind in {"birthday_delivery", "manual"}:
             watch_result = {"status": "unknown", "message": "缺少当前活动进度，无法识别轮次"}
             round_key = str(result.birthday.get("round_key") or "")

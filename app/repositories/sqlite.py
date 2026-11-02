@@ -135,6 +135,12 @@ CREATE TABLE IF NOT EXISTS mysekai_watch_web (
     enabled_at TEXT NOT NULL
 );
 
+-- 看板在线心跳：页面开着时每 15 秒刷新一次，过期即视为已关闭。
+CREATE TABLE IF NOT EXISTS mysekai_watch_presence (
+    qq TEXT PRIMARY KEY,
+    last_seen_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mysekai_water_rounds (
     game_user_id TEXT NOT NULL,
     round_key TEXT NOT NULL,
@@ -2305,6 +2311,51 @@ class SQLiteRepository:
                 "SELECT 1 FROM mysekai_watch_web WHERE qq = ?", (qq,)
             ) as cursor:
                 return await cursor.fetchone() is not None
+
+    #: 心跳超过这么久没刷新，就认为页面已经关了，播报回到群里。
+    WATCH_PRESENCE_SECONDS = 90
+
+    async def touch_mysekai_watch_presence(self, qq: str) -> None:
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO mysekai_watch_presence(qq, last_seen_at)
+                VALUES (?, ?)
+                ON CONFLICT(qq) DO UPDATE SET last_seen_at = excluded.last_seen_at
+                """,
+                (qq, utc_now()),
+            )
+            await connection.commit()
+
+    async def is_mysekai_watch_presence_fresh(
+        self, qq: str, seconds: int | None = None
+    ) -> bool:
+        limit = self.WATCH_PRESENCE_SECONDS if seconds is None else int(seconds)
+        async with self.connect() as connection:
+            async with connection.execute(
+                "SELECT last_seen_at FROM mysekai_watch_presence WHERE qq = ?",
+                (qq,),
+            ) as cursor:
+                row = await cursor.fetchone()
+        if row is None:
+            return False
+        try:
+            seen = datetime.fromisoformat(
+                str(row["last_seen_at"]).replace("Z", "+00:00")
+            )
+        except ValueError:
+            return False
+        return (datetime.now(UTC) - seen).total_seconds() <= limit
+
+    async def clear_mysekai_watch_presence(self, qq: str | None = None) -> None:
+        async with self.connect() as connection:
+            if qq is None:
+                await connection.execute("DELETE FROM mysekai_watch_presence")
+            else:
+                await connection.execute(
+                    "DELETE FROM mysekai_watch_presence WHERE qq = ?", (qq,)
+                )
+            await connection.commit()
 
     async def add_mysekai_watch_event(
         self,
