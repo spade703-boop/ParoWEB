@@ -2296,7 +2296,9 @@ class MysekaiService:
                         )
                         watch_dir.mkdir(parents=True, exist_ok=True)
                         image_name = f"{notification_id}.png"
-                        (watch_dir / image_name).write_bytes(push_png)
+                        (watch_dir / image_name).write_bytes(
+                            _board_thumbnail(push_png)
+                        )
                     except OSError:
                         logger.warning("浇水看板图片写入失败", exc_info=True)
                         image_name = None
@@ -2389,6 +2391,24 @@ class MysekaiService:
             "push": {"status": push_status, "message": push_message},
             "watch": watch_result,
         }
+
+
+#: 看板只存缩略图，1600px 原图给群推送用，不必再进网页。
+BOARD_IMAGE_MAX_DIM = 900
+
+
+def _board_thumbnail(png: bytes, max_dim: int = BOARD_IMAGE_MAX_DIM) -> bytes:
+    """把稀有图缩到看板尺寸；失败就退回原图，别让这轮播报丢掉图片。"""
+    try:
+        with Image.open(io.BytesIO(png)) as image:
+            image = image.convert("RGB")
+            image.thumbnail((max_dim, max_dim))
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG", optimize=True)
+            return buffer.getvalue()
+    except Exception:
+        logger.warning("浇水看板缩略图生成失败，改为保存原图", exc_info=True)
+        return png
 
 
 def _catalog_render_error(response) -> MysekaiError:

@@ -202,3 +202,21 @@ async def test_watch_link_reports_a_closed_window(tmp_path, monkeypatch) -> None
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "watch_window_closed"
+
+
+async def test_board_images_are_downscaled(tmp_path) -> None:
+    from io import BytesIO
+
+    from PIL import Image
+
+    from app.services.mysekai import _board_thumbnail
+
+    source = Image.new("RGB", (1600, 1200), (230, 235, 245))
+    buffer = BytesIO()
+    source.save(buffer, format="PNG")
+
+    thumb = _board_thumbnail(buffer.getvalue())
+
+    with Image.open(BytesIO(thumb)) as image:
+        assert max(image.size) == 900
+    assert len(thumb) < len(buffer.getvalue())
