@@ -2232,6 +2232,16 @@ class MysekaiService:
                             "status": empty_status,
                             "message": empty_message,
                         }
+                        try:
+                            await self.repository.add_mysekai_watch_event(
+                                qq=qq,
+                                game_user_id=binding["game_user_id"],
+                                round_key=round_key,
+                                kind="empty",
+                                rounds=empty_rounds,
+                            )
+                        except Exception:
+                            logger.warning("浇水看板事件写入失败", exc_info=True)
                 elif not push_png:
                     watch_result = {
                         "status": "failed",
@@ -2263,6 +2273,35 @@ class MysekaiService:
                         rare_png=push_png,
                     )
                     watch_result = {"status": rare_status, "message": rare_message}
+                    if rare_status == "sent":
+                        image_name = None
+                        try:
+                            watch_dir = (
+                                self.settings.database_path.parent / "watch"
+                            )
+                            watch_dir.mkdir(parents=True, exist_ok=True)
+                            image_name = f"{notification_id}.png"
+                            (watch_dir / image_name).write_bytes(push_png)
+                        except OSError:
+                            logger.warning("浇水看板图片写入失败", exc_info=True)
+                            image_name = None
+                        try:
+                            await self.repository.add_mysekai_watch_event(
+                                qq=qq,
+                                game_user_id=binding["game_user_id"],
+                                round_key=round_key,
+                                kind="rare",
+                                targets=list(result.birthday.get("targets") or []),
+                                image_path=image_name,
+                                rounds=(
+                                    await self.repository.mysekai_water_round_stats(
+                                        binding["game_user_id"],
+                                        since=await self.repository.mysekai_water_watch_enabled_at(qq),
+                                    )
+                                )["rounds"],
+                            )
+                        except Exception:
+                            logger.warning("浇水看板事件写入失败", exc_info=True)
                     if rare_status != "sent":
                         await self.repository.release_mysekai_water_round(
                             binding["game_user_id"], round_key

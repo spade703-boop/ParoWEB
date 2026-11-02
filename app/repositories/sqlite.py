@@ -138,6 +138,20 @@ CREATE TABLE IF NOT EXISTS mysekai_water_rounds (
     PRIMARY KEY (game_user_id, round_key)
 );
 
+CREATE TABLE IF NOT EXISTS mysekai_watch_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    qq TEXT NOT NULL,
+    game_user_id TEXT NOT NULL,
+    round_key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    targets_json TEXT,
+    image_path TEXT,
+    rounds INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mysekai_watch_events_qq
+    ON mysekai_watch_events(qq, id);
+
 CREATE TABLE IF NOT EXISTS mysekai_birthday_window (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     character_id INTEGER NOT NULL,
@@ -2256,6 +2270,109 @@ class SQLiteRepository:
             "matched_rounds": int(matched or 0),
             "latest_round_at": latest,
         }
+
+    async def add_mysekai_watch_event(
+        self,
+        *,
+        qq: str,
+        game_user_id: str,
+        round_key: str,
+        kind: str,
+        targets: list | None = None,
+        image_path: str | None = None,
+        rounds: int = 0,
+    ) -> int:
+        """记一条浇水检查事件，供实时看板回放。"""
+        async with self.connect() as connection:
+            cursor = await connection.execute(
+                """
+                INSERT INTO mysekai_watch_events(
+                    qq, game_user_id, round_key, kind, targets_json, image_path,
+                    rounds, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    qq,
+                    game_user_id,
+                    round_key,
+                    kind,
+                    json.dumps(targets or [], ensure_ascii=False),
+                    image_path,
+                    int(rounds),
+                    utc_now(),
+                ),
+            )
+            await connection.commit()
+            event_id = int(cursor.lastrowid or 0)
+            await cursor.close()
+        return event_id
+
+    async def get_mysekai_watch_event(self, event_id: int) -> dict | None:
+        async with self.connect() as connection:
+            async with connection.execute(
+                """
+                SELECT id, qq, game_user_id, round_key, kind, targets_json,
+                       image_path, rounds, created_at
+                  FROM mysekai_watch_events
+                 WHERE id = ?
+                """,
+                (int(event_id),),
+            ) as cursor:
+                row = await cursor.fetchone()
+        if row is None:
+            return None
+        try:
+            targets = json.loads(row["targets_json"] or "[]")
+        except ValueError:
+            targets = []
+        return {
+            "id": row["id"],
+            "qq": row["qq"],
+            "game_user_id": row["game_user_id"],
+            "round_key": row["round_key"],
+            "kind": row["kind"],
+            "targets": targets,
+            "image_path": row["image_path"],
+            "rounds": row["rounds"],
+            "created_at": row["created_at"],
+        }
+
+    async def list_mysekai_watch_events(
+        self, qq: str, *, after_id: int = 0, limit: int = 50
+    ) -> list[dict]:
+        async with self.connect() as connection:
+            async with connection.execute(
+                """
+                SELECT id, qq, game_user_id, round_key, kind, targets_json,
+                       image_path, rounds, created_at
+                  FROM mysekai_watch_events
+                 WHERE qq = ? AND id > ?
+                 ORDER BY id ASC
+                 LIMIT ?
+                """,
+                (qq, int(after_id), int(limit)),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        out = []
+        for row in rows:
+            try:
+                targets = json.loads(row["targets_json"] or "[]")
+            except ValueError:
+                targets = []
+            out.append(
+                {
+                    "id": row["id"],
+                    "qq": row["qq"],
+                    "game_user_id": row["game_user_id"],
+                    "round_key": row["round_key"],
+                    "kind": row["kind"],
+                    "targets": targets,
+                    "image_path": row["image_path"],
+                    "rounds": row["rounds"],
+                    "created_at": row["created_at"],
+                }
+            )
+        return out
 
     async def set_mysekai_catalog_state(
         self,

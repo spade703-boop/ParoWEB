@@ -7,7 +7,7 @@ import logging
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -22,6 +22,7 @@ from app.services.mysekai import MysekaiService
 from app.services.stats_cache import StatsCache
 from app.web.api import router
 from app.web.mysekai_api import capture_router as mysekai_capture_router
+from app.web.mysekai_api import watch_router as mysekai_watch_router
 from app.web.mysekai_api import internal_router as mysekai_internal_router
 from app.web.mysekai_api import router as mysekai_router
 from app.web.errors import (
@@ -142,6 +143,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "/internal/v1/mysekai/highlight-clear",
                 "/internal/v1/mysekai/catalog-link",
                 "/internal/v1/mysekai/master-update",
+                "/internal/v1/mysekai/watch-link",
                 "/api/v1/mysekai/ingest",
                 "/api/v1/mysekai/ingest-convert",
             }
@@ -174,8 +176,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(mysekai_router)
     application.include_router(mysekai_internal_router)
     application.include_router(mysekai_capture_router)
+    application.include_router(mysekai_watch_router)
     application.mount("/static", StaticFiles(directory=settings.project_root / "app" / "static"), name="static")
     application.mount("/content", StaticFiles(directory=settings.images_dir / "paro_avatars"), name="content")
+
+    @application.get("/roomlist/watch", include_in_schema=False)
+    async def watch_page():
+        return FileResponse(
+            settings.project_root / "app" / "static" / "watch.html",
+            media_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @application.get("/healthz")
     async def healthcheck():

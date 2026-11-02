@@ -6,8 +6,11 @@ MySekai service stays on loopback: this backend is the only thing that calls it.
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import hashlib
 import hmac
+import json
 import logging
 import re
 import time
@@ -15,6 +18,7 @@ from dataclasses import dataclass
 from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Response
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -1183,6 +1187,144 @@ async def module_links(request: Request):
         "ok": True,
         "download_url": module_url,
         "install_url": "shadowrocket://install?module=" + quote(module_url, safe=""),
+    }
+
+
+watch_router = APIRouter(prefix="/api/v1/mysekai/watch")
+
+NL = chr(10)
+
+
+def _watch_token(request: Request, qq: str) -> str:
+    """每个 QQ 一条独立看板链接；令牌 = HMAC(会话密钥, watch:QQ)。"""
+    secret = str(request.app.state.settings.mysekai_session_secret or "")
+    digest = hmac.new(
+        secret.encode("utf-8"), f"watch:{qq}".encode("utf-8"), hashlib.sha256
+    ).digest()
+    return base64.urlsafe_b64encode(digest[:12]).decode("ascii").rstrip("=")
+
+
+def _watch_token_ok(request: Request, qq: str, token: str | None) -> bool:
+    if not qq or not token:
+        return False
+    return hmac.compare_digest(token, _watch_token(request, qq))
+
+
+def _watch_event_payload(event: dict) -> dict:
+    return {
+        "id": event["id"],
+        "game_user_id": event["game_user_id"],
+        "kind": event["kind"],
+        "rounds": event["rounds"],
+        "targets": event["targets"],
+        "created_at": event["created_at"],
+        "image_url": (
+            f"/api/v1/mysekai/watch/events/{event['id']}/image"
+            if event["image_path"]
+            else None
+        ),
+    }
+
+
+@watch_router.get("/feed")
+async def watch_feed(request: Request, qq: str, t: str, after: int = 0):
+    """轮询兜底：返回 after 之后的浇水检查事件。"""
+    if not _watch_token_ok(request, qq, t):
+        return error_response(403, "forbidden", "链接无效，请重新获取")
+    repository = _mysekai(request).repository
+    events = await repository.list_mysekai_watch_events(qq, after_id=after)
+    enabled = await repository.is_mysekai_water_watch(qq)
+    enabled_at = await repository.mysekai_water_watch_enabled_at(qq)
+    roles = []
+    for index, row in enumerate(await repository.list_mysekai_bindings(qq), 1):
+        roles.append(
+            {
+                "label": f"u{index}",
+                "nickname": row.get("nickname"),
+                "game_user_id": row["game_user_id"],
+                **(await repository.mysekai_water_round_stats(
+                    row["game_user_id"], since=enabled_at
+                )),
+            }
+        )
+    return {
+        "ok": True,
+        "events": [_watch_event_payload(event) for event in events],
+        "qq": qq,
+        "token": t,
+        "enabled": enabled,
+        "roles": roles,
+    }
+
+
+@watch_router.get("/stream")
+async def watch_stream(
+    request: Request, qq: str, t: str, after: int = 0, seconds: int = 300
+):
+    """SSE：有新事件就推，30 秒一次心跳。"""
+    if not _watch_token_ok(request, qq, t):
+        return error_response(403, "forbidden", "链接无效，请重新获取")
+    repository = _mysekai(request).repository
+
+    async def events():
+        last = int(after)
+        deadline = time.time() + max(30, min(int(seconds), 1800))
+        heartbeat = 0.0
+        yield "retry: 3000" + NL + NL
+        while time.time() < deadline:
+            if await request.is_disconnected():
+                return
+            rows = await repository.list_mysekai_watch_events(
+                qq, after_id=last, limit=20
+            )
+            for row in rows:
+                last = row["id"]
+                payload = json.dumps(
+                    _watch_event_payload(row), ensure_ascii=False
+                )
+                yield f"data: {payload}" + NL + NL
+            now = time.time()
+            if now - heartbeat >= 15:
+                heartbeat = now
+                yield ": ping" + NL + NL
+            await asyncio.sleep(1.0)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
+
+
+@watch_router.get("/events/{event_id}/image")
+async def watch_event_image(request: Request, event_id: int, t: str):
+    event = await _mysekai(request).repository.get_mysekai_watch_event(event_id)
+    if event is None or not _watch_token_ok(request, event["qq"], t):
+        return error_response(404, "not_found", "事件不存在")
+    if not event["image_path"]:
+        return error_response(404, "not_found", "这一轮没有图片")
+    root = request.app.state.settings.database_path.parent / "watch"
+    path = (root / event["image_path"]).resolve()
+    if root.resolve() not in path.parents or not path.is_file():
+        return error_response(404, "not_found", "图片不存在")
+    return FileResponse(path, media_type="image/png")
+
+
+@internal_router.post("/watch-link")
+async def watch_link(payload: WatchQueryRequest, request: Request):
+    """机器人用：给绑定了角色的 QQ 发一条独立看板链接。"""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    service = _mysekai(request)
+    binding = await service.repository.get_mysekai_binding(payload.qq)
+    if binding is None:
+        return error_response(404, "not_bound", "这个 QQ 还没有绑定游戏 ID")
+    token = _watch_token(request, payload.qq)
+    base = str(request.base_url).rstrip("/")
+    return {
+        "ok": True,
+        "url": f"{base}/roomlist/watch?qq={payload.qq}&t={token}",
     }
 
 
