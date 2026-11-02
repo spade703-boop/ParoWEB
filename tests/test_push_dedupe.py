@@ -126,8 +126,8 @@ async def test_web_submit_reports_watch_state(tmp_path) -> None:
     async with _app(tmp_path, submit_birthday=birthday, watch_on=True) as (client, _):
         response = await _submit(client)
     assert response["watch"] == {
-        "status": "recorded",
-        "message": "本轮已记录，未发现稀有材料",
+        "status": "sent",
+        "message": "已播报本轮检查结果",
     }
 
 
@@ -160,7 +160,7 @@ async def test_manual_upload_labels_result_as_current_snapshot(tmp_path, monkeyp
     assert notifications[0]["birthday"]["observation_kind"] == "snapshot"
 
 
-async def test_empty_delivery_is_recorded_without_group_notification(tmp_path, monkeypatch) -> None:
+async def test_empty_delivery_is_recorded_and_announced(tmp_path, monkeypatch) -> None:
     from app.services.mysekai import MysekaiService
     notifications = []
 
@@ -188,8 +188,12 @@ async def test_empty_delivery_is_recorded_without_group_notification(tmp_path, m
         stats = await repository.mysekai_water_round_stats(GAME_ID)
         enabled_at = await repository.mysekai_water_watch_enabled_at(QQ)
         since_stats = await repository.mysekai_water_round_stats(GAME_ID, since=enabled_at)
-    assert statuses == ["recorded", "duplicate"]
-    assert notifications == []
+    assert statuses == ["sent", "duplicate"]
+    # 没出稀有也要播报一条纯文字：轮次 + 检查时间，不带图。
+    assert len(notifications) == 1
+    assert notifications[0]["rare_png"] is None
+    assert notifications[0]["rounds"] == 1
+    assert notifications[0]["checked_at"]
     assert ordinary_pushes == []
     assert stats["rounds"] == 1
     assert stats["matched_rounds"] == 0
@@ -251,7 +255,7 @@ async def test_delivery_party_mismatch_still_processes_the_response(tmp_path, ca
         repository = client._transport.app.state.services.repository
         stats = await repository.mysekai_water_round_stats(GAME_ID)
     assert response.status_code == 200
-    assert response.json()["watch"]["status"] == "recorded"
+    assert response.json()["watch"]["status"] == "sent"
     assert stats["rounds"] == 1
     assert any("birthday delivery mismatch" in r.message for r in caplog.records)
 

@@ -376,6 +376,13 @@ async def water_watch_status(payload: WatchQueryRequest, request: Request):
                 )),
             }
         )
+    # 顶层时间取全部角色里最新的一次：抓包可能来自任意角色，
+    # 只看当前角色会显示成「另一个账号」的时间。
+    latest_values = [
+        row["latest_round_at"] for row in roles if row.get("latest_round_at")
+    ]
+    if latest_values:
+        stats = {**stats, "latest_round_at": max(latest_values)}
     return {
         "ok": True,
         "bound": True,

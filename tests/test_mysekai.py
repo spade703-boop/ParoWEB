@@ -145,6 +145,8 @@ def _mock_transport(
             if push_payloads is not None:
                 push_payloads.append(json.loads(request.content))
             return httpx.Response(200 if push_ok else 500, json={"ok": push_ok})
+        if path == "/push/rare":
+            return httpx.Response(200 if push_ok else 500, json={"ok": push_ok})
         return httpx.Response(404, json={"error": "not found"})
 
     return httpx.MockTransport(handler)

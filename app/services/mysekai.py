@@ -1900,6 +1900,8 @@ class MysekaiService:
         nickname: str | None,
         birthday: dict,
         rare_png: bytes | None,
+        rounds: int | None = None,
+        checked_at: str | None = None,
     ) -> tuple[str, str]:
         """Push a watering-watch hit: one text line plus the filtered map."""
         url = self.settings.mysekai_push_url
@@ -1914,6 +1916,8 @@ class MysekaiService:
             "birthday": birthday,
             "rare_png_base64": base64.b64encode(rare_png).decode("ascii") if rare_png is not None else None,
             "empty_result": rare_png is None,
+            "rounds": rounds,
+            "checked_at": checked_at,
         }
         headers = {"Content-Type": "application/json"}
         if self.settings.mysekai_push_token:
@@ -1926,7 +1930,11 @@ class MysekaiService:
         except httpx.HTTPError:
             return "failed", "稀有掉落推送失败（网络错误）"
         if 200 <= response.status_code < 300:
-            return "sent", "已推送稀有掉落到群里"
+            return "sent", (
+                "已播报本轮检查结果"
+                if rare_png is None
+                else "已推送稀有掉落到群里"
+            )
         return "failed", f"稀有掉落推送失败（HTTP {response.status_code}）"
 
     async def submit(
@@ -2189,6 +2197,41 @@ class MysekaiService:
                         "message": "本轮已记录，未发现稀有材料" if claimed
                         else "这一轮已经记录过",
                     }
+                    if claimed:
+                        # 没出稀有也要在群里说一声，附上已浇轮次与检查时间。
+                        empty_rounds = (
+                            await self.repository.mysekai_water_round_stats(
+                                binding["game_user_id"],
+                                since=await self.repository.mysekai_water_watch_enabled_at(
+                                    qq
+                                ),
+                            )
+                        )["rounds"]
+                        empty_id = str(uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            f"mysekai:{server}:{binding['game_user_id']}:{round_key}:empty",
+                        ))
+                        empty_status, empty_message = await self._push_rare(
+                            upload_id=empty_id,
+                            qq=qq,
+                            game_user_id=binding["game_user_id"],
+                            nickname=binding.get("nickname"),
+                            birthday={
+                                **result.birthday,
+                                "observation_kind": "delivery"
+                                if event_kind == "birthday_delivery"
+                                else "snapshot",
+                            },
+                            rare_png=None,
+                            rounds=empty_rounds,
+                            checked_at=datetime.now(timezone.utc)
+                            .isoformat()
+                            .replace("+00:00", "Z"),
+                        )
+                        watch_result = {
+                            "status": empty_status,
+                            "message": empty_message,
+                        }
                 elif not push_png:
                     watch_result = {
                         "status": "failed",
