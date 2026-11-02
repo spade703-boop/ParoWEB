@@ -39,15 +39,16 @@ def test_seventeen_starts_the_evening_window() -> None:
     )
 
 
-def test_birthday_midnight_splits_a_new_window() -> None:
+def test_midnight_always_belongs_to_the_previous_evening() -> None:
+    """刷新点没有 00:00，凌晨上传仍算前一天的 17 窗口。"""
     birthdays = frozenset({date(2026, 11, 12)})
     assert (
         window_key(datetime(2026, 11, 12, 0, 0, tzinfo=CN), birthdays=birthdays)
-        == "2026-11-12-00"
+        == "2026-11-11-17"
     )
     assert (
         window_key(datetime(2026, 11, 12, 3, 0, tzinfo=CN), birthdays=birthdays)
-        == "2026-11-12-00"
+        == "2026-11-11-17"
     )
 
 
@@ -59,20 +60,20 @@ def test_birthday_after_five_falls_back_to_the_day_window() -> None:
     )
 
 
-def test_birthday_day_has_three_windows() -> None:
-    """生日 00:00 下生日花并刷新全图，是独立窗口，不能并进前一天 17:00。"""
+def test_birthday_day_has_a_noon_window() -> None:
+    """生日当天 12:00 下生日花并刷新全图，单列 12 窗口。"""
     birthdays = frozenset({date(2026, 11, 12)})
     assert (
-        window_key(datetime(2026, 11, 11, 23, 50, tzinfo=CN), birthdays=birthdays)
-        == "2026-11-11-17"
-    )
-    assert (
-        window_key(datetime(2026, 11, 12, 0, 10, tzinfo=CN), birthdays=birthdays)
-        == "2026-11-12-00"
-    )
-    assert (
-        window_key(datetime(2026, 11, 12, 5, 0, tzinfo=CN), birthdays=birthdays)
+        window_key(datetime(2026, 11, 12, 11, 59, tzinfo=CN), birthdays=birthdays)
         == "2026-11-12-05"
+    )
+    assert (
+        window_key(datetime(2026, 11, 12, 12, 0, tzinfo=CN), birthdays=birthdays)
+        == "2026-11-12-12"
+    )
+    assert (
+        window_key(datetime(2026, 11, 12, 16, 59, tzinfo=CN), birthdays=birthdays)
+        == "2026-11-12-12"
     )
     assert (
         window_key(datetime(2026, 11, 12, 17, 0, tzinfo=CN), birthdays=birthdays)
@@ -86,20 +87,16 @@ def test_birthday_calendar_is_complete() -> None:
     assert date(2026, 12, 27) in birthday_dates(2026)
 
 
-def test_flower_start_day_also_gets_a_midnight_window() -> None:
-    """生日花在生日前 72 小时的 00:00 开始，那天也会整图刷新。"""
+def test_flower_start_day_also_gets_a_noon_window() -> None:
+    """生日花在生日前 72 小时的 12:00 出现，那天中午会整图刷新。"""
     birthdays = frozenset({date(2026, 10, 27)})
-    assert (
-        window_key(datetime(2026, 10, 23, 23, 50, tzinfo=CN), birthdays=birthdays)
-        == "2026-10-23-17"
-    )
-    assert (
-        window_key(datetime(2026, 10, 24, 0, 10, tzinfo=CN), birthdays=birthdays)
-        == "2026-10-24-00"
-    )
     assert (
         window_key(datetime(2026, 10, 24, 6, 0, tzinfo=CN), birthdays=birthdays)
         == "2026-10-24-05"
+    )
+    assert (
+        window_key(datetime(2026, 10, 24, 12, 0, tzinfo=CN), birthdays=birthdays)
+        == "2026-10-24-12"
     )
 
 
@@ -127,3 +124,12 @@ def test_game_day_starts_at_five_and_runs_until_the_next_five() -> None:
     assert game_day_key(datetime(2026, 10, 23, 17, 0, tzinfo=CN)) == "2026-10-23"
     assert game_day_key(datetime(2026, 10, 23, 23, 59, tzinfo=CN)) == "2026-10-23"
     assert game_day_key(datetime(2026, 10, 24, 0, 30, tzinfo=CN)) == "2026-10-23"
+
+
+def test_ordinary_day_keeps_two_windows() -> None:
+    """没有生日活动的日子，12:00 不另开窗口。"""
+    birthdays = frozenset({date(2026, 11, 12)})
+    assert (
+        window_key(datetime(2026, 10, 23, 12, 30, tzinfo=CN), birthdays=birthdays)
+        == "2026-10-23-05"
+    )

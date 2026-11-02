@@ -27,6 +27,9 @@ BIRTHDAYS: dict[int, tuple[int, int]] = {
 #: 国服两个固定刷新点（小时）。
 REFRESH_HOURS: tuple[int, ...] = (5, 17)
 
+#: 生日花出现/下掉那天，中午额外刷新一次。
+MIDDAY_HOUR: int = 12
+
 #: 记忆按游戏日结算：05:00 开始，到次日 04:59。每个角色每天只能拿一份
 #: （月卡指定的来访角色可以拿两份），17:00 的整图刷新不清零记忆。
 GAME_DAY_START_HOUR: int = 5
@@ -92,10 +95,11 @@ def flower_start_dates(year: int) -> frozenset[date]:
     return frozenset(moment - FLOWER_WINDOW for moment in birthday_dates(year))
 
 
-def _midnight_boundary_dates(year: int) -> frozenset[date]:
-    """Days that get an extra 00:00 refresh.
+def _midday_boundary_dates(year: int) -> frozenset[date]:
+    """Days that get an extra 12:00 refresh.
 
-    生日花在开始那天 00:00 出现、在生日当天 00:00 下掉，两次都会重刷整图。
+    正常只有 05:00 / 17:00 两个刷新点；生日花出现那天和下掉那天，
+    中午 12:00 还会再刷新一次整图，因此这两天要多一个窗口。
     """
     return birthday_dates(year) | flower_start_dates(year)
 
@@ -105,26 +109,26 @@ def window_key(
 ) -> str:
     """The refresh window ``now`` falls in, as ``YYYY-MM-DD-HH``.
 
-    05:00–16:59 → today's 05; 17:00–23:59 → today's 17; 00:00–04:59 → the
-    00 window on a birthday-flower boundary day (flowers appear, or are taken
-    down on the birthday), otherwise the previous day's 17.
+    正常刷新点是 05:00 与 17:00：05:00–16:59 归当日 05，17:00–次日 04:59
+    归当日 17。只有生日花出现与下掉那两天，12:00 会再刷一次整图，
+    这两天 12:00–16:59 单独算一个 12 窗口。
 
-    ``birthdays`` are character birthday dates; the flower-window start
-    (three days earlier) is derived here, because that 00:00 refresh also
-    rebuilds the whole map.
+    ``birthdays`` 是角色生日；生日花开始日（提前三天）由这里推导。
     """
     if birthdays is None:
-        boundaries = _midnight_boundary_dates(now.year)
+        boundaries = _midday_boundary_dates(now.year)
     else:
-        # 调用方传的是生日日期；生日花开始那天同样要切窗口，这里一并推导。
         boundaries = frozenset(birthdays) | {
             moment - FLOWER_WINDOW for moment in birthdays
         }
     today = now.date()
     if now.hour < REFRESH_HOURS[0]:
-        if today in boundaries:
-            return f"{today.isoformat()}-00"
-        return f"{(today - timedelta(days=1)).isoformat()}-{REFRESH_HOURS[1]:02d}"
+        previous = (today - timedelta(days=1)).isoformat()
+        return f"{previous}-{REFRESH_HOURS[1]:02d}"
+    if now.hour < MIDDAY_HOUR:
+        return f"{today.isoformat()}-{REFRESH_HOURS[0]:02d}"
     if now.hour < REFRESH_HOURS[1]:
+        if today in boundaries:
+            return f"{today.isoformat()}-{MIDDAY_HOUR:02d}"
         return f"{today.isoformat()}-{REFRESH_HOURS[0]:02d}"
     return f"{today.isoformat()}-{REFRESH_HOURS[1]:02d}"
