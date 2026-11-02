@@ -32,7 +32,9 @@ function formatWhen(iso) {
 
 function roleLabel(gameUserId) {
   for (const role of rolesEl.querySelectorAll("[data-role-id]")) {
-    if (role.dataset.roleId === gameUserId) return role.dataset.roleLabel;
+    if (role.dataset.roleId === gameUserId) {
+      return role.dataset.roleName || role.dataset.roleLabel;
+    }
   }
   return "";
 }
@@ -92,6 +94,7 @@ function renderRoles(roles) {
     chip.className = "role";
     chip.dataset.roleId = role.game_user_id;
     chip.dataset.roleLabel = role.label;
+    chip.dataset.roleName = role.nickname || role.label;
     const name = role.nickname || role.label;
     const rare = Number(role.matched_rounds || 0);
     chip.innerHTML = `<b>${escapeHtml(name)}</b> ${Number(role.rounds || 0)} 轮${
