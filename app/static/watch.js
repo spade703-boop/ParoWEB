@@ -12,6 +12,7 @@ const rolesEl = document.getElementById("roles");
 let lastId = 0;
 let source = null;
 let pollTimer = null;
+let summaryTimer = null;
 
 function setConn(state, text) {
   connEl.className = "conn " + state;
@@ -136,6 +137,27 @@ async function loadInitial() {
   return true;
 }
 
+async function refreshSummary() {
+  try {
+    const response = await fetch(
+      `/api/v1/mysekai/watch/feed?qq=${encodeURIComponent(QQ)}&t=${encodeURIComponent(TOKEN)}&after=${lastId}`
+    );
+    if (!response.ok) return;
+    const payload = await response.json();
+    renderRoles(payload.roles);
+    statusEl.textContent = payload.enabled
+      ? "浇水监听开启中"
+      : "浇水监听当前已关闭（开启后才会记录轮次）";
+  } catch {
+    /* 概览刷新失败不影响列表 */
+  }
+}
+
+function scheduleSummaryRefresh() {
+  if (summaryTimer) clearTimeout(summaryTimer);
+  summaryTimer = setTimeout(refreshSummary, 800);
+}
+
 function clearEmptyHint() {
   const hint = feedEl.querySelector(".empty");
   if (hint) hint.remove();
@@ -161,6 +183,7 @@ function openStream() {
     lastId = event.id;
     clearEmptyHint();
     renderEvent(event);
+    scheduleSummaryRefresh();
   };
   source.onerror = () => {
     setConn("down", "实时连接断开，改为每 3 秒刷新");
@@ -181,6 +204,7 @@ function startPolling() {
         lastId = Math.max(lastId, event.id);
         clearEmptyHint();
         renderEvent(event);
+        scheduleSummaryRefresh();
       }
       setConn("live", "轮询中（每 3 秒）");
     } catch {
