@@ -12,7 +12,6 @@ const rolesEl = document.getElementById("roles");
 let lastId = 0;
 let source = null;
 let pollTimer = null;
-let scrollToBottom = true;
 
 function setConn(state, text) {
   connEl.className = "conn " + state;
@@ -81,10 +80,8 @@ function renderEvent(event) {
     card.appendChild(image);
   }
 
-  feedEl.appendChild(card);
-  if (scrollToBottom) {
-    window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
-  }
+  // 最新的放最上面：来一条就能直接看到，不用往下滚。
+  feedEl.prepend(card);
 }
 
 function renderRoles(roles) {
@@ -198,12 +195,6 @@ function stopPolling() {
     pollTimer = null;
   }
 }
-
-window.addEventListener("scroll", () => {
-  const nearBottom =
-    window.innerHeight + window.scrollY >= document.body.scrollHeight - 80;
-  scrollToBottom = nearBottom;
-});
 
 async function main() {
   if (!QQ || !TOKEN) {
