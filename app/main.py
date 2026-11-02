@@ -21,6 +21,7 @@ from app.services.draw_service import DrawService
 from app.services.mysekai import MysekaiService
 from app.services.stats_cache import StatsCache
 from app.web.api import router
+from app.web.mysekai_api import capture_router as mysekai_capture_router
 from app.web.mysekai_api import internal_router as mysekai_internal_router
 from app.web.mysekai_api import router as mysekai_router
 from app.web.errors import (
@@ -112,7 +113,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             # Token-authenticated, non-browser callers: the Bot and the mobile
             # capture module send no Origin and carry a Bearer token instead.
-            is_token_api = request.url.path in {
+            is_capture_upload = request.url.path.startswith("/harukiproxy/v3/")
+            is_token_api = is_capture_upload or request.url.path in {
                 "/internal/v1/mysekai/bind",
                 "/internal/v1/mysekai/unbind",
                 "/internal/v1/mysekai/switch-role",
@@ -148,7 +150,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if origin not in settings.allowed_origins:
                     return error_response(403, "invalid_origin", "请求来源不被允许")
             # The capture module posts the encrypted response body as-is.
-            is_binary_upload = request.url.path in {
+            is_binary_upload = is_capture_upload or request.url.path in {
                 "/api/v1/mysekai/ingest",
                 "/api/v1/mysekai/ingest-convert",
             }
@@ -171,6 +173,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(router)
     application.include_router(mysekai_router)
     application.include_router(mysekai_internal_router)
+    application.include_router(mysekai_capture_router)
     application.mount("/static", StaticFiles(directory=settings.project_root / "app" / "static"), name="static")
     application.mount("/content", StaticFiles(directory=settings.images_dir / "paro_avatars"), name="content")
 

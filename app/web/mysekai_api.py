@@ -1177,3 +1177,62 @@ async def module_links(request: Request):
         "download_url": module_url,
         "install_url": "shadowrocket://install?module=" + quote(module_url, safe=""),
     }
+
+
+capture_router = APIRouter(prefix="/harukiproxy/v3")
+
+_CAPTURE_KINDS = {"mysekai": "snapshot"}
+
+
+@capture_router.post("/{region}/{game_user_id}/{kind}/upload")
+async def haruki_upload(
+    request: Request, region: str, game_user_id: str, kind: str
+):
+    """HarukiProxy 自定义端点：body 就是游戏响应密文，原样转给 ingest。
+
+    App 会把端点拼成 ``<endpoint>/harukiproxy/v3/<region>/<游戏ID>/<类型>/upload``；
+    鉴权用 App 里填的 Auth secret（请求头 ``X-Haruki-Toolbox-Secret``）。
+    """
+    settings = request.app.state.settings
+    expected = settings.mysekai_ingest_token
+    if not expected:
+        return error_response(503, "ingest_disabled", "MySekai 上报告口未配置")
+    supplied = request.headers.get("X-Haruki-Toolbox-Secret", "")
+    if not hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8")):
+        return error_response(403, "forbidden", "无权调用 MySekai 上报告口")
+    if region != "cn":
+        return error_response(422, "unsupported_region", "只支持国服")
+    if not GAME_ID_RE.fullmatch(game_user_id):
+        return error_response(422, "invalid_game_id", "游戏 ID 格式不正确")
+    if not _ingest_allowed(request, game_user_id):
+        return error_response(403, "not_allowlisted", "这个游戏 ID 不在上报白名单内")
+
+    event_kind = _CAPTURE_KINDS.get(kind)
+    if event_kind is None:
+        return error_response(422, "unsupported_capture", f"暂不支持 {kind} 类型")
+
+    body = await request.body()
+    if not body:
+        return error_response(422, "empty_body", "响应体为空")
+    if len(body) > MAX_BODY_BYTES:
+        return error_response(413, "body_too_large", "响应体超过 4 MB")
+
+    try:
+        result = await _mysekai(request).ingest(
+            game_user_id=game_user_id,
+            server="cn",
+            body=body,
+            event_kind=event_kind,
+            birthday_party_id=None,
+        )
+    except MysekaiError as exc:
+        logger.warning(
+            "haruki upload failed game_id=%s kind=%s bytes=%d code=%s",
+            game_user_id, kind, len(body), exc.code,
+        )
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    logger.info(
+        "haruki upload ok game_id=%s kind=%s bytes=%d upload_id=%s",
+        game_user_id, kind, len(body), result["upload_id"],
+    )
+    return {"ok": True, "upload_id": result["upload_id"]}
