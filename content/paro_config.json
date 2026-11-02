@@ -85,7 +85,7 @@
       "outcomes": [
         {
           "id": "dog",
-          "label": "狗",
+          "label": "狗宾",
           "weight": 1,
           "layout": "single",
           "tags": ["dog"],
@@ -95,7 +95,7 @@
         },
         {
           "id": "gori",
-          "label": "狐",
+          "label": "妖狐",
           "weight": 1,
           "layout": "single",
           "tags": ["fox"],

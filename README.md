@@ -215,7 +215,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 <summary>彩蛋配置怎么写（细节）</summary>
 
 `paro_config.json` 的 `egg_categories`：每个大类给 `id` / `rate` / `priority` / `result_type` / `outcomes`。
-当前 `foxrabbit` 3%（priority 100）+ `dogfox` 3%（priority 50）+
+当前 `foxrabbit` 3%（priority 100）+ `dogfox` 3%（priority 50，狗宾 / 妖狐 / 狗狐 / 狗狐饭）+
 `cooking` 3%（priority 0），总彩蛋率 9%。
 
 - 一条抽取**只取一次随机数**，按 `priority` 降序累加 `rate` 划互斥区间 —— 不要拆成两次判定。

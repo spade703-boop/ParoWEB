@@ -362,6 +362,38 @@ def test_special_category_uses_configured_directory_layout_and_accents(tmp_path)
     assert doggoribun.counts_as_cooking is True
 
 
+def test_dogfox_outcome_labels_use_full_branch_names(tmp_path) -> None:
+    _write_catalog(
+        tmp_path,
+        config={
+            "egg_categories": [
+                _special_category(
+                    "dogfox",
+                    rate=0.03,
+                    outcomes=[
+                        _outcome("dog", label="狗"),
+                        _outcome("gori", label="狐"),
+                        _outcome("doggori", label="狗狐"),
+                        _outcome("doggoribun", label="狗狐饭", counts_as_cooking=True),
+                    ],
+                )
+            ]
+        },
+    )
+
+    labels = {
+        outcome.id: outcome.label
+        for outcome in CatalogService(tmp_path).snapshot.special_outcomes
+    }
+
+    assert labels == {
+        "dog": "狗宾",
+        "gori": "妖狐",
+        "doggori": "狗狐",
+        "doggoribun": "狗狐饭",
+    }
+
+
 def test_failed_hot_reload_keeps_previous_snapshot(tmp_path) -> None:
     _write_catalog(tmp_path)
     service = CatalogService(tmp_path)

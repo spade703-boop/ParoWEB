@@ -126,6 +126,8 @@ async def test_session_catalog_draw_profile_and_clear(client: httpx.AsyncClient)
     assert special_outcomes["fox"]["category_id"] == "foxrabbit"
     assert special_outcomes["foxbun"]["counts_as_cooking"] is True
     assert special_outcomes["doggori"]["category_id"] == "dogfox"
+    assert special_outcomes["dog"]["label"] == "狗宾"
+    assert special_outcomes["gori"]["label"] == "妖狐"
     assert special_outcomes["doggori"]["layout"] == "pair"
     assert special_outcomes["doggoribun"]["counts_as_cooking"] is True
     assert special_outcomes["doggoribun"]["layout"] == "wide"

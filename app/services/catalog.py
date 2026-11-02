@@ -17,6 +17,7 @@ IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
 
 # 多图轮换：主图 `狐&兔` + 变体 `狐&兔_2` / `狐&兔_3`，与 Bot 侧命名规则一致。
 _VARIANT_RE = re.compile(r"^(?P<base>.+?)(?:_(?P<index>\d+))?$")
+_DOGFOX_LABELS = {"dog": "狗宾", "gori": "妖狐"}
 
 
 def _variant_sort_key(stem: str) -> tuple[int, int, str]:
@@ -304,7 +305,11 @@ class CatalogService:
                 SpecialOutcome(
                     id=outcome_id,
                     category_id=category_id,
-                    label=str(item.get("label") or outcome_id),
+                    label=(
+                        _DOGFOX_LABELS.get(outcome_id, str(item.get("label") or outcome_id))
+                        if category_id == "dogfox"
+                        else str(item.get("label") or outcome_id)
+                    ),
                     weight=weight,
                     tags=tags,
                     assets=assets,
