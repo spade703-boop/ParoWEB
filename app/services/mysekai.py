@@ -579,7 +579,7 @@ class MysekaiService:
             raise HarukiUnavailable("Haruki 暂时不可用，请稍后再试") from None
         if response.status_code == 404:
             raise AccountNotFound(
-                "游戏 ID 不存在，或还没有在 Haruki 开启公开权限"
+                "还没有在 Haruki 开启公开权限，或没有绑定QQ/没有上传过Suite"
             )
         if response.status_code >= 500:
             raise HarukiUnavailable("Haruki 暂时不可用，请稍后再试")
@@ -680,7 +680,7 @@ class MysekaiService:
         except httpx.HTTPError:
             raise HarukiUnavailable("Haruki 暂时不可用，请稍后再试") from None
         if response.status_code == 404:
-            raise AccountNotFound("游戏 ID 不存在，或还没有在 Haruki 开启公开权限")
+            raise AccountNotFound("还没有在 Haruki 开启公开权限，或没有绑定QQ/没有上传过Suite")
         if response.status_code >= 500:
             raise HarukiUnavailable("Haruki 暂时不可用，请稍后再试")
         if response.status_code != 200:
