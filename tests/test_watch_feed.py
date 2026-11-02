@@ -16,8 +16,8 @@ from test_mysekai import BOT_TOKEN, GAME_ID, QQ, _settings
 
 
 @asynccontextmanager
-async def _app(tmp_path, *, watch: bool = True):
-    settings = _settings(tmp_path)
+async def _app(tmp_path, *, watch: bool = True, public_base_url: str = ""):
+    settings = _settings(tmp_path, public_base_url=public_base_url)
     app = create_app(settings)
     async with app.router.lifespan_context(app):
         repository = app.state.services.repository
@@ -233,3 +233,16 @@ async def test_presence_expires_so_group_pushes_resume(tmp_path) -> None:
 
     assert fresh is True
     assert stale is False
+
+
+async def test_watch_link_uses_the_public_base_url(tmp_path) -> None:
+    """机器人从容器内调用时，链接必须是公网域名而不是 127.0.0.1。"""
+    async with _app(tmp_path, public_base_url="https://akitoya.top") as (client, _repo):
+        response = await client.post(
+            "/internal/v1/mysekai/watch-link",
+            json={"qq": QQ},
+            headers={"Authorization": f"Bearer {BOT_TOKEN}"},
+        )
+
+    url = response.json()["url"]
+    assert url.startswith("https://akitoya.top/roomlist/watch?qq=")

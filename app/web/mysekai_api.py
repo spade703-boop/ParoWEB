@@ -1339,7 +1339,11 @@ async def watch_link(payload: WatchQueryRequest, request: Request):
     except MysekaiError as exc:
         return error_response(exc.status, exc.code, str(exc), exc.details)
     token = _watch_token(request, payload.qq)
-    base = str(request.base_url).rstrip("/")
+    # 机器人是从容器内 127.0.0.1 调过来的，request.base_url 不是公网地址；
+    # 优先用配置的公网域名，没配才退回请求 Host（本地开发）。
+    base = request.app.state.settings.public_base_url or str(
+        request.base_url
+    ).rstrip("/")
     return {
         "ok": True,
         "url": f"{base}/roomlist/watch?qq={payload.qq}&t={token}",
