@@ -1181,7 +1181,10 @@ async def module_links(request: Request):
 
 capture_router = APIRouter(prefix="/harukiproxy/v3")
 
-_CAPTURE_KINDS = {"mysekai": "snapshot"}
+_CAPTURE_KINDS = {
+    "mysekai": "snapshot",
+    "mysekai_birthday_party": "birthday_delivery",
+}
 
 
 @capture_router.post("/{region}/{game_user_id}/{kind}/upload")
@@ -1209,6 +1212,10 @@ async def haruki_upload(
 
     event_kind = _CAPTURE_KINDS.get(kind)
     if event_kind is None:
+        logger.warning(
+            "haruki upload unsupported kind=%s game_id=%s path=%s",
+            kind, game_user_id, request.url.path,
+        )
         return error_response(422, "unsupported_capture", f"暂不支持 {kind} 类型")
 
     body = await request.body()

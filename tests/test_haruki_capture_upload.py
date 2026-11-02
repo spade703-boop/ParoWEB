@@ -55,6 +55,18 @@ async def test_a_wrong_secret_is_rejected(tmp_path) -> None:
     assert response.status_code == 403
 
 
+async def test_birthday_delivery_uploads_are_accepted(tmp_path) -> None:
+    async with _app(tmp_path) as client:
+        response = await client.post(
+            _url(kind="mysekai_birthday_party"),
+            content=b"capture",
+            headers={"X-Haruki-Toolbox-Secret": SECRET},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+
+
 async def test_capture_kinds_other_than_mysekai_are_refused(tmp_path) -> None:
     async with _app(tmp_path) as client:
         response = await client.post(
