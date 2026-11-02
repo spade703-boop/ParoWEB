@@ -67,10 +67,22 @@ async def test_birthday_delivery_uploads_are_accepted(tmp_path) -> None:
     assert response.json()["ok"] is True
 
 
-async def test_capture_kinds_other_than_mysekai_are_refused(tmp_path) -> None:
+async def test_the_login_suite_is_acknowledged_and_ignored(tmp_path) -> None:
     async with _app(tmp_path) as client:
         response = await client.post(
             _url(kind="suite"),
+            content=b"capture",
+            headers={"X-Haruki-Toolbox-Secret": SECRET},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["ignored"] is True
+
+
+async def test_unknown_capture_kinds_are_refused(tmp_path) -> None:
+    async with _app(tmp_path) as client:
+        response = await client.post(
+            _url(kind="mystery"),
             content=b"capture",
             headers={"X-Haruki-Toolbox-Secret": SECRET},
         )

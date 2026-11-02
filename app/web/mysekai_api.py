@@ -1185,6 +1185,9 @@ _CAPTURE_KINDS = {
     "mysekai": "snapshot",
     "mysekai_birthday_party": "birthday_delivery",
 }
+#: App 也会把登录全量包推过来；我们不消费它，但要回 200，否则界面上每次
+#: 都显示上传失败。
+_IGNORED_KINDS = {"suite"}
 
 
 @capture_router.post("/{region}/{game_user_id}/{kind}/upload")
@@ -1209,6 +1212,13 @@ async def haruki_upload(
         return error_response(422, "invalid_game_id", "游戏 ID 格式不正确")
     if not _ingest_allowed(request, game_user_id):
         return error_response(403, "not_allowlisted", "这个游戏 ID 不在上报白名单内")
+
+    if kind in _IGNORED_KINDS:
+        logger.info(
+            "haruki upload ignored kind=%s game_id=%s bytes=%d",
+            kind, game_user_id, len(await request.body()),
+        )
+        return {"ok": True, "ignored": True}
 
     event_kind = _CAPTURE_KINDS.get(kind)
     if event_kind is None:
