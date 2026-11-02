@@ -130,6 +130,11 @@ CREATE TABLE IF NOT EXISTS mysekai_water_watches (
     enabled_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS mysekai_watch_web (
+    qq TEXT PRIMARY KEY,
+    enabled_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mysekai_water_rounds (
     game_user_id TEXT NOT NULL,
     round_key TEXT NOT NULL,
@@ -2270,6 +2275,36 @@ class SQLiteRepository:
             "matched_rounds": int(matched or 0),
             "latest_round_at": latest,
         }
+
+    async def set_mysekai_watch_web(self, qq: str) -> None:
+        """记下这个 QQ 已经开始用网页看板（群里不再推浇水播报）。"""
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO mysekai_watch_web(qq, enabled_at)
+                VALUES (?, ?)
+                ON CONFLICT(qq) DO NOTHING
+                """,
+                (qq, utc_now()),
+            )
+            await connection.commit()
+
+    async def clear_mysekai_watch_web(self, qq: str | None = None) -> None:
+        async with self.connect() as connection:
+            if qq is None:
+                await connection.execute("DELETE FROM mysekai_watch_web")
+            else:
+                await connection.execute(
+                    "DELETE FROM mysekai_watch_web WHERE qq = ?", (qq,)
+                )
+            await connection.commit()
+
+    async def is_mysekai_watch_web(self, qq: str) -> bool:
+        async with self.connect() as connection:
+            async with connection.execute(
+                "SELECT 1 FROM mysekai_watch_web WHERE qq = ?", (qq,)
+            ) as cursor:
+                return await cursor.fetchone() is not None
 
     async def add_mysekai_watch_event(
         self,

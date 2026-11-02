@@ -1285,6 +1285,8 @@ class MysekaiService:
             if not active:
                 return {"enabled": False, "changed": False, "birthday": None}
             await self.repository.set_mysekai_water_watch(qq, False)
+            # 关闭监听后看板链接一并失效。
+            await self.repository.clear_mysekai_watch_web(qq)
             return {"enabled": False, "changed": True, "birthday": None}
         if active:
             return {"enabled": True, "changed": False, "birthday": None}
@@ -2180,6 +2182,8 @@ class MysekaiService:
             upload_id, push_status
         )
         watch_result = {"status": "skipped", "message": "本次未触发浇水监听"}
+        # 已经在用网页看板的 QQ，群里不再重复播报，只写看板事件。
+        web_board = await self.repository.is_mysekai_watch_web(qq)
         if watch_on and result.birthday and event_kind in {"birthday_delivery", "manual"}:
             watch_result = {"status": "unknown", "message": "缺少当前活动进度，无法识别轮次"}
             round_key = str(result.birthday.get("round_key") or "")
@@ -2211,27 +2215,33 @@ class MysekaiService:
                             uuid.NAMESPACE_URL,
                             f"mysekai:{server}:{binding['game_user_id']}:{round_key}:empty",
                         ))
-                        empty_status, empty_message = await self._push_rare(
-                            upload_id=empty_id,
-                            qq=qq,
-                            game_user_id=binding["game_user_id"],
-                            nickname=binding.get("nickname"),
-                            birthday={
-                                **result.birthday,
-                                "observation_kind": "delivery"
-                                if event_kind == "birthday_delivery"
-                                else "snapshot",
-                            },
-                            rare_png=None,
-                            rounds=empty_rounds,
-                            checked_at=datetime.now(timezone.utc)
-                            .isoformat()
-                            .replace("+00:00", "Z"),
-                        )
-                        watch_result = {
-                            "status": empty_status,
-                            "message": empty_message,
-                        }
+                        if web_board:
+                            watch_result = {
+                                "status": "web",
+                                "message": "已推送到你的浇水看板",
+                            }
+                        else:
+                            empty_status, empty_message = await self._push_rare(
+                                upload_id=empty_id,
+                                qq=qq,
+                                game_user_id=binding["game_user_id"],
+                                nickname=binding.get("nickname"),
+                                birthday={
+                                    **result.birthday,
+                                    "observation_kind": "delivery"
+                                    if event_kind == "birthday_delivery"
+                                    else "snapshot",
+                                },
+                                rare_png=None,
+                                rounds=empty_rounds,
+                                checked_at=datetime.now(timezone.utc)
+                                .isoformat()
+                                .replace("+00:00", "Z"),
+                            )
+                            watch_result = {
+                                "status": empty_status,
+                                "message": empty_message,
+                            }
                         try:
                             await self.repository.add_mysekai_watch_event(
                                 qq=qq,
@@ -2261,48 +2271,53 @@ class MysekaiService:
                         uuid.NAMESPACE_URL,
                         f"mysekai:{server}:{binding['game_user_id']}:{round_key}",
                     ))
-                    rare_status, rare_message = await self._push_rare(
-                        upload_id=notification_id,
-                        qq=qq,
-                        game_user_id=binding["game_user_id"],
-                        nickname=binding.get("nickname"),
-                        birthday={
-                            **result.birthday,
-                            "observation_kind": "delivery" if event_kind == "birthday_delivery" else "snapshot",
-                        },
-                        rare_png=push_png,
-                    )
+                    if web_board:
+                        rare_status, rare_message = "web", "已推送到你的浇水看板"
+                    else:
+                        rare_status, rare_message = await self._push_rare(
+                            upload_id=notification_id,
+                            qq=qq,
+                            game_user_id=binding["game_user_id"],
+                            nickname=binding.get("nickname"),
+                            birthday={
+                                **result.birthday,
+                                "observation_kind": "delivery"
+                                if event_kind == "birthday_delivery"
+                                else "snapshot",
+                            },
+                            rare_png=push_png,
+                        )
                     watch_result = {"status": rare_status, "message": rare_message}
-                    if rare_status == "sent":
+                    # 图片和事件无论走群还是看板都要留一份。
+                    image_name = None
+                    try:
+                        watch_dir = (
+                            self.settings.database_path.parent / "watch"
+                        )
+                        watch_dir.mkdir(parents=True, exist_ok=True)
+                        image_name = f"{notification_id}.png"
+                        (watch_dir / image_name).write_bytes(push_png)
+                    except OSError:
+                        logger.warning("浇水看板图片写入失败", exc_info=True)
                         image_name = None
-                        try:
-                            watch_dir = (
-                                self.settings.database_path.parent / "watch"
-                            )
-                            watch_dir.mkdir(parents=True, exist_ok=True)
-                            image_name = f"{notification_id}.png"
-                            (watch_dir / image_name).write_bytes(push_png)
-                        except OSError:
-                            logger.warning("浇水看板图片写入失败", exc_info=True)
-                            image_name = None
-                        try:
-                            await self.repository.add_mysekai_watch_event(
-                                qq=qq,
-                                game_user_id=binding["game_user_id"],
-                                round_key=round_key,
-                                kind="rare",
-                                targets=list(result.birthday.get("targets") or []),
-                                image_path=image_name,
-                                rounds=(
-                                    await self.repository.mysekai_water_round_stats(
-                                        binding["game_user_id"],
-                                        since=await self.repository.mysekai_water_watch_enabled_at(qq),
-                                    )
-                                )["rounds"],
-                            )
-                        except Exception:
-                            logger.warning("浇水看板事件写入失败", exc_info=True)
-                    if rare_status != "sent":
+                    try:
+                        await self.repository.add_mysekai_watch_event(
+                            qq=qq,
+                            game_user_id=binding["game_user_id"],
+                            round_key=round_key,
+                            kind="rare",
+                            targets=list(result.birthday.get("targets") or []),
+                            image_path=image_name,
+                            rounds=(
+                                await self.repository.mysekai_water_round_stats(
+                                    binding["game_user_id"],
+                                    since=await self.repository.mysekai_water_watch_enabled_at(qq),
+                                )
+                            )["rounds"],
+                        )
+                    except Exception:
+                        logger.warning("浇水看板事件写入失败", exc_info=True)
+                    if not web_board and rare_status != "sent":
                         await self.repository.release_mysekai_water_round(
                             binding["game_user_id"], round_key
                         )

@@ -1232,8 +1232,14 @@ async def watch_feed(request: Request, qq: str, t: str, after: int = 0):
     if not _watch_token_ok(request, qq, t):
         return error_response(403, "forbidden", "链接无效，请重新获取")
     repository = _mysekai(request).repository
-    events = await repository.list_mysekai_watch_events(qq, after_id=after)
     enabled = await repository.is_mysekai_water_watch(qq)
+    if not enabled:
+        return error_response(
+            410, "watch_closed", "浇水监听已关闭，看板链接已失效"
+        )
+    # 打开看板即视为「改看网页」，之后这个 QQ 不再往群里推浇水播报。
+    await repository.set_mysekai_watch_web(qq)
+    events = await repository.list_mysekai_watch_events(qq, after_id=after)
     enabled_at = await repository.mysekai_water_watch_enabled_at(qq)
     roles = []
     for index, row in enumerate(await repository.list_mysekai_bindings(qq), 1):
@@ -1265,6 +1271,11 @@ async def watch_stream(
     if not _watch_token_ok(request, qq, t):
         return error_response(403, "forbidden", "链接无效，请重新获取")
     repository = _mysekai(request).repository
+    if not await repository.is_mysekai_water_watch(qq):
+        return error_response(
+            410, "watch_closed", "浇水监听已关闭，看板链接已失效"
+        )
+    await repository.set_mysekai_watch_web(qq)
 
     async def events():
         last = int(after)

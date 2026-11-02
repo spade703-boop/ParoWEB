@@ -201,6 +201,33 @@ async def test_empty_delivery_is_recorded_and_announced(tmp_path, monkeypatch) -
 
 
 
+async def test_web_board_user_is_not_pushed_to_the_group(tmp_path, monkeypatch) -> None:
+    """打开过看板的 QQ：不再往群里推，但事件照写。"""
+    from app.services.mysekai import MysekaiService
+
+    notifications = []
+
+    async def push_rare(self, **payload):
+        notifications.append(payload)
+        return "sent", "ok"
+
+    monkeypatch.setattr(MysekaiService, "_push_rare", push_rare)
+    birthday = {"party_id": 2, "round_key": "party:2:progress:8", "targets": []}
+    async with _app(tmp_path, submit_birthday=birthday, watch_on=True) as (client, _):
+        repository = client._transport.app.state.services.repository
+        await repository.set_mysekai_watch_web(QQ)
+        response = await client.post(
+            "/api/v1/mysekai/ingest", content=b"capture",
+            headers={"Authorization": "Bearer ingest-token", "X-Mysekai-Game-Id": GAME_ID,
+                     "X-Mysekai-Event": "birthday_delivery", "X-Mysekai-Party-Id": "2"},
+        )
+        events = await repository.list_mysekai_watch_events(QQ)
+
+    assert response.json()["watch"]["status"] == "web"
+    assert notifications == []
+    assert [event["kind"] for event in events] == ["empty"]
+
+
 async def test_older_progress_cannot_claim_after_newer_round(tmp_path) -> None:
     async with _app(tmp_path) as (client, _):
         repository = client._transport.app.state.services.repository

@@ -13,7 +13,7 @@ from test_mysekai import BOT_TOKEN, GAME_ID, QQ, _settings
 
 
 @asynccontextmanager
-async def _app(tmp_path):
+async def _app(tmp_path, *, watch: bool = True):
     settings = _settings(tmp_path)
     app = create_app(settings)
     async with app.router.lifespan_context(app):
@@ -28,6 +28,8 @@ async def _app(tmp_path):
             leader_avatar=None,
             profile_image_type=None,
         )
+        if watch:
+            await repository.set_mysekai_water_watch(QQ, True)
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
             transport=transport, base_url="http://testserver", timeout=30
@@ -83,6 +85,8 @@ async def test_feed_returns_only_events_for_a_valid_token(tmp_path) -> None:
     assert payload["events"][0]["rounds"] == 3
     assert payload["roles"][0]["game_user_id"] == GAME_ID
     assert bad.status_code == 403
+    # 打开看板后这个 QQ 切到网页，群里不再推浇水播报
+    assert await repository.is_mysekai_watch_web(QQ) is True
 
 
 async def test_feed_after_id_skips_history(tmp_path) -> None:
@@ -108,3 +112,18 @@ async def test_watch_page_is_served(tmp_path) -> None:
         response = await client.get("/roomlist/watch")
     assert response.status_code == 200
     assert "烤森浇水看板" in response.text
+
+
+async def test_feed_is_closed_with_the_watch(tmp_path) -> None:
+    async with _app(tmp_path, watch=False) as (client, repository):
+        qq, token = await _link(client)
+
+        response = await client.get(
+            f"/api/v1/mysekai/watch/feed?qq={qq}&t={token}&after=0"
+        )
+        # 没开监听时不标记网页模式
+        page = await repository.is_mysekai_watch_web(QQ)
+
+    assert response.status_code == 410
+    assert response.json()["error"]["code"] == "watch_closed"
+    assert page is False
