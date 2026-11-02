@@ -131,7 +131,9 @@ async function loadInitial() {
   if (!(payload.events || []).length) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = "还没有记录到浇水轮次。进游戏浇一次水，这里会实时出现。";
+    empty.textContent =
+      "还没有记录到浇水轮次。进游戏浇一次水，这里会实时出现；"
+      + "如果浇过水仍没有，检查抓包 App 是否被系统冻结（保持小窗前台、关闭电池优化）";
     feedEl.appendChild(empty);
   }
   return true;
