@@ -2317,6 +2317,26 @@ class MysekaiService:
                         )
                     except Exception:
                         logger.warning("浇水看板事件写入失败", exc_info=True)
+                    # 每个 QQ 只留最近 3 张稀有图，事件本身保留。
+                    try:
+                        stale_images = (
+                            await self.repository.prune_mysekai_watch_images(
+                                qq, keep=3
+                            )
+                        )
+                        for stale in stale_images:
+                            try:
+                                (
+                                    self.settings.database_path.parent
+                                    / "watch"
+                                    / stale
+                                ).unlink(missing_ok=True)
+                            except OSError:
+                                logger.warning(
+                                    "浇水看板旧图删除失败 %s", stale, exc_info=True
+                                )
+                    except Exception:
+                        logger.warning("浇水看板图片清理失败", exc_info=True)
                     if not web_board and rare_status != "sent":
                         await self.repository.release_mysekai_water_round(
                             binding["game_user_id"], round_key

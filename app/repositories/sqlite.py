@@ -2342,6 +2342,34 @@ class SQLiteRepository:
             await cursor.close()
         return event_id
 
+    async def prune_mysekai_watch_images(
+        self, qq: str, keep: int = 3
+    ) -> list[str]:
+        """每个 QQ 只保留最近 ``keep`` 张稀有图，返回需要删除的文件名。
+
+        事件本身保留（文字还在），只是把旧图的 ``image_path`` 清空。
+        """
+        async with self.connect() as connection:
+            async with connection.execute(
+                """
+                SELECT id, image_path
+                  FROM mysekai_watch_events
+                 WHERE qq = ? AND image_path IS NOT NULL
+                 ORDER BY id DESC
+                """,
+                (qq,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+            stale = rows[max(0, int(keep)):]
+            if not stale:
+                return []
+            await connection.executemany(
+                "UPDATE mysekai_watch_events SET image_path = NULL WHERE id = ?",
+                [(row["id"],) for row in stale],
+            )
+            await connection.commit()
+        return [row["image_path"] for row in stale if row["image_path"]]
+
     async def get_mysekai_watch_event(self, event_id: int) -> dict | None:
         async with self.connect() as connection:
             async with connection.execute(

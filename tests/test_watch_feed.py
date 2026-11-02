@@ -127,3 +127,25 @@ async def test_feed_is_closed_with_the_watch(tmp_path) -> None:
     assert response.status_code == 410
     assert response.json()["error"]["code"] == "watch_closed"
     assert page is False
+
+
+async def test_each_qq_keeps_only_the_three_newest_images(tmp_path) -> None:
+    async with _app(tmp_path) as (_client, repository):
+        for index in range(5):
+            await repository.add_mysekai_watch_event(
+                qq=QQ,
+                game_user_id=GAME_ID,
+                round_key=f"r{index}",
+                kind="rare",
+                image_path=f"img{index}.png",
+                rounds=index,
+            )
+
+        stale = await repository.prune_mysekai_watch_images(QQ, keep=3)
+        events = await repository.list_mysekai_watch_events(QQ)
+
+    assert sorted(stale) == ["img0.png", "img1.png"]
+    kept = [event["image_path"] for event in events if event["image_path"]]
+    assert kept == ["img2.png", "img3.png", "img4.png"]
+    # 事件本身都还在，只是旧图被清空
+    assert len(events) == 5
