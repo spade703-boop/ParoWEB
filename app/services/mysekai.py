@@ -387,6 +387,8 @@ class MysekaiService:
         self._materials_cache: list[dict] | None = None
         #: The material icon/name sheet PNG; static until the master changes.
         self._material_card_cache: bytes | None = None
+        #: How often the sync watcher asks the render service; tests shorten it.
+        self.sync_poll_seconds = 10.0
 
     # ------------------------------------------------------------------ session
     def enabled(self) -> bool:
@@ -1016,10 +1018,84 @@ class MysekaiService:
             return {}
         # The render service reloaded its master tables; every cached PNG was
         # drawn from the previous snapshot, so drop them before the next query.
+        self._drop_render_caches()
+        return result
+
+    def _drop_render_caches(self) -> None:
+        """Every rendered card and material sheet is stale after a data change."""
         self.render_cache.clear()
         self._materials_cache = None
         self._material_card_cache = None
+
+    # ------------------------------------------------------------------ sync
+    async def start_sync(self) -> dict:
+        """``更新国服MD``: start the full sync job on the render service."""
+        token = self.settings.mysekai_internal_token
+        if not token:
+            raise UpstreamError("内部接口未配置，无法同步资源")
+        url = f"{self.settings.mysekai_service_url}/sync"
+        try:
+            async with self._client(timeout=30.0) as client:
+                response = await client.post(
+                    url, json={"region": "sc"}, headers={"X-Mysekai-Admin": token}
+                )
+        except httpx.HTTPError:
+            raise UpstreamError("出图服务暂时不可用，请稍后再试") from None
+        if response.status_code != 200:
+            message = "同步启动失败"
+            try:
+                body = response.json()
+                if isinstance(body, dict):
+                    message = str(body.get("error") or message)
+            except ValueError:
+                pass
+            raise UpstreamError(message)
+        try:
+            result = response.json()
+        except ValueError:
+            raise UpstreamError("出图服务返回了无效数据") from None
+        if not isinstance(result, dict):
+            raise UpstreamError("出图服务返回了无效数据")
+        job_id = str(result.get("job_id") or "")
+        if job_id:
+            asyncio.create_task(self._watch_sync(job_id))
         return result
+
+    async def sync_status(self, job_id: str) -> dict:
+        """One poll of a running sync job."""
+        token = self.settings.mysekai_internal_token
+        if not token:
+            raise UpstreamError("内部接口未配置，无法查询同步状态")
+        url = f"{self.settings.mysekai_service_url}/sync/{job_id}"
+        try:
+            async with self._client(timeout=15.0) as client:
+                response = await client.get(
+                    url, headers={"X-Mysekai-Admin": token}
+                )
+        except httpx.HTTPError:
+            raise UpstreamError("出图服务暂时不可用，请稍后再试") from None
+        if response.status_code == 404:
+            raise UpstreamError("同步任务不存在或已过期")
+        if response.status_code != 200:
+            raise UpstreamError("查询同步状态失败")
+        try:
+            snapshot = response.json()
+        except ValueError:
+            raise UpstreamError("出图服务返回了无效数据") from None
+        return snapshot if isinstance(snapshot, dict) else {}
+
+    async def _watch_sync(self, job_id: str, limit: int = 180) -> None:
+        """Poll until the job ends, then drop the caches — independent of the Bot."""
+        attempts = limit
+        for _ in range(attempts):
+            await asyncio.sleep(self.sync_poll_seconds)
+            try:
+                snapshot = await self.sync_status(job_id)
+            except MysekaiError:
+                continue
+            if str(snapshot.get("state") or "") in ("succeeded", "partial", "failed"):
+                self._drop_render_caches()
+                return
 
     async def fetch_birthday_state(self) -> dict | None:
         """Ask the render service whether a birthday window is open right now."""

@@ -869,6 +869,30 @@ async def master_update(payload: MasterUpdateRequest, request: Request):
         return error_response(exc.status, exc.code, str(exc))
 
 
+@internal_router.post("/sync")
+async def start_sync(request: Request):
+    """Start the full master+assets sync; the job runs in the render service."""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        return await _mysekai(request).start_sync()
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc))
+
+
+@internal_router.get("/sync/{job_id}")
+async def sync_status(job_id: str, request: Request):
+    """Proxy one poll of a sync job."""
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        return await _mysekai(request).sync_status(job_id)
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc))
+
+
 @router.get("/catalog/{kind}")
 async def catalog_image(kind: str, t: str, request: Request):
     """Render the full card behind a signed link; no session required."""
