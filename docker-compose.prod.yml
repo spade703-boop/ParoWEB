@@ -66,6 +66,10 @@ services:
       MYSEKAI_ADMIN_TOKEN: ${PARO_MYSEKAI_INTERNAL_TOKEN}
       # 运行时的 master 数据目录；镜像里的 master/ 只作首次启动的 seed。
       MYSEKAI_MASTER_DIR: /app/data/master
+      # 运行时的资源目录：「更新国服MD」把新图标写在这里（镜像 assets 是只读 seed）。
+      MYSEKAI_ASSETS_DIR: /app/data/assets
+      # 国服客户端版本探测的起点；有更新版本时自动向上找。
+      MYSEKAI_CN_APP_VERSION: "6.4.0"
     volumes:
       # seed：只读，镜像自带的快照。
       - ${PARO_MYSEKAI_PIPELINE_DIR:-../mysekai-re-pipeline}/master:/app/master:ro
@@ -73,6 +77,7 @@ services:
       - ${PARO_MYSEKAI_PIPELINE_DIR:-../mysekai-re-pipeline}/assets:/app/assets:ro
       # 运行时数据：宿主机持久化，更新后无需 commit 或重建容器。
       - ${PARO_MYSEKAI_DATA_DIR:-/opt/mysekai-data}/master:/app/data/master
+      - ${PARO_MYSEKAI_DATA_DIR:-/opt/mysekai-data}/assets:/app/data/assets
     expose:
       - "8765"
     security_opt:
@@ -80,7 +85,8 @@ services:
     cap_drop:
       - ALL
     pids_limit: 256
-    mem_limit: 1g
+    # 全量同步要解析 23MB 清单 + 8.4MB 资源包，留出余量。
+    mem_limit: 1.5g
     cpus: 1.5
     logging:
       driver: json-file
