@@ -69,6 +69,13 @@ class WatchRequest(BaseModel):
     enabled: bool
 
 
+class WatchMaterialsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qq: str = Field(pattern=QQ_PATTERN)
+    names: list[str] = Field(min_length=1, max_length=128)
+
+
 class ConvertWatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -84,11 +91,20 @@ class WatchQueryRequest(BaseModel):
     qq: str = Field(pattern=QQ_PATTERN)
 
 
+class ConvertBatchRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    batch_id: str = Field(min_length=1, max_length=160)
+    server: str = Field(pattern=r"^(cn|jp|tw|kr|en)$")
+    slot_id: int = Field(ge=1, le=8)
+    convert_start_at_ms: int | None = Field(default=None, ge=0)
+
+
 class ConvertAckRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     game_user_id: str = Field(pattern=GAME_ID_PATTERN)
-    slot_ids: list[int] = Field(min_length=1, max_length=8)
+    batches: list[ConvertBatchRef] = Field(min_length=1, max_length=8)
 
 
 class ConvertDoneRequest(BaseModel):
@@ -97,7 +113,7 @@ class ConvertDoneRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     game_user_id: str = Field(pattern=GAME_ID_PATTERN)
-    slot_ids: list[int] = Field(min_length=1, max_length=8)
+    batches: list[ConvertBatchRef] = Field(min_length=1, max_length=8)
 
 
 class GateRequest(BaseModel):
@@ -336,6 +352,36 @@ async def water_watch(payload: WatchRequest, request: Request):
     return {"ok": True, **result}
 
 
+@internal_router.post("/watch-materials")
+async def water_watch_materials(payload: WatchMaterialsRequest, request: Request):
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        result = await _mysekai(request).set_watch_materials(
+            payload.qq, payload.names
+        )
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return {"ok": True, **result}
+
+
+@internal_router.post("/watch-materials/remove")
+async def remove_water_watch_materials(
+    payload: WatchMaterialsRequest, request: Request
+):
+    auth_error = _internal_auth_error(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        result = await _mysekai(request).remove_watch_materials(
+            payload.qq, payload.names
+        )
+    except MysekaiError as exc:
+        return error_response(exc.status, exc.code, str(exc), exc.details)
+    return {"ok": True, **result}
+
+
 @internal_router.post("/watch-expire")
 async def water_watch_expire(request: Request):
     """Close every watch once the observed birthday window has ended."""
@@ -353,12 +399,14 @@ async def water_watch_status(payload: WatchQueryRequest, request: Request):
     if auth_error is not None:
         return auth_error
     service = _mysekai(request)
+    watch_materials = await service.watch_materials(payload.qq)
     binding = await service.repository.get_mysekai_binding(payload.qq)
     if binding is None:
         return {
             "ok": True,
             "enabled": False,
             "bound": False,
+            "watch_materials": watch_materials,
             "message": "这个 QQ 还没有绑定游戏 ID",
         }
     enabled = await service.repository.is_mysekai_water_watch(payload.qq)
@@ -394,6 +442,7 @@ async def water_watch_status(payload: WatchQueryRequest, request: Request):
         "enabled_at": enabled_at,
         "game_user_id": binding["game_user_id"],
         "roles": roles,
+        "watch_materials": watch_materials,
         **stats,
     }
 
@@ -572,7 +621,10 @@ async def convert_done(payload: ConvertDoneRequest, request: Request):
         return auth_error
     service = _mysekai(request)
     try:
-        image = await service.convert_done_image(payload.game_user_id, payload.slot_ids)
+        image = await service.convert_done_image(
+            payload.game_user_id,
+            [batch.model_dump() for batch in payload.batches],
+        )
     except MysekaiError as exc:
         return error_response(exc.status, exc.code, str(exc), exc.details)
     return Response(content=image, media_type="image/png")
@@ -605,10 +657,11 @@ async def convert_ack(payload: ConvertAckRequest, request: Request):
     if auth_error is not None:
         return auth_error
     service = _mysekai(request)
-    await service.repository.ack_mysekai_convert_slots(
-        payload.game_user_id, payload.slot_ids
+    result = await service.repository.ack_mysekai_convert_slots(
+        payload.game_user_id,
+        [batch.model_dump() for batch in payload.batches],
     )
-    return {"ok": True}
+    return {"ok": True, **result}
 
 
 @internal_router.post("/gate")

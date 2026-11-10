@@ -114,7 +114,16 @@ async def test_disabling_when_not_enabled_reports_no_change(tmp_path) -> None:
 
     result = await service.set_water_watch(QQ, False)
 
-    assert result == {"enabled": False, "changed": False, "birthday": None}
+    assert result == {
+        "enabled": False,
+        "changed": False,
+        "birthday": None,
+        "watch_materials": [
+            {"material_id": 12, "name": "钻石"},
+            {"material_id": 5, "name": "夕桐"},
+            {"material_id": 20, "name": "四叶草"},
+        ],
+    }
 
 
 async def test_disabling_an_enabled_watch_reports_change(tmp_path) -> None:

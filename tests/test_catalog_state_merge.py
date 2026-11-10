@@ -14,6 +14,22 @@ async def _repo(tmp_path: Path) -> SQLiteRepository:
     return repository
 
 
+async def _observation(
+    repository: SQLiteRepository, observation_id: str, version: int | None
+) -> None:
+    await repository.record_mysekai_observation(
+        observation_id=observation_id,
+        server="cn",
+        game_user_id=GAME,
+        event_kind="snapshot",
+        source_observed_at_ms=version,
+        source_time_kind="test" if version is not None else None,
+        refreshed_at_ms=None,
+        fields_present={},
+        body_sha256=observation_id,
+    )
+
+
 async def test_missing_table_in_a_capture_keeps_what_we_had(tmp_path) -> None:
     """抓包没带这张子表 ≠ 玩家清空了它。"""
     repository = await _repo(tmp_path)
@@ -54,3 +70,65 @@ async def test_an_empty_table_still_clears(tmp_path) -> None:
 
     state = await repository.get_mysekai_catalog_state("cn", GAME)
     assert state["convert_slots"] == []
+
+
+async def test_each_state_scope_orders_its_own_observations(tmp_path) -> None:
+    repository = await _repo(tmp_path)
+    await _observation(repository, "new-music", 200)
+    await repository.set_mysekai_catalog_state(
+        server="cn", game_user_id=GAME, music_records=["new"],
+        blueprints=None, observation_id="new-music", source_version_ms=200,
+    )
+    await _observation(repository, "older-mixed", 100)
+
+    statuses = await repository.set_mysekai_catalog_state(
+        server="cn", game_user_id=GAME, music_records=["old"],
+        blueprints=None, convert_slots=SLOT,
+        observation_id="older-mixed", source_version_ms=100,
+    )
+
+    state = await repository.get_mysekai_catalog_state("cn", GAME)
+    assert statuses == {
+        "music_records": "older_rejected",
+        "convert_slots": "accepted",
+    }
+    assert state["music_records"] == ["new"]
+    assert state["convert_slots"] == SLOT
+
+
+async def test_equal_version_with_different_content_is_rejected(tmp_path) -> None:
+    repository = await _repo(tmp_path)
+    await _observation(repository, "first", 200)
+    await repository.set_mysekai_catalog_state(
+        server="cn", game_user_id=GAME, music_records=["first"],
+        blueprints=None, observation_id="first", source_version_ms=200,
+    )
+    await _observation(repository, "conflict", 200)
+
+    statuses = await repository.set_mysekai_catalog_state(
+        server="cn", game_user_id=GAME, music_records=["different"],
+        blueprints=None, observation_id="conflict", source_version_ms=200,
+    )
+
+    state = await repository.get_mysekai_catalog_state("cn", GAME)
+    assert statuses["music_records"] == "conflict_rejected"
+    assert state["music_records"] == ["first"]
+
+
+async def test_unknown_observation_does_not_replace_an_unknown_value(tmp_path) -> None:
+    repository = await _repo(tmp_path)
+    await _observation(repository, "unknown-first", None)
+    await repository.set_mysekai_catalog_state(
+        server="cn", game_user_id=GAME, music_records=["first"],
+        blueprints=None, observation_id="unknown-first", source_version_ms=None,
+    )
+    await _observation(repository, "unknown-second", None)
+
+    statuses = await repository.set_mysekai_catalog_state(
+        server="cn", game_user_id=GAME, music_records=["second"],
+        blueprints=None, observation_id="unknown-second", source_version_ms=None,
+    )
+
+    state = await repository.get_mysekai_catalog_state("cn", GAME)
+    assert statuses["music_records"] == "unknown_rejected"
+    assert state["music_records"] == ["first"]

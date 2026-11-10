@@ -121,6 +121,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "/internal/v1/mysekai/switch-role",
                 "/internal/v1/mysekai/gate",
                 "/internal/v1/mysekai/watch",
+                "/internal/v1/mysekai/watch-materials",
+                "/internal/v1/mysekai/watch-materials/remove",
                 "/internal/v1/mysekai/watch-status",
                 "/internal/v1/mysekai/watch-reset",
                 "/internal/v1/mysekai/watch-expire",

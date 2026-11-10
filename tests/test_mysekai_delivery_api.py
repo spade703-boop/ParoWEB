@@ -42,9 +42,13 @@ def _settings(tmp_path: Path) -> Settings:
     )
 
 
-def _transport(render_status: int = 200) -> httpx.MockTransport:
+def _transport(
+    render_status: int = 200, captured_payloads: list[dict] | None = None
+) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/render/birthday":
+            if captured_payloads is not None:
+                captured_payloads.append(request.read().decode())
             if render_status != 200:
                 return httpx.Response(render_status, json={"error": "no_active_birthday"})
             return httpx.Response(
@@ -146,7 +150,7 @@ def test_ingest_response_for_a_delivery_has_no_snapshot_fields() -> None:
     out = _ingest_response({
         "kind": "birthday_delivery",
         "upload_id": "u1",
-        "message": "本轮无稀有材料",
+        "message": "本轮未命中监听材料",
         "push": {"status": "skipped", "message": "生日刷新仅发送监听结果"},
         "watch": {"status": "recorded", "message": "本轮已记录"},
     })

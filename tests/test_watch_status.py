@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock
 
 import httpx
-import pytest
 
 from app.main import create_app
 from app.repositories import sqlite as sqlite_module
@@ -61,3 +61,70 @@ async def test_latest_check_time_covers_every_role(tmp_path, monkeypatch) -> Non
     payload = response.json()
     assert payload["latest_round_at"] == "2026-11-02T03:00:00Z"
     assert {row["game_user_id"] for row in payload["roles"]} == {GAME_ID, SECOND_ID}
+
+
+async def test_watch_materials_default_add_remove_persist_and_reject_base_material(
+    tmp_path,
+) -> None:
+    async with _app(tmp_path) as (client, app):
+        headers = {"Authorization": f"Bearer {BOT_TOKEN}"}
+        app.state.services.mysekai.fetch_materials = AsyncMock(return_value=[
+            {"id": 1, "name": "心愿木材", "rarity": "rarity_1"},
+            {"id": 5, "name": "夕桐", "rarity": "rarity_2"},
+            {"id": 6, "name": "心愿石块", "rarity": "rarity_1"},
+            {"id": 8, "name": "铁矿石", "rarity": "rarity_1"},
+            {"id": 12, "name": "钻石", "rarity": "rarity_3"},
+            {"id": 20, "name": "四叶草", "rarity": "rarity_3"},
+        ])
+        status = await client.post(
+            "/internal/v1/mysekai/watch-status",
+            json={"qq": QQ},
+            headers=headers,
+        )
+        assert [row["name"] for row in status.json()["watch_materials"]] == [
+            "钻石", "夕桐", "四叶草",
+        ]
+
+        updated = await client.post(
+            "/internal/v1/mysekai/watch-materials",
+            json={"qq": QQ, "names": ["铁矿石", "钻石", "铁矿石"]},
+            headers=headers,
+        )
+        assert updated.status_code == 200
+        assert [row["name"] for row in updated.json()["watch_materials"]] == [
+            "钻石", "夕桐", "四叶草", "铁矿石",
+        ]
+        assert [row["name"] for row in updated.json()["added"]] == ["铁矿石"]
+
+        removed = await client.post(
+            "/internal/v1/mysekai/watch-materials/remove",
+            json={"qq": QQ, "names": ["夕桐"]},
+            headers=headers,
+        )
+        assert removed.status_code == 200
+        assert [row["name"] for row in removed.json()["watch_materials"]] == [
+            "钻石", "四叶草", "铁矿石",
+        ]
+
+        await app.state.services.repository.set_mysekai_water_watch(QQ, True)
+        await app.state.services.repository.set_mysekai_water_watch(QQ, False)
+        assert [
+            row["name"]
+            for row in await app.state.services.mysekai.watch_materials(QQ)
+        ] == ["钻石", "四叶草", "铁矿石"]
+
+        rejected = await client.post(
+            "/internal/v1/mysekai/watch-materials",
+            json={"qq": QQ, "names": ["心愿木材"]},
+            headers=headers,
+        )
+        assert rejected.status_code == 422
+        assert rejected.json()["error"]["code"] == "invalid_watch_material"
+
+        empty = await client.post(
+            "/internal/v1/mysekai/watch-materials/remove",
+            json={"qq": QQ, "names": ["钻石", "四叶草", "铁矿石"]},
+            headers=headers,
+        )
+        assert empty.status_code == 422
+        assert empty.json()["error"]["code"] == "watch_materials_empty"

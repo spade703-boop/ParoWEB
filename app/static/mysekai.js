@@ -418,7 +418,7 @@ function showEmpty() {
 }
 
 const WATCH_LINES = {
-  recorded: ["浇水监听：本轮已记录，未发现稀有材料", ""],
+  recorded: ["浇水监听：本轮已记录，未发现监听材料", ""],
   duplicate: ["浇水监听：这一轮之前已经处理过", ""],
   sent: ["浇水监听：本轮有稀有材料，已播报到群里", "is-ok"],
   failed: ["浇水监听：出图或发送失败，请重新上传", "is-error"],

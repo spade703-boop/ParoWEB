@@ -25,9 +25,8 @@ import json
 import time
 import uuid
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from weakref import WeakValueDictionary
 
 import httpx
@@ -51,6 +50,13 @@ COOKIE_NAME = "paro_mysekai"
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 MAX_BODY_BYTES = 4 * 1024 * 1024
 HIGHLIGHT_LIMIT = 20
+WATCH_MATERIALS: tuple[tuple[int, str], ...] = (
+    (12, "钻石"),
+    (5, "夕桐"),
+    (20, "四叶草"),
+)
+WATCH_MATERIAL_IDS = frozenset(material_id for material_id, _name in WATCH_MATERIALS)
+WATCH_MATERIAL_EXCLUDED_IDS = frozenset({1, 6})
 #: 一个 QQ 最多绑几个游戏角色；群指令用 u1..u3 指代。
 MAX_ROLES_PER_QQ = 3
 AVATAR_SIZE = 96
@@ -251,11 +257,13 @@ class RenderResult:
     card_png_base64: str
     visit_counts: dict[str, int]
     birthday: dict | None = None
+    birthdays: list[dict] | None = None
     catalog_state: dict | None = None
     kind: str = "snapshot"
     rare_png_base64: str | None = None
     birthday_png_base64: str | None = None
     message: str | None = None
+    source_meta: dict | None = None
 
 
 _CN = timezone(timedelta(hours=8))
@@ -951,23 +959,32 @@ class MysekaiService:
         raise _catalog_render_error(response)
 
     async def convert_done_image(
-        self, game_user_id: str, slot_ids: list[int]
+        self, game_user_id: str, batches: list[dict]
     ) -> bytes:
         """提醒用的小卡：只画刚完成的槽位和它们的产出。
 
-        产出取自最近一次抓包的 ``convert_slots``。槽位的 ``obtainResources``
-        在批次开始时就已摇好，所以即使玩家之后没有再上传，这里依然准确。
-        缓存必须关闭——同一批槽位的数据不会变，但它们是按槽位 id 取的，
-        用请求体做 key 会把不同时机的请求混在一起。
+        产出取自保存的批次快照。槽位即使已经开始下一批，旧提醒也只会画旧
+        批次；找不到批次快照时返回冲突，由 Bot 退回纯文字。
         """
-        state = await self.repository.get_mysekai_catalog_state("cn", game_user_id)
-        slots = (state or {}).get("convert_slots")
-        if not slots:
+        slots = await self.repository.get_mysekai_convert_batch_slots(
+            game_user_id, batches
+        )
+        if slots is None:
             raise MysekaiError(
-                "最近一次抓包里没有转换机数据。",
-                code="convert_state_missing",
+                "这批转换记录已经过期。",
+                code="convert_batch_expired",
                 status=409,
             )
+        servers = {str(batch["server"]) for batch in batches}
+        if len(servers) != 1:
+            raise MysekaiError(
+                "转换批次区域不一致。",
+                code="convert_batch_region_mismatch",
+                status=409,
+            )
+        state = await self.repository.get_mysekai_catalog_state(
+            servers.pop(), game_user_id
+        )
         # ``None`` here means the capture never carried that table, which the
         # renderer must tell apart from "owns none": an unknown set marks
         # nothing rather than calling every reward a duplicate.
@@ -975,9 +992,9 @@ class MysekaiService:
             "/render/mysekai/convert-done",
             {
                 "userMysekaiConvertSlots": slots,
-                "userMysekaiBlueprints": state.get("blueprints"),
-                "userMysekaiMusicRecords": state.get("music_records"),
-                "slot_ids": slot_ids,
+                "userMysekaiBlueprints": (state or {}).get("blueprints"),
+                "userMysekaiMusicRecords": (state or {}).get("music_records"),
+                "slot_ids": [int(batch["slot_id"]) for batch in batches],
             },
             cache=False,
         )
@@ -1344,6 +1361,117 @@ class MysekaiService:
         cleared = await self.repository.clear_mysekai_water_watches()
         return {"watches": cleared}
 
+    async def watch_material_ids(self, qq: str) -> frozenset[int]:
+        return frozenset(
+            await self.repository.list_mysekai_water_watch_materials(qq)
+        ) or WATCH_MATERIAL_IDS
+
+    async def watch_materials(self, qq: str) -> list[dict]:
+        selected = await self.watch_material_ids(qq)
+        rows = [
+            {"material_id": material_id, "name": name}
+            for material_id, name in WATCH_MATERIALS
+            if material_id in selected
+        ]
+        extra_ids = selected - WATCH_MATERIAL_IDS
+        if extra_ids:
+            try:
+                materials = await self.fetch_materials()
+            except UpstreamError:
+                rows.extend(
+                    {"material_id": material_id, "name": f"材料 ID {material_id}"}
+                    for material_id in sorted(extra_ids)
+                )
+            else:
+                by_id = {row["id"]: row for row in materials}
+                rows.extend(
+                    {
+                        "material_id": material_id,
+                        "name": by_id.get(material_id, {}).get(
+                            "name", f"材料 ID {material_id}"
+                        ),
+                    }
+                    for material_id in sorted(extra_ids)
+                )
+        return rows
+
+    @staticmethod
+    def _watch_material_name_error(
+        unknown: list[str], ambiguous: list[str]
+    ) -> MysekaiError:
+        parts: list[str] = []
+        if unknown:
+            parts.append("未找到材料：" + "、".join(unknown))
+        if ambiguous:
+            parts.append("材料名不唯一：" + "、".join(ambiguous))
+        return MysekaiError(
+            "；".join(parts), code="invalid_watch_material", status=422
+        )
+
+    async def set_watch_materials(self, qq: str, names: list[str]) -> dict:
+        if not names:
+            raise MysekaiError(
+                "请至少提供一个材料名",
+                code="watch_materials_required",
+                status=422,
+            )
+        resolved, unknown, ambiguous = await self._resolve_highlight_names(names)
+        if unknown or ambiguous:
+            raise self._watch_material_name_error(unknown, ambiguous)
+        blocked = [
+            row["name"]
+            for row in resolved
+            if row["id"] in WATCH_MATERIAL_EXCLUDED_IDS
+        ]
+        if blocked:
+            raise MysekaiError(
+                f"心愿木材和心愿石块不能加入监听：{'、'.join(blocked)}",
+                code="invalid_watch_material",
+                status=422,
+            )
+        current = await self.watch_materials(qq)
+        current_ids = {int(row["material_id"]) for row in current}
+        added = [row for row in resolved if row["id"] not in current_ids]
+        selected = frozenset(current_ids | {int(row["id"]) for row in resolved})
+        await self.repository.replace_mysekai_water_watch_materials(qq, selected)
+        return {
+            "watch_materials": await self.watch_materials(qq),
+            "added": [
+                {"material_id": row["id"], "name": row["name"]}
+                for row in added
+            ],
+        }
+
+    async def remove_watch_materials(self, qq: str, names: list[str]) -> dict:
+        if not names:
+            raise MysekaiError(
+                "请至少提供一个要取消的材料名",
+                code="watch_materials_required",
+                status=422,
+            )
+        resolved, unknown, ambiguous = await self._resolve_highlight_names(names)
+        if unknown or ambiguous:
+            raise self._watch_material_name_error(unknown, ambiguous)
+        current = await self.watch_materials(qq)
+        current_ids = {int(row["material_id"]) for row in current}
+        remove_ids = {int(row["id"]) for row in resolved} & current_ids
+        selected = frozenset(current_ids - remove_ids)
+        if not selected:
+            raise MysekaiError(
+                "监听材料不能为空，请至少保留一种材料",
+                code="watch_materials_empty",
+                status=422,
+            )
+        await self.repository.replace_mysekai_water_watch_materials(qq, selected)
+        return {
+            "watch_materials": await self.watch_materials(qq),
+            "removed": [
+                {"material_id": row["id"], "name": row["name"]}
+                for row in resolved
+                if row["id"] in remove_ids
+            ],
+        }
+
     async def set_water_watch(self, qq: str, enabled: bool) -> dict:
         """Open or close one player's watch, enforcing the birthday window.
 
@@ -1356,15 +1484,31 @@ class MysekaiService:
         nothing. ``changed`` tells the caller which case it hit.
         """
         active = await self.repository.is_mysekai_water_watch(qq)
+        watch_materials = await self.watch_materials(qq)
         if not enabled:
             if not active:
-                return {"enabled": False, "changed": False, "birthday": None}
+                return {
+                    "enabled": False,
+                    "changed": False,
+                    "birthday": None,
+                    "watch_materials": watch_materials,
+                }
             await self.repository.set_mysekai_water_watch(qq, False)
             # 关闭监听后看板链接与在线心跳一并失效。
             await self.repository.clear_mysekai_watch_presence(qq)
-            return {"enabled": False, "changed": True, "birthday": None}
+            return {
+                "enabled": False,
+                "changed": True,
+                "birthday": None,
+                "watch_materials": watch_materials,
+            }
         if active:
-            return {"enabled": True, "changed": False, "birthday": None}
+            return {
+                "enabled": True,
+                "changed": False,
+                "birthday": None,
+                "watch_materials": watch_materials,
+            }
         state = await self.fetch_birthday_state()
         if state is None:
             raise MysekaiError(
@@ -1384,13 +1528,23 @@ class MysekaiService:
                     end_ms=end_ms,
                 )
             await self.repository.set_mysekai_water_watch(qq, True)
-            return {"enabled": True, "changed": True, "birthday": state}
+            return {
+                "enabled": True,
+                "changed": True,
+                "birthday": state,
+                "watch_materials": watch_materials,
+            }
         next_start_ms = state.get("next_start_ms")
         if isinstance(next_start_ms, int):
             next_start = datetime.fromtimestamp(next_start_ms / 1000, _CN)
             if watch_is_open(now, start=next_start, end=next_start + FLOWER_WINDOW):
                 await self.repository.set_mysekai_water_watch(qq, True)
-                return {"enabled": True, "changed": True, "birthday": state}
+                return {
+                    "enabled": True,
+                    "changed": True,
+                    "birthday": state,
+                    "watch_materials": watch_materials,
+                }
             opens = watch_opens_at(next_start)
             raise MysekaiError(
                 "现在还不能开启烤森监听：监听在生日花窗口开始前 1 小时至窗口结束期间可用；"
@@ -1586,6 +1740,7 @@ class MysekaiService:
         visit_baseline: dict | None = None,
         highlight_ids: frozenset[int] = frozenset(),
         watch_on: bool = False,
+        watch_material_ids: frozenset[int] = WATCH_MATERIAL_IDS,
     ) -> RenderResult:
         header = _b64url_encode(
             json.dumps(
@@ -1598,6 +1753,11 @@ class MysekaiService:
             "Content-Type": "application/octet-stream",
             "X-Mysekai-Profile": header,
             "X-Mysekai-Watch": "1" if watch_on else "0",
+            "X-Mysekai-Watch-Materials": _b64url_encode(
+                json.dumps(
+                    sorted(watch_material_ids), separators=(",", ":")
+                ).encode("utf-8")
+            ),
         }
         if visit_baseline:
             headers["X-Mysekai-Visit-Baseline"] = _b64url_encode(
@@ -1654,11 +1814,20 @@ class MysekaiService:
                     card_png_base64="",
                     visit_counts={},
                     birthday=data.get("birthday"),
+                    birthdays=[
+                        item for item in (data.get("birthdays") or [])
+                        if isinstance(item, dict)
+                    ],
                     catalog_state=None,
                     kind="birthday_delivery",
                     rare_png_base64=data.get("rare_png_base64"),
                     birthday_png_base64=data.get("birthday_png_base64"),
                     message=data.get("message"),
+                    source_meta=(
+                        data["source_meta"]
+                        if isinstance(data.get("source_meta"), dict)
+                        else None
+                    ),
                 )
             return RenderResult(
                 sites=list(data.get("sites") or []),
@@ -1671,12 +1840,21 @@ class MysekaiService:
                     for key, value in (data.get("visit_counts") or {}).items()
                 },
                 birthday=data.get("birthday"),
+                birthdays=[
+                    item for item in (data.get("birthdays") or [])
+                    if isinstance(item, dict)
+                ],
                 catalog_state=(
                     data["catalog_state"]
                     if isinstance(data.get("catalog_state"), dict)
                     else None
                 ),
                 birthday_png_base64=data.get("birthday_png_base64"),
+                source_meta=(
+                    data["source_meta"]
+                    if isinstance(data.get("source_meta"), dict)
+                    else None
+                ),
             )
         except (ValueError, KeyError, TypeError):
             raise UpstreamError("出图服务返回了无法解析的数据") from None
@@ -1780,10 +1958,10 @@ class MysekaiService:
         current one, same as every other query command.
         """
         binding = await self._binding_for_role(qq, game_user_id)
-        state = await self.repository.get_mysekai_birthday_state(
+        states = await self.repository.list_mysekai_birthday_states(
             binding["server"], binding["game_user_id"]
         )
-        if state is None:
+        if not states:
             raise MysekaiError(
                 "还没有你的生日数据，请先上传一次带地图的响应或浇水回执",
                 code="birthday_state_missing",
@@ -1792,11 +1970,16 @@ class MysekaiService:
         url = f"{self.settings.mysekai_service_url}/render/birthday"
         payload = {
             "region": binding["server"],
-            "party_id": state["party_id"],
-            "obtained": state["obtained"],
-            "dropped": state["dropped"],
-            "total_point": state["total_point"],
-            "captured_at_ms": state["captured_at_ms"],
+            "parties": [
+                {
+                    "party_id": state["party_id"],
+                    "obtained": state["obtained"],
+                    "dropped": state["dropped"],
+                    "total_point": state["total_point"],
+                    "captured_at_ms": state["captured_at_ms"],
+                }
+                for state in states
+            ],
         }
         try:
             async with self._client(timeout=60.0) as client:
@@ -1877,32 +2060,45 @@ class MysekaiService:
             )
             return {"ok": True, "updated": False}
         slots = payload.get("slots") or []
-        state = await self.repository.get_mysekai_catalog_state(
-            server, game_user_id
-        ) or {}
-        await self.repository.set_mysekai_catalog_state(
+        source_meta = (
+            payload.get("source_meta")
+            if isinstance(payload.get("source_meta"), dict)
+            else {}
+        )
+        observation_id = str(uuid.uuid4())
+        await self.repository.record_mysekai_observation(
+            observation_id=observation_id,
             server=server,
             game_user_id=game_user_id,
-            music_records=state.get("music_records"),
-            blueprints=state.get("blueprints"),
-            fixtures=state.get("fixtures"),
-            convert_slots=slots,
-            convert_histories=state.get("convert_histories"),
-            mysekai_rank=state.get("mysekai_rank"),
-            refreshed_at_ms=state.get("refreshed_at_ms"),
+            event_kind=str(source_meta.get("event_type") or "convert_action"),
+            source_observed_at_ms=source_meta.get("source_observed_at_ms"),
+            source_time_kind=source_meta.get("source_time_kind"),
+            source_time_raw=source_meta.get("source_time_raw"),
+            refreshed_at_ms=source_meta.get("refreshed_at_ms"),
+            fields_present=source_meta.get("fields_present") or {"convert_slots": True},
+            body_sha256=hashlib.sha256(body).hexdigest(),
         )
-        if await self.repository.is_mysekai_convert_watch(
-            binding["qq"], game_user_id
-        ):
-            await self.repository.record_mysekai_convert_slots(
-                game_user_id, slots
-            )
+        state_status = await self.repository.set_mysekai_catalog_state(
+            server=server,
+            game_user_id=game_user_id,
+            music_records=None,
+            blueprints=None,
+            convert_slots=slots,
+            observation_id=observation_id,
+            source_version_ms=source_meta.get("source_observed_at_ms"),
+            track_convert_slots=await self.repository.is_mysekai_convert_watch(binding["qq"]),
+        )
         logger.info(
             "我的世界转换机上报 game_id=%s present=true slots=%d",
             game_user_id,
             len(slots),
         )
-        return {"ok": True, "updated": True, "slots": len(slots)}
+        status = (state_status or {}).get("convert_slots", "accepted")
+        return {
+            "ok": True,
+            "updated": not status.endswith("rejected"),
+            "slots": len(slots),
+        }
 
     async def _role_label(self, qq: str, game_user_id: str) -> str | None:
         """``u1``/``u2``… for this role, matching what ``查询MySekai绑定`` shows.
@@ -1952,7 +2148,11 @@ class MysekaiService:
             return "sent", "已推送到群里"
         return "failed", f"推送失败（HTTP {response.status_code}）"
 
-    async def _render_push(self, body: bytes) -> bytes | None:
+    async def _render_push(
+        self,
+        body: bytes,
+        watch_material_ids: frozenset[int] = WATCH_MATERIAL_IDS,
+    ) -> bytes | None:
         """One composed image: the rare map plus the birthday progress strip."""
         url = f"{self.settings.mysekai_service_url}/render/push"
         try:
@@ -1960,7 +2160,14 @@ class MysekaiService:
                 response = await client.post(
                     url,
                     content=body,
-                    headers={"Content-Type": "application/octet-stream"},
+                    headers={
+                        "Content-Type": "application/octet-stream",
+                        "X-Mysekai-Watch-Materials": _b64url_encode(
+                            json.dumps(
+                                sorted(watch_material_ids), separators=(",", ":")
+                            ).encode("utf-8")
+                        ),
+                    },
                 )
         except httpx.HTTPError:
             return None
@@ -2038,6 +2245,7 @@ class MysekaiService:
             raise BindingMismatch("绑定的服务器与本次选择不一致")
 
         watch_on = await self.repository.is_mysekai_water_watch(qq)
+        watch_material_ids = await self.watch_material_ids(qq)
 
         try:
             refreshed = await self.fetch_haruki_profile(game_user_id, server)
@@ -2099,11 +2307,30 @@ class MysekaiService:
         )
         highlight_ids = await self.highlight_ids(qq)
         result = await self._render(
-            body, profile_payload, visit_baseline, highlight_ids, watch_on=watch_on
+            body,
+            profile_payload,
+            visit_baseline,
+            highlight_ids,
+            watch_on=watch_on,
+            watch_material_ids=watch_material_ids,
         )
+        birthdays = list(result.birthdays or [])
+        if not birthdays and result.birthday:
+            birthdays = [result.birthday]
         if result.kind == "birthday_delivery":
             event_kind = "birthday_delivery"
-            birthday_party_id = (result.birthday or {}).get("party_id")
+            if birthday_party_id is None:
+                birthday_party_id = (result.birthday or {}).get("party_id")
+            else:
+                selected = next(
+                    (
+                        birthday for birthday in birthdays
+                        if birthday.get("party_id") == birthday_party_id
+                    ),
+                    None,
+                )
+                if selected is not None:
+                    result = replace(result, birthday=selected)
         if result.visit_counts:
             # 计数是累计值、名单是当天的：合并保留历史最高值，来过一次就一直留在榜上。
             captured_ms = (
@@ -2122,8 +2349,22 @@ class MysekaiService:
                 merged,
                 int(captured_ms),
             )
+        source_meta = result.source_meta or {}
+        observation_id = str(uuid.uuid4())
+        await self.repository.record_mysekai_observation(
+            observation_id=observation_id,
+            server=server,
+            game_user_id=binding["game_user_id"],
+            event_kind=str(source_meta.get("event_type") or event_kind),
+            source_observed_at_ms=source_meta.get("source_observed_at_ms"),
+            source_time_kind=source_meta.get("source_time_kind"),
+            source_time_raw=source_meta.get("source_time_raw"),
+            refreshed_at_ms=source_meta.get("refreshed_at_ms"),
+            fields_present=source_meta.get("fields_present") or {},
+            body_sha256=hashlib.sha256(body).hexdigest(),
+        )
         if result.catalog_state is not None:
-            await self.repository.set_mysekai_catalog_state(
+            state_statuses = await self.repository.set_mysekai_catalog_state(
                 server=server,
                 game_user_id=binding["game_user_id"],
                 music_records=result.catalog_state.get("music_records"),
@@ -2133,21 +2374,29 @@ class MysekaiService:
                 convert_histories=result.catalog_state.get("convert_histories"),
                 mysekai_rank=result.catalog_state.get("mysekai_rank"),
                 refreshed_at_ms=result.catalog_state.get("refreshed_at_ms"),
+                observation_id=observation_id,
+                source_version_ms=source_meta.get("source_observed_at_ms"),
+                track_convert_slots=await self.repository.is_mysekai_convert_watch(
+                    qq, binding["game_user_id"]
+                ),
             )
-        if result.catalog_state is not None and await self.repository.is_mysekai_convert_watch(
-            qq, binding["game_user_id"]
-        ):
-            slots = result.catalog_state.get("convert_slots")
-            if slots:
-                await self.repository.record_mysekai_convert_slots(
-                    binding["game_user_id"], slots
+            rejected = {
+                field: status
+                for field, status in state_statuses.items()
+                if status.endswith("rejected")
+            }
+            if rejected:
+                logger.warning(
+                    "我的世界旧状态已拒绝 game_id=%s fields=%s",
+                    binding["game_user_id"],
+                    rejected,
                 )
         if visit_baseline is None and result.visit_counts:
             await self.repository.set_mysekai_visit_baseline(
                 qq, binding["game_user_id"], day, result.visit_counts
             )
         upload_id = str(uuid.uuid4())
-        if event_kind == "birthday_delivery" and (
+        if event_kind == "birthday_delivery" and birthday_party_id is not None and (
             not result.birthday
             or result.birthday.get("party_id") != birthday_party_id
         ):
@@ -2171,10 +2420,11 @@ class MysekaiService:
             game_user_id=binding["game_user_id"],
             mysekai_uploaded_at_ms=int(time.time() * 1000),
         )
-        birthday = result.birthday or {}
-        if birthday.get("party_id") is not None and birthday.get("obtained") is not None:
+        for birthday in birthdays:
+            if birthday.get("party_id") is None or birthday.get("obtained") is None:
+                continue
             try:
-                await self.repository.set_mysekai_birthday_state(
+                birthday_status = await self.repository.set_mysekai_birthday_state(
                     server=server,
                     game_user_id=binding["game_user_id"],
                     party_id=int(birthday["party_id"]),
@@ -2182,11 +2432,16 @@ class MysekaiService:
                     obtained=int(birthday.get("obtained") or 0),
                     dropped=int(birthday.get("dropped") or 0),
                     total_point=int(birthday.get("total_point") or 0),
-                    captured_at_ms=(
-                        (result.catalog_state or {}).get("refreshed_at_ms")
-                        or int(time.time() * 1000)
-                    ),
+                    captured_at_ms=source_meta.get("source_observed_at_ms"),
+                    captured_at_source=source_meta.get("source_time_kind"),
+                    observation_id=observation_id,
                 )
+                if birthday_status.endswith("rejected"):
+                    logger.warning(
+                        "我的世界生日旧状态已拒绝 game_id=%s status=%s",
+                        binding["game_user_id"],
+                        birthday_status,
+                    )
             except Exception:  # 进度缓存坏了不能拖垮上传
                 logger.warning("生日进度落库失败", exc_info=True)
         await self.repository.record_mysekai_upload(
@@ -2265,7 +2520,10 @@ class MysekaiService:
             if round_key:
                 # 每轮都入库便于查询；只有命中稀有才播报，避免连续浇水刷屏。
                 has_targets = bool(result.birthday.get("targets"))
-                push_png = await self._render_push(body) if has_targets else None
+                push_png = (
+                    await self._render_push(body, watch_material_ids)
+                    if has_targets else None
+                )
                 claimed = False
                 if not has_targets:
                     claimed = await self.repository.claim_mysekai_water_round(
@@ -2273,7 +2531,7 @@ class MysekaiService:
                     )
                     watch_result = {
                         "status": "recorded" if claimed else "duplicate",
-                        "message": "本轮已记录，未发现稀有材料" if claimed
+                        "message": "本轮已记录，未发现监听材料" if claimed
                         else "这一轮已经记录过",
                     }
                     if claimed:

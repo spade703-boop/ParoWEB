@@ -3,11 +3,13 @@ from __future__ import annotations
 from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
+import hashlib
 import json
 import logging
 import math
 from pathlib import Path
 import shutil
+import sqlite3
 import time
 import uuid
 
@@ -130,6 +132,13 @@ CREATE TABLE IF NOT EXISTS mysekai_water_watches (
     enabled_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS mysekai_water_watch_materials (
+    qq TEXT NOT NULL,
+    material_id INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (qq, material_id)
+);
+
 CREATE TABLE IF NOT EXISTS mysekai_watch_web (
     qq TEXT PRIMARY KEY,
     enabled_at TEXT NOT NULL
@@ -190,12 +199,75 @@ CREATE TABLE IF NOT EXISTS mysekai_convert_watches (
 CREATE TABLE IF NOT EXISTS mysekai_convert_slots (
     game_user_id TEXT NOT NULL,
     slot_id INTEGER NOT NULL,
+    server TEXT NOT NULL DEFAULT 'cn',
+    batch_id TEXT,
+    batch_start_at_ms INTEGER,
+    observed_at_ms INTEGER,
+    batch_source TEXT NOT NULL DEFAULT 'legacy_unknown',
+    slot_payload TEXT,
     item_id INTEGER NOT NULL,
     finish_at_ms INTEGER NOT NULL,
     outcome_count INTEGER NOT NULL DEFAULT 0,
     notified INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL,
-    PRIMARY KEY (game_user_id, slot_id)
+    PRIMARY KEY (server, game_user_id, slot_id)
+);
+
+CREATE TABLE IF NOT EXISTS mysekai_convert_batches (
+    batch_id TEXT PRIMARY KEY,
+    server TEXT NOT NULL,
+    game_user_id TEXT NOT NULL,
+    slot_id INTEGER NOT NULL,
+    batch_start_at_ms INTEGER,
+    observed_at_ms INTEGER,
+    finish_at_ms INTEGER,
+    batch_source TEXT NOT NULL,
+    slot_payload TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mysekai_observations (
+    observation_id TEXT PRIMARY KEY,
+    server TEXT NOT NULL,
+    game_user_id TEXT NOT NULL,
+    event_kind TEXT NOT NULL,
+    source_observed_at_ms INTEGER,
+    source_time_kind TEXT,
+    source_time_raw TEXT,
+    refreshed_at_ms INTEGER,
+    fields_present TEXT NOT NULL,
+    body_sha256 TEXT NOT NULL,
+    received_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mysekai_observations_received
+    ON mysekai_observations(received_at);
+
+CREATE TABLE IF NOT EXISTS mysekai_observation_results (
+    observation_id TEXT NOT NULL REFERENCES mysekai_observations(observation_id)
+        ON DELETE CASCADE,
+    state_scope TEXT NOT NULL,
+    status TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    decided_at TEXT NOT NULL,
+    PRIMARY KEY (observation_id, state_scope)
+);
+
+CREATE TABLE IF NOT EXISTS mysekai_state_versions (
+    server TEXT NOT NULL,
+    game_user_id TEXT NOT NULL,
+    state_scope TEXT NOT NULL,
+    source_version_ms INTEGER,
+    observation_id TEXT NOT NULL REFERENCES mysekai_observations(observation_id),
+    content_sha256 TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (server, game_user_id, state_scope)
+);
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS mysekai_latest_capture (
@@ -242,14 +314,62 @@ CREATE TABLE IF NOT EXISTS mysekai_birthday_state (
     dropped INTEGER NOT NULL,
     total_point INTEGER NOT NULL,
     captured_at_ms INTEGER,
+    captured_at_source TEXT,
+    observation_id TEXT,
     updated_at TEXT NOT NULL,
-    PRIMARY KEY (server, game_user_id)
+    PRIMARY KEY (server, game_user_id, party_id)
 );
 """
 
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+SCHEMA_VERSION = 11
+OBSERVATION_RETENTION_DAYS = 180
+CONVERT_BATCH_RETENTION_DAYS = 30
+
+
+def _convert_batch_id(
+    server: str, game_user_id: str, slot_id: int, start_at_ms: int
+) -> str:
+    return f"{server}:{game_user_id}:{slot_id}:{start_at_ms}"
+
+
+def _convert_batch_order(previous: list, incoming: list) -> tuple[bool, bool]:
+    stored = {
+        slot["slotId"]: slot
+        for slot in previous
+        if isinstance(slot, dict) and "slotId" in slot
+    }
+    candidates = {
+        slot["slotId"]: slot
+        for slot in incoming
+        if isinstance(slot, dict) and "slotId" in slot
+    }
+    can_order_unknown = bool(stored) and stored.keys() == candidates.keys()
+    for slot_id, slot in candidates.items():
+        old = stored.get(slot_id)
+        if old is None:
+            can_order_unknown = False
+            continue
+        try:
+            start = int(slot["convertStartAt"])
+            previous_start = int(old["convertStartAt"])
+            if start < previous_start:
+                return True, False
+            if start == previous_start and slot != old:
+                finish = start + int(slot["convertCount"]) * int(slot["onceConvertMinutes"]) * 60_000
+                previous_finish = previous_start + int(old["convertCount"]) * int(old["onceConvertMinutes"]) * 60_000
+                if (
+                    slot["mysekaiConvertItemId"] != old["mysekaiConvertItemId"]
+                    or finish >= previous_finish
+                ):
+                    can_order_unknown = False
+        except (KeyError, TypeError, ValueError):
+            can_order_unknown = False
+    return False, can_order_unknown
 
 
 CHINA_TZ = timezone(timedelta(hours=8))
@@ -317,6 +437,7 @@ class SQLiteRepository:
 
     async def initialize(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self._backup_before_migrations()
         async with self.connect() as connection:
             await connection.execute("PRAGMA journal_mode = WAL")
             await connection.executescript(SCHEMA)
@@ -330,37 +451,63 @@ class SQLiteRepository:
                 logger.exception(
                     "MySekai schema migration failed; continuing with the current schema"
                 )
-            try:
-                # 历史来访计数来自每天的基线表；排行榜上线后群友立刻能看到全量数据。
-                await self.backfill_visit_totals()
-            except Exception:
-                logger.warning("来访次数回填失败", exc_info=True)
-            # CREATE TABLE IF NOT EXISTS 不会给已有库补列，老库要靠这里补上。
-            # 用 PRAGMA 判断而不是吞 duplicate column 异常：并发下吞异常会把真正的
-            # SQLITE_READONLY 一起吞掉，以后没法排查。
-            columns = {
-                row["name"]
-                for row in (
-                    await (
-                        await connection.execute("PRAGMA table_info(draw_results)")
-                    ).fetchall()
-                )
-            }
-            if "special_asset" not in columns:
+            await connection.execute("BEGIN IMMEDIATE")
+            rows = await (
+                await connection.execute("SELECT version FROM schema_migrations ORDER BY version")
+            ).fetchall()
+            versions = [int(row["version"]) for row in rows]
+            if versions and versions != list(range(1, versions[-1] + 1)):
+                raise RuntimeError("Database migration history is incomplete")
+            if versions and versions[-1] > SCHEMA_VERSION:
+                raise RuntimeError("Database schema is newer than this application")
+            for version, name, migrate in (
+                (1, "legacy_runtime_columns", self._migrate_legacy_columns),
+                (2, "observation_versions", self._backfill_state_versions),
+                (3, "convert_batch_identity", self._migrate_convert_columns),
+                (4, "convert_batch_snapshots", self._backfill_convert_batches),
+                (5, "birthday_source_identity", self._migrate_birthday_columns),
+                (6, "convert_batch_observation_version", self._migrate_convert_observations),
+                (7, "convert_region_identity", self._migrate_convert_region),
+                (8, "observation_decisions_and_retention", self._migrate_observation_evidence),
+                (9, "birthday_party_identity", self._migrate_birthday_party_identity),
+                (10, "water_watch_materials", self._migrate_water_watch_materials),
+                (11, "expand_water_watch_materials", self._expand_water_watch_materials),
+            ):
+                if version in versions:
+                    continue
+                await migrate(connection)
                 await connection.execute(
-                    "ALTER TABLE draw_results ADD COLUMN special_asset TEXT"
+                    "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+                    (version, name, utc_now()),
                 )
-            state_columns = {
-                row["name"]
-                for row in (
-                    await (
-                        await connection.execute(
-                            "PRAGMA table_info(mysekai_catalog_state)"
-                        )
-                    ).fetchall()
-                )
-            }
-            for name, sql_type in (
+            await connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_mysekai_convert_batch "
+                "ON mysekai_convert_slots(batch_id) WHERE batch_id IS NOT NULL"
+            )
+            await connection.commit()
+        try:
+            # 历史来访计数来自每天的基线表；排行榜上线后群友立刻能看到全量数据。
+            await self.backfill_visit_totals()
+        except Exception:
+            logger.warning("来访次数回填失败", exc_info=True)
+
+    async def _ensure_columns(self, connection, table: str, definitions: tuple) -> None:
+        columns = {
+            row["name"]
+            for row in await (
+                await connection.execute(f"PRAGMA table_info({table})")
+            ).fetchall()
+        }
+        for name, definition in definitions:
+            if name not in columns:
+                await connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+    async def _migrate_legacy_columns(self, connection) -> None:
+        await self._ensure_columns(connection, "draw_results", (("special_asset", "TEXT"),))
+        await self._ensure_columns(
+            connection,
+            "mysekai_catalog_state",
+            (
                 ("mysekai_rank", "INTEGER"),
                 ("game_rank", "INTEGER"),
                 ("refreshed_at_ms", "INTEGER"),
@@ -369,41 +516,334 @@ class SQLiteRepository:
                 ("convert_histories", "TEXT"),
                 ("suite_uploaded_at_ms", "INTEGER"),
                 ("mysekai_uploaded_at_ms", "INTEGER"),
+            ),
+        )
+        await self._ensure_columns(
+            connection, "mysekai_latest_capture", (("uploaded_at_ms", "INTEGER"),)
+        )
+        await self._ensure_columns(
+            connection, "mysekai_water_rounds", (("matched", "INTEGER NOT NULL DEFAULT 0"),)
+        )
+
+    async def _migrate_birthday_columns(self, connection) -> None:
+        await self._ensure_columns(
+            connection, "mysekai_birthday_state",
+            (("captured_at_source", "TEXT"), ("observation_id", "TEXT")),
+        )
+
+    async def _migrate_convert_columns(self, connection) -> None:
+        await self._ensure_columns(
+            connection,
+            "mysekai_convert_slots",
+            (
+                ("server", "TEXT NOT NULL DEFAULT 'cn'"),
+                ("batch_id", "TEXT"),
+                ("batch_start_at_ms", "INTEGER"),
+                ("observed_at_ms", "INTEGER"),
+                ("batch_source", "TEXT NOT NULL DEFAULT 'legacy_unknown'"),
+                ("slot_payload", "TEXT"),
+            ),
+        )
+
+    async def _migrate_convert_observations(self, connection) -> None:
+        await self._ensure_columns(
+            connection, "mysekai_convert_slots", (("observed_at_ms", "INTEGER"),)
+        )
+        await self._ensure_columns(
+            connection, "mysekai_convert_batches",
+            (("observed_at_ms", "INTEGER"), ("finish_at_ms", "INTEGER")),
+        )
+
+    async def _migrate_convert_region(self, connection) -> None:
+        columns = await (
+            await connection.execute("PRAGMA table_info(mysekai_convert_slots)")
+        ).fetchall()
+        primary_key = [
+            row["name"] for row in sorted(columns, key=lambda row: row["pk"]) if row["pk"]
+        ]
+        if primary_key == ["server", "game_user_id", "slot_id"]:
+            return
+        await connection.execute(
+            "ALTER TABLE mysekai_convert_slots RENAME TO mysekai_convert_slots_legacy"
+        )
+        for statement in SCHEMA.split(";"):
+            if statement.strip().startswith("CREATE TABLE IF NOT EXISTS mysekai_convert_slots ("):
+                await connection.execute(statement)
+                break
+        names = ", ".join(row["name"] for row in columns)
+        await connection.execute(
+            f"INSERT INTO mysekai_convert_slots ({names}) "
+            f"SELECT {names} FROM mysekai_convert_slots_legacy"
+        )
+        await connection.execute("DROP TABLE mysekai_convert_slots_legacy")
+
+    async def _migrate_observation_evidence(self, connection) -> None:
+        await self._ensure_columns(
+            connection, "mysekai_observations", (("source_time_raw", "TEXT"),)
+        )
+
+    async def _migrate_birthday_party_identity(self, connection) -> None:
+        columns = await (
+            await connection.execute("PRAGMA table_info(mysekai_birthday_state)")
+        ).fetchall()
+        primary_key = [
+            row["name"] for row in sorted(columns, key=lambda row: row["pk"]) if row["pk"]
+        ]
+        if primary_key == ["server", "game_user_id", "party_id"]:
+            return
+        await connection.execute(
+            "ALTER TABLE mysekai_birthday_state RENAME TO mysekai_birthday_state_legacy"
+        )
+        for statement in SCHEMA.split(";"):
+            if statement.strip().startswith(
+                "CREATE TABLE IF NOT EXISTS mysekai_birthday_state ("
             ):
-                if name not in state_columns:
-                    await connection.execute(
-                        f"ALTER TABLE mysekai_catalog_state ADD COLUMN {name} {sql_type}"
+                await connection.execute(statement)
+                break
+        names = ", ".join(row["name"] for row in columns)
+        await connection.execute(
+            f"INSERT INTO mysekai_birthday_state ({names}) "
+            f"SELECT {names} FROM mysekai_birthday_state_legacy"
+        )
+        await connection.execute("DROP TABLE mysekai_birthday_state_legacy")
+
+    async def _migrate_water_watch_materials(self, connection) -> None:
+        await connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mysekai_water_watch_materials (
+                qq TEXT NOT NULL,
+                material_id INTEGER NOT NULL CHECK (material_id IN (5, 12, 20)),
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (qq, material_id)
+            )
+            """
+        )
+
+    async def _expand_water_watch_materials(self, connection) -> None:
+        await connection.execute(
+            "ALTER TABLE mysekai_water_watch_materials "
+            "RENAME TO mysekai_water_watch_materials_legacy"
+        )
+        await connection.execute(
+            """
+            CREATE TABLE mysekai_water_watch_materials (
+                qq TEXT NOT NULL,
+                material_id INTEGER NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (qq, material_id)
+            )
+            """
+        )
+        await connection.execute(
+            "INSERT INTO mysekai_water_watch_materials "
+            "SELECT qq, material_id, updated_at "
+            "FROM mysekai_water_watch_materials_legacy"
+        )
+        await connection.execute("DROP TABLE mysekai_water_watch_materials_legacy")
+
+    def _backup_before_migrations(self) -> Path | None:
+        if not self.database_path.exists() or self.database_path.stat().st_size == 0:
+            return None
+        source = sqlite3.connect(self.database_path)
+        try:
+            has_tables = source.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1"
+            ).fetchone()
+            if not has_tables:
+                return None
+            migration_table = source.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'schema_migrations'"
+            ).fetchone()
+            version = 0
+            if migration_table:
+                row = source.execute(
+                    "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
+                ).fetchone()
+                version = int(row[0]) if row else 0
+            if version >= SCHEMA_VERSION:
+                return None
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            backup_path = self.database_path.with_name(
+                f"{self.database_path.name}.pre-v{SCHEMA_VERSION}-{stamp}-{uuid.uuid4().hex[:8]}.bak"
+            )
+            target = sqlite3.connect(backup_path)
+            try:
+                source.backup(target)
+            finally:
+                target.close()
+            return backup_path
+        finally:
+            source.close()
+
+    async def _backfill_convert_batches(self, connection) -> None:
+        await self._migrate_convert_observations(connection)
+        rows = await (
+            await connection.execute(
+                "SELECT server, game_user_id, slot_id, item_id, finish_at_ms, batch_id "
+                "FROM mysekai_convert_slots WHERE batch_id IS NULL"
+            )
+        ).fetchall()
+        for row in rows:
+            server = str(row["server"])
+            payload = None
+            start_at_ms = None
+            state = await (
+                await connection.execute(
+                    "SELECT convert_slots FROM mysekai_catalog_state "
+                    "WHERE server = ? AND game_user_id = ?",
+                    (server, row["game_user_id"]),
+                )
+            ).fetchone()
+            if state is not None and state["convert_slots"]:
+                try:
+                    slots = json.loads(state["convert_slots"])
+                    if not isinstance(slots, list):
+                        raise ValueError("Legacy conversion state must be a list")
+                    payload = next(
+                        (
+                            item
+                            for item in slots
+                            if isinstance(item, dict)
+                            and int(item.get("slotId", -1)) == int(row["slot_id"])
+                        ),
+                        None,
                     )
-            capture_columns = {
-                row["name"]
-                for row in (
-                    await (
-                        await connection.execute(
-                            "PRAGMA table_info(mysekai_latest_capture)"
+                    if payload is not None:
+                        start_at_ms = int(payload["convertStartAt"])
+                        finish_at_ms = (
+                            start_at_ms + int(payload["convertCount"])
+                            * int(payload["onceConvertMinutes"]) * 60_000
                         )
-                    ).fetchall()
+                        if (
+                            int(payload["mysekaiConvertItemId"]) != int(row["item_id"])
+                            or finish_at_ms != int(row["finish_at_ms"])
+                        ):
+                            payload = None
+                            start_at_ms = None
+                except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+                    payload = None
+                    start_at_ms = None
+            if start_at_ms is None:
+                batch_id = (
+                    f"legacy:{server}:{row['game_user_id']}:{row['slot_id']}:"
+                    f"{row['finish_at_ms']}:{row['item_id']}"
+                )
+                source = "legacy_unknown"
+            else:
+                batch_id = _convert_batch_id(
+                    server, row["game_user_id"], row["slot_id"], start_at_ms
+                )
+                source = "convert_start_at"
+            await connection.execute(
+                "UPDATE mysekai_convert_slots SET server = ?, batch_id = ?, "
+                "batch_start_at_ms = ?, batch_source = ?, slot_payload = ? "
+                "WHERE server = ? AND game_user_id = ? AND slot_id = ?",
+                (
+                    server,
+                    batch_id,
+                    start_at_ms,
+                    source,
+                    None if payload is None else json.dumps(payload),
+                    server,
+                    row["game_user_id"],
+                    row["slot_id"],
+                ),
+            )
+        await connection.execute(
+            """
+            INSERT OR IGNORE INTO mysekai_convert_batches(
+                batch_id, server, game_user_id, slot_id, batch_start_at_ms,
+                observed_at_ms, finish_at_ms, batch_source, slot_payload, updated_at
+            )
+            SELECT batch_id, server, game_user_id, slot_id, batch_start_at_ms,
+                   observed_at_ms, finish_at_ms, batch_source, slot_payload, updated_at
+              FROM mysekai_convert_slots
+             WHERE batch_id IS NOT NULL
+            """
+        )
+
+    async def _backfill_state_versions(self, connection) -> None:
+        rows = await (
+            await connection.execute(
+                """
+                SELECT server, game_user_id, music_records, blueprints, fixtures,
+                       convert_slots, convert_histories, mysekai_rank, refreshed_at_ms
+                  FROM mysekai_catalog_state
+                 WHERE NOT EXISTS (
+                       SELECT 1 FROM mysekai_state_versions versions
+                        WHERE versions.server = mysekai_catalog_state.server
+                          AND versions.game_user_id = mysekai_catalog_state.game_user_id
+                 )
+                """
+            )
+        ).fetchall()
+        json_scopes = {
+            "music_records",
+            "blueprints",
+            "fixtures",
+            "convert_slots",
+            "convert_histories",
+        }
+        for row in rows:
+            observation_id = f"legacy:{row['server']}:{row['game_user_id']}"
+            fields = {
+                scope: row[scope] is not None
+                for scope in (
+                    "music_records",
+                    "blueprints",
+                    "fixtures",
+                    "convert_slots",
+                    "convert_histories",
+                    "mysekai_rank",
+                    "refreshed_at_ms",
                 )
             }
-            if "uploaded_at_ms" not in capture_columns:
+            await connection.execute(
+                """
+                INSERT OR IGNORE INTO mysekai_observations(
+                    observation_id, server, game_user_id, event_kind,
+                    source_observed_at_ms, source_time_kind, refreshed_at_ms,
+                    fields_present, body_sha256, received_at
+                ) VALUES (?, ?, ?, 'legacy_migration', NULL, NULL, ?, ?, 'legacy', ?)
+                """,
+                (
+                    observation_id,
+                    row["server"],
+                    row["game_user_id"],
+                    row["refreshed_at_ms"],
+                    json.dumps(fields, sort_keys=True),
+                    utc_now(),
+                ),
+            )
+            for scope, present in fields.items():
+                if not present:
+                    continue
+                value = row[scope]
+                if scope in json_scopes:
+                    try:
+                        value = json.loads(value)
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                encoded = json.dumps(
+                    value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                )
                 await connection.execute(
-                    "ALTER TABLE mysekai_latest_capture ADD COLUMN uploaded_at_ms INTEGER"
+                    """
+                    INSERT OR IGNORE INTO mysekai_state_versions(
+                        server, game_user_id, state_scope, source_version_ms,
+                        observation_id, content_sha256, updated_at
+                    ) VALUES (?, ?, ?, NULL, ?, ?, ?)
+                    """,
+                    (
+                        row["server"],
+                        row["game_user_id"],
+                        scope,
+                        observation_id,
+                        hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+                        utc_now(),
+                    ),
                 )
-            round_columns = {
-                row["name"]
-                for row in (
-                    await (
-                        await connection.execute(
-                            "PRAGMA table_info(mysekai_water_rounds)"
-                        )
-                    ).fetchall()
-                )
-            }
-            if "matched" not in round_columns:
-                await connection.execute(
-                    "ALTER TABLE mysekai_water_rounds"
-                    " ADD COLUMN matched INTEGER NOT NULL DEFAULT 0"
-                )
-            await connection.commit()
 
     async def healthcheck(self) -> bool:
         try:
@@ -1667,6 +2107,35 @@ class SQLiteRepository:
             ).fetchone()
         return str(row[0]) if row is not None else None
 
+    async def list_mysekai_water_watch_materials(self, qq: str) -> list[int]:
+        """Explicit material ids for this QQ; configured-empty stays empty."""
+        async with self.connect() as connection:
+            rows = await (
+                await connection.execute(
+                    "SELECT material_id FROM mysekai_water_watch_materials "
+                    "WHERE qq = ? ORDER BY material_id",
+                    (qq,),
+                )
+            ).fetchall()
+        return [int(row["material_id"]) for row in rows]
+
+    async def replace_mysekai_water_watch_materials(
+        self, qq: str, material_ids: frozenset[int]
+    ) -> None:
+        """Replace the persisted selection without touching the watch switch."""
+        async with self.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            await connection.execute(
+                "DELETE FROM mysekai_water_watch_materials WHERE qq = ?", (qq,)
+            )
+            now = utc_now()
+            await connection.executemany(
+                "INSERT INTO mysekai_water_watch_materials"
+                "(qq, material_id, updated_at) VALUES (?, ?, ?)",
+                [(qq, material_id, now) for material_id in sorted(material_ids)],
+            )
+            await connection.commit()
+
     async def set_mysekai_convert_watch(
         self, qq: str, enabled: bool, game_user_id: str | None = None
     ) -> list[str]:
@@ -2056,70 +2525,113 @@ class SQLiteRepository:
         return row is not None
 
     async def record_mysekai_convert_slots(
-        self, game_user_id: str, slots: list, *, quiet_past: bool = False
+        self,
+        game_user_id: str,
+        slots: list,
+        *,
+        server: str = "cn",
+        quiet_past: bool = False,
+        observed_at_ms: int | None = None,
     ) -> None:
-        """Store each slot's finish time; only a new batch resets its notification.
+        """Apply the same snapshot to catalog state and conversion reminders."""
+        observation_id = str(uuid.uuid4())
+        await self.record_mysekai_observation(
+            observation_id=observation_id,
+            server=server,
+            game_user_id=game_user_id,
+            event_kind="convert_subscription" if quiet_past else "convert_state",
+            source_observed_at_ms=observed_at_ms,
+            source_time_kind="provided" if observed_at_ms is not None else None,
+            refreshed_at_ms=None,
+            fields_present={"convert_slots": True},
+            body_sha256=hashlib.sha256(json.dumps(slots, sort_keys=True).encode()).hexdigest(),
+        )
+        await self.set_mysekai_catalog_state(
+            server=server,
+            game_user_id=game_user_id,
+            music_records=None,
+            blueprints=None,
+            convert_slots=slots,
+            observation_id=observation_id,
+            source_version_ms=observed_at_ms,
+            track_convert_slots=True,
+            quiet_past=quiet_past,
+        )
 
-        A batch is "new" when its finish time moves **later** than the stored
-        one. Finishing earlier means the same run was sped up (a shortcut item
-        or a shorter per-item time), not a new batch, so an already-sent
-        notice stays sent. Every notified row keeps a past finish time — it
-        only becomes notified once it has finished — while a new batch starts
-        now and therefore always ends later, which is what makes the
-        comparison safe.
-
-        ``quiet_past`` marks already-finished slots as notified at insert time.
-        Subscribing uses it: a player who uploaded a capture before opting in
-        can be reminded about the runs still going, but should not be told
-        about batches that ended before they subscribed.
-        """
+    async def _record_mysekai_convert_slots(
+        self,
+        connection,
+        game_user_id: str,
+        slots: list,
+        *,
+        server: str,
+        quiet_past: bool,
+        observed_at_ms: int | None,
+    ) -> None:
         now_ms = int(time.time() * 1000)
-        async with self.connect() as connection:
-            for slot in slots:
-                try:
-                    finish_at = (
-                        int(slot["convertStartAt"])
-                        + int(slot["convertCount"])
-                        * int(slot["onceConvertMinutes"])
-                        * 60_000
-                    )
-                    item_id = int(slot["mysekaiConvertItemId"])
-                    slot_id = int(slot["slotId"])
-                    outcome_count = len(
-                        slot.get("userMysekaiConvertObtainResources") or []
-                    )
-                except (KeyError, TypeError, ValueError):
-                    continue
-                notified = 1 if quiet_past and finish_at <= now_ms else 0
-                await connection.execute(
-                    """
-                    INSERT INTO mysekai_convert_slots(
-                        game_user_id, slot_id, item_id, finish_at_ms,
-                        outcome_count, notified, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(game_user_id, slot_id) DO UPDATE SET
-                        notified = CASE
-                            WHEN excluded.notified = 1 THEN 1
-                            WHEN excluded.finish_at_ms
-                                 > mysekai_convert_slots.finish_at_ms THEN 0
-                            ELSE mysekai_convert_slots.notified
-                        END,
-                        item_id = excluded.item_id,
-                        finish_at_ms = excluded.finish_at_ms,
-                        outcome_count = excluded.outcome_count,
-                        updated_at = excluded.updated_at
-                    """,
-                    (
-                        game_user_id,
-                        slot_id,
-                        item_id,
-                        finish_at,
-                        outcome_count,
-                        notified,
-                        utc_now(),
-                    ),
-                )
-            await connection.commit()
+        slot_ids = []
+        for slot in slots:
+            start_at = int(slot["convertStartAt"])
+            finish_at = start_at + int(slot["convertCount"]) * int(slot["onceConvertMinutes"]) * 60_000
+            item_id = int(slot["mysekaiConvertItemId"])
+            slot_id = int(slot["slotId"])
+            slot_ids.append(slot_id)
+            outcome_count = len(slot.get("userMysekaiConvertObtainResources") or [])
+            notified = 1 if quiet_past and finish_at <= now_ms else 0
+            batch_id = _convert_batch_id(server, game_user_id, slot_id, start_at)
+            await connection.execute(
+                """
+                INSERT INTO mysekai_convert_batches(
+                    batch_id, server, game_user_id, slot_id,
+                    batch_start_at_ms, observed_at_ms, finish_at_ms,
+                    batch_source, slot_payload, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'convert_start_at', ?, ?)
+                ON CONFLICT(batch_id) DO UPDATE SET
+                    slot_payload = excluded.slot_payload,
+                    observed_at_ms = COALESCE(excluded.observed_at_ms, observed_at_ms),
+                    finish_at_ms = excluded.finish_at_ms,
+                    updated_at = excluded.updated_at
+                """,
+                (batch_id, server, game_user_id, slot_id, start_at, observed_at_ms,
+                 finish_at, json.dumps(slot), utc_now()),
+            )
+            await connection.execute(
+                """
+                INSERT INTO mysekai_convert_slots(
+                    game_user_id, slot_id, server, batch_id,
+                    batch_start_at_ms, observed_at_ms, batch_source, slot_payload,
+                    item_id, finish_at_ms, outcome_count, notified, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'convert_start_at', ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(server, game_user_id, slot_id) DO UPDATE SET
+                    notified = CASE
+                        WHEN excluded.batch_start_at_ms > mysekai_convert_slots.batch_start_at_ms
+                        THEN excluded.notified ELSE mysekai_convert_slots.notified
+                    END,
+                    server = excluded.server,
+                    batch_id = excluded.batch_id,
+                    batch_start_at_ms = excluded.batch_start_at_ms,
+                    observed_at_ms = COALESCE(excluded.observed_at_ms, observed_at_ms),
+                    batch_source = excluded.batch_source,
+                    slot_payload = excluded.slot_payload,
+                    item_id = excluded.item_id,
+                    finish_at_ms = excluded.finish_at_ms,
+                    outcome_count = excluded.outcome_count,
+                    updated_at = excluded.updated_at
+                """,
+                (game_user_id, slot_id, server, batch_id, start_at, observed_at_ms,
+                 json.dumps(slot), item_id, finish_at, outcome_count, notified, utc_now()),
+            )
+        excluded = ""
+        parameters: list[object] = [game_user_id, server]
+        if slot_ids:
+            placeholders = ",".join("?" for _ in slot_ids)
+            excluded = f" AND slot_id NOT IN ({placeholders})"
+            parameters.extend(slot_ids)
+        await connection.execute(
+            "DELETE FROM mysekai_convert_slots "
+            "WHERE game_user_id = ? AND server = ?" + excluded,
+            parameters,
+        )
 
     async def backfill_mysekai_convert_slots(
         self, server: str, game_user_id: str, *, quiet_past: bool = False
@@ -2137,7 +2649,7 @@ class SQLiteRepository:
         if not slots:
             return 0
         await self.record_mysekai_convert_slots(
-            game_user_id, slots, quiet_past=quiet_past
+            game_user_id, slots, server=server, quiet_past=quiet_past
         )
         return len(slots)
 
@@ -2146,8 +2658,9 @@ class SQLiteRepository:
         async with self.connect() as connection:
             cursor = await connection.execute(
                 """
-                SELECT s.game_user_id, s.slot_id, s.item_id, s.finish_at_ms,
-                       s.outcome_count, b.qq,
+                SELECT s.game_user_id, s.slot_id, s.server, s.batch_id,
+                       s.batch_start_at_ms, s.batch_source, s.item_id,
+                       s.finish_at_ms, s.outcome_count, b.qq,
                        (
                          SELECT COUNT(*)
                            FROM mysekai_bindings b2
@@ -2160,7 +2673,7 @@ class SQLiteRepository:
                        ) AS role_index
                   FROM mysekai_convert_slots s
                   JOIN mysekai_bindings b
-                    ON b.game_user_id = s.game_user_id AND b.server = 'cn'
+                    ON b.game_user_id = s.game_user_id AND b.server = s.server
                   JOIN mysekai_convert_watches w
                     ON w.qq = b.qq AND w.game_user_id = b.game_user_id
                  WHERE s.notified = 0 AND s.finish_at_ms <= ?
@@ -2173,30 +2686,98 @@ class SQLiteRepository:
             {
                 "game_user_id": row[0],
                 "slot_id": row[1],
-                "item_id": row[2],
-                "finish_at_ms": row[3],
-                "outcome_count": row[4],
-                "qq": row[5],
+                "server": row[2],
+                "batch_id": row[3],
+                "convert_start_at_ms": row[4],
+                "batch_source": row[5],
+                "item_id": row[6],
+                "finish_at_ms": row[7],
+                "outcome_count": row[8],
+                "qq": row[9],
                 # 与群指令的 u1/u2 编号一致，提醒里才说得清是哪个角色。
-                "role_label": f"u{int(row[6] or 1)}",
+                "role_label": f"u{int(row[10] or 1)}",
             }
             for row in rows
         ]
 
-    async def ack_mysekai_convert_slots(self, game_user_id: str, slot_ids: list[int]) -> None:
-        if not slot_ids:
-            return
-        placeholders = ",".join("?" for _ in slot_ids)
+    async def get_mysekai_convert_batch_slots(
+        self, game_user_id: str, batches: list[dict]
+    ) -> list[dict] | None:
+        if not batches:
+            return []
+        batch_ids = [str(batch["batch_id"]) for batch in batches]
+        placeholders = ",".join("?" for _ in batch_ids)
         async with self.connect() as connection:
-            await connection.execute(
-                f"""
-                UPDATE mysekai_convert_slots
-                   SET notified = 1
-                 WHERE game_user_id = ? AND slot_id IN ({placeholders})
-                """,
-                (game_user_id, *slot_ids),
-            )
+            rows = await (
+                await connection.execute(
+                    f"""
+                    SELECT batch_id, server, slot_id, slot_payload
+                      FROM mysekai_convert_batches
+                     WHERE game_user_id = ? AND batch_id IN ({placeholders})
+                    """,
+                    (game_user_id, *batch_ids),
+                )
+            ).fetchall()
+        stored = {str(row["batch_id"]): row for row in rows}
+        result: list[dict] = []
+        for batch in batches:
+            batch_id = str(batch["batch_id"])
+            row = stored.get(batch_id)
+            if (
+                row is None
+                or str(row["server"]) != str(batch["server"])
+                or int(row["slot_id"]) != int(batch["slot_id"])
+                or not row["slot_payload"]
+            ):
+                return None
+            try:
+                result.append(json.loads(row["slot_payload"]))
+            except (TypeError, json.JSONDecodeError):
+                return None
+        return result
+
+    async def ack_mysekai_convert_slots(
+        self, game_user_id: str, batches: list[dict]
+    ) -> dict:
+        if not batches:
+            return {"acked": [], "expired": []}
+        requested = {str(batch["batch_id"]): batch for batch in batches}
+        placeholders = ",".join("?" for _ in requested)
+        async with self.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            rows = await (
+                await connection.execute(
+                    f"""
+                    SELECT batch_id, server, slot_id FROM mysekai_convert_slots
+                     WHERE game_user_id = ? AND batch_id IN ({placeholders})
+                    """,
+                    (game_user_id, *requested),
+                )
+            ).fetchall()
+            matched = {
+                str(row["batch_id"])
+                for row in rows
+                if str(row["server"])
+                == str(requested[str(row["batch_id"])]["server"])
+                and int(row["slot_id"])
+                == int(requested[str(row["batch_id"])]["slot_id"])
+            }
+            if matched:
+                matched_placeholders = ",".join("?" for _ in matched)
+                await connection.execute(
+                    f"""
+                    UPDATE mysekai_convert_slots
+                       SET notified = 1
+                     WHERE game_user_id = ?
+                       AND batch_id IN ({matched_placeholders})
+                    """,
+                    (game_user_id, *matched),
+                )
             await connection.commit()
+        return {
+            "acked": [batch_id for batch_id in requested if batch_id in matched],
+            "expired": [batch_id for batch_id in requested if batch_id not in matched],
+        }
 
     async def release_mysekai_water_round(
         self, game_user_id: str, round_key: str
@@ -2501,14 +3082,140 @@ class SQLiteRepository:
         convert_histories: list | None = None,
         mysekai_rank: int | None = None,
         refreshed_at_ms: int | None = None,
-    ) -> None:
+        observation_id: str | None = None,
+        source_version_ms: int | None = None,
+        track_convert_slots: bool = False,
+        quiet_past: bool = False,
+    ) -> dict[str, str]:
         """Keep the id rows from the account's most recent capture.
 
         ``None`` and ``[]`` mean different things here: ``None`` is "this capture
         did not refresh the resource", ``[]`` is "refreshed, and the player owns
         none". The renderer greys tiles only in the second case.
         """
+        values = {
+            "music_records": music_records,
+            "blueprints": blueprints,
+            "fixtures": fixtures,
+            "convert_slots": convert_slots,
+            "convert_histories": convert_histories,
+            "mysekai_rank": mysekai_rank,
+            "refreshed_at_ms": refreshed_at_ms,
+        }
+        statuses: dict[str, str] = {}
         async with self.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            older_batch = False
+            can_order_unknown = False
+            if convert_slots is not None:
+                stored = await (
+                    await connection.execute(
+                        "SELECT convert_slots FROM mysekai_catalog_state "
+                        "WHERE server = ? AND game_user_id = ?",
+                        (server, game_user_id),
+                    )
+                ).fetchone()
+                if stored is not None and stored["convert_slots"]:
+                    older_batch, can_order_unknown = _convert_batch_order(
+                        json.loads(stored["convert_slots"]), convert_slots
+                    )
+            if observation_id is not None:
+                for scope, value in tuple(values.items()):
+                    if value is None:
+                        continue
+                    encoded = json.dumps(
+                        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                    )
+                    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+                    previous = await (
+                        await connection.execute(
+                            "SELECT source_version_ms, content_sha256 "
+                            "FROM mysekai_state_versions "
+                            "WHERE server = ? AND game_user_id = ? AND state_scope = ?",
+                            (server, game_user_id, scope),
+                        )
+                    ).fetchone()
+                    status = "accepted"
+                    if previous is not None:
+                        previous_version = previous["source_version_ms"]
+                        previous_digest = str(previous["content_sha256"])
+                        if source_version_ms is None:
+                            status = (
+                                "idempotent"
+                                if digest == previous_digest
+                                else "unknown_rejected"
+                            )
+                            if (
+                                status == "unknown_rejected"
+                                and previous_version is None
+                                and scope == "convert_slots"
+                                and can_order_unknown
+                            ):
+                                status = "accepted"
+                        elif previous_version is not None and source_version_ms < int(previous_version):
+                            status = "older_rejected"
+                        elif previous_version is not None and source_version_ms == int(previous_version):
+                            status = (
+                                "idempotent"
+                                if digest == previous_digest
+                                else "conflict_rejected"
+                            )
+                    if scope == "convert_slots" and older_batch:
+                        status = "older_batch_rejected"
+                    statuses[scope] = status
+                    await self._record_observation_result(
+                        connection,
+                        observation_id=observation_id,
+                        state_scope=scope,
+                        status=status,
+                        content_sha256=digest,
+                    )
+                    if status.endswith("rejected"):
+                        values[scope] = None
+                        continue
+                    if status == "idempotent":
+                        values[scope] = None
+                        continue
+                    await connection.execute(
+                        """
+                        INSERT INTO mysekai_state_versions(
+                            server, game_user_id, state_scope, source_version_ms,
+                            observation_id, content_sha256, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(server, game_user_id, state_scope) DO UPDATE SET
+                            source_version_ms = excluded.source_version_ms,
+                            observation_id = excluded.observation_id,
+                            content_sha256 = excluded.content_sha256,
+                            updated_at = excluded.updated_at
+                        """,
+                        (
+                            server,
+                            game_user_id,
+                            scope,
+                            source_version_ms,
+                            observation_id,
+                            digest,
+                            utc_now(),
+                        ),
+                    )
+            if (
+                track_convert_slots
+                and convert_slots is not None
+                and statuses.get("convert_slots", "accepted") in {"accepted", "idempotent"}
+            ):
+                await self._record_mysekai_convert_slots(
+                    connection,
+                    game_user_id,
+                    convert_slots,
+                    server=server,
+                    quiet_past=quiet_past,
+                    observed_at_ms=source_version_ms,
+                )
+            if observation_id is not None and not any(
+                value is not None for value in values.values()
+            ):
+                await connection.commit()
+                return statuses
             await connection.execute(
                 """
                 INSERT INTO mysekai_catalog_state(
@@ -2535,17 +3242,134 @@ class SQLiteRepository:
                 (
                     server,
                     game_user_id,
-                    None if music_records is None else json.dumps(music_records),
-                    None if blueprints is None else json.dumps(blueprints),
-                    None if fixtures is None else json.dumps(fixtures),
-                    None if convert_slots is None else json.dumps(convert_slots),
-                    None if convert_histories is None else json.dumps(convert_histories),
-                    mysekai_rank,
-                    refreshed_at_ms,
+                    None if values["music_records"] is None else json.dumps(values["music_records"]),
+                    None if values["blueprints"] is None else json.dumps(values["blueprints"]),
+                    None if values["fixtures"] is None else json.dumps(values["fixtures"]),
+                    None if values["convert_slots"] is None else json.dumps(values["convert_slots"]),
+                    None if values["convert_histories"] is None else json.dumps(values["convert_histories"]),
+                    values["mysekai_rank"],
+                    values["refreshed_at_ms"],
                     utc_now(),
                 ),
             )
             await connection.commit()
+        return statuses
+
+    async def record_mysekai_observation(
+        self,
+        *,
+        observation_id: str,
+        server: str,
+        game_user_id: str,
+        event_kind: str,
+        source_observed_at_ms: int | None,
+        source_time_kind: str | None,
+        refreshed_at_ms: int | None,
+        fields_present: dict,
+        body_sha256: str,
+        source_time_raw: object = None,
+    ) -> None:
+        async with self.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO mysekai_observations(
+                    observation_id, server, game_user_id, event_kind,
+                    source_observed_at_ms, source_time_kind, source_time_raw, refreshed_at_ms,
+                    fields_present, body_sha256, received_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation_id,
+                    server,
+                    game_user_id,
+                    event_kind,
+                    source_observed_at_ms,
+                    source_time_kind,
+                    None if source_time_raw is None else json.dumps(source_time_raw),
+                    refreshed_at_ms,
+                    json.dumps(fields_present, sort_keys=True),
+                    body_sha256,
+                    utc_now(),
+                ),
+            )
+            await self._prune_mysekai_history(connection, datetime.now(UTC))
+            await connection.commit()
+
+    async def _record_observation_result(
+        self,
+        connection,
+        *,
+        observation_id: str,
+        state_scope: str,
+        status: str,
+        content_sha256: str,
+    ) -> None:
+        await connection.execute(
+            """
+            INSERT OR REPLACE INTO mysekai_observation_results(
+                observation_id, state_scope, status, content_sha256, decided_at
+            )
+            SELECT ?, ?, ?, ?, ?
+             WHERE EXISTS(
+                   SELECT 1 FROM mysekai_observations WHERE observation_id = ?
+             )
+            """,
+            (
+                observation_id,
+                state_scope,
+                status,
+                content_sha256,
+                utc_now(),
+                observation_id,
+            ),
+        )
+
+    async def _prune_mysekai_history(self, connection, now: datetime) -> dict[str, int]:
+        observation_cutoff = (
+            now - timedelta(days=OBSERVATION_RETENTION_DAYS)
+        ).isoformat().replace("+00:00", "Z")
+        batch_cutoff = (
+            now - timedelta(days=CONVERT_BATCH_RETENTION_DAYS)
+        ).isoformat().replace("+00:00", "Z")
+        batches = await connection.execute(
+            """
+            DELETE FROM mysekai_convert_batches
+             WHERE updated_at < ?
+               AND NOT EXISTS(
+                   SELECT 1 FROM mysekai_convert_slots current
+                    WHERE current.batch_id = mysekai_convert_batches.batch_id
+               )
+            """,
+            (batch_cutoff,),
+        )
+        observations = await connection.execute(
+            """
+            DELETE FROM mysekai_observations
+             WHERE received_at < ?
+               AND NOT EXISTS(
+                   SELECT 1 FROM mysekai_state_versions current
+                    WHERE current.observation_id = mysekai_observations.observation_id
+               )
+               AND NOT EXISTS(
+                   SELECT 1 FROM mysekai_birthday_state birthday
+                    WHERE birthday.observation_id = mysekai_observations.observation_id
+               )
+            """,
+            (observation_cutoff,),
+        )
+        return {
+            "observations": observations.rowcount,
+            "convert_batches": batches.rowcount,
+        }
+
+    async def prune_mysekai_history(self, now: datetime | None = None) -> dict[str, int]:
+        async with self.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            result = await self._prune_mysekai_history(
+                connection, now or datetime.now(UTC)
+            )
+            await connection.commit()
+        return result
 
     async def get_mysekai_catalog_state(
         self, server: str, game_user_id: str
@@ -2590,28 +3414,71 @@ class SQLiteRepository:
         dropped: int,
         total_point: int,
         captured_at_ms: int | None,
-    ) -> None:
+        captured_at_source: str | None = "provided",
+        observation_id: str | None = None,
+    ) -> str:
         async with self.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            previous = await (
+                await connection.execute(
+                    """
+                    SELECT party_id, character_id, obtained, dropped,
+                           total_point, captured_at_ms, captured_at_source
+                      FROM mysekai_birthday_state
+                     WHERE server = ? AND game_user_id = ? AND party_id = ?
+                    """,
+                    (server, game_user_id, party_id),
+                )
+            ).fetchone()
+            incoming = (party_id, character_id, obtained, dropped, total_point)
+            encoded = json.dumps(incoming, separators=(",", ":"))
+            digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+            if previous is not None:
+                stored = tuple(previous[index] for index in range(5))
+                previous_version = (
+                    previous["captured_at_ms"]
+                    if previous["captured_at_source"] is not None
+                    else None
+                )
+                incoming_version = (
+                    captured_at_ms if captured_at_source is not None else None
+                )
+                if incoming_version is None:
+                    status = "idempotent" if incoming == stored else "unknown_rejected"
+                elif previous_version is not None and incoming_version < int(previous_version):
+                    status = "older_rejected"
+                elif previous_version is not None and incoming_version == int(previous_version):
+                    status = (
+                        "idempotent" if incoming == stored else "conflict_rejected"
+                    )
+                else:
+                    status = "accepted"
+                if status != "accepted":
+                    if observation_id is not None:
+                        await self._record_observation_result(
+                            connection,
+                            observation_id=observation_id,
+                            state_scope=f"birthday:{party_id}",
+                            status=status,
+                            content_sha256=digest,
+                        )
+                    await connection.commit()
+                    return status
             await connection.execute(
                 """
                 INSERT INTO mysekai_birthday_state(
                     server, game_user_id, party_id, character_id,
-                    obtained, dropped, total_point, captured_at_ms, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(server, game_user_id) DO UPDATE SET
-                    party_id=excluded.party_id,
+                    obtained, dropped, total_point, captured_at_ms,
+                    captured_at_source, observation_id, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(server, game_user_id, party_id) DO UPDATE SET
                     character_id=excluded.character_id,
-                    -- 同一活动内 obtained 是累计获得数，只增不减；换活动才重置。
-                    obtained=CASE
-                        WHEN mysekai_birthday_state.party_id = excluded.party_id
-                        THEN MAX(mysekai_birthday_state.obtained, excluded.obtained)
-                        ELSE excluded.obtained
-                    END,
+                    obtained=excluded.obtained,
                     dropped=excluded.dropped,
                     total_point=excluded.total_point,
-                    captured_at_ms=COALESCE(
-                        excluded.captured_at_ms, captured_at_ms
-                    ),
+                    captured_at_ms=excluded.captured_at_ms,
+                    captured_at_source=excluded.captured_at_source,
+                    observation_id=excluded.observation_id,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -2623,36 +3490,62 @@ class SQLiteRepository:
                     dropped,
                     total_point,
                     captured_at_ms,
+                    captured_at_source,
+                    observation_id,
                     utc_now(),
                 ),
             )
+            if observation_id is not None:
+                await self._record_observation_result(
+                    connection,
+                    observation_id=observation_id,
+                    state_scope=f"birthday:{party_id}",
+                    status="accepted",
+                    content_sha256=digest,
+                )
             await connection.commit()
+        return "accepted"
 
     async def get_mysekai_birthday_state(
-        self, server: str, game_user_id: str
+        self, server: str, game_user_id: str, party_id: int | None = None
     ) -> dict | None:
+        states = await self.list_mysekai_birthday_states(server, game_user_id)
+        if party_id is not None:
+            return next(
+                (state for state in states if state["party_id"] == party_id), None
+            )
+        return states[0] if states else None
+
+    async def list_mysekai_birthday_states(
+        self, server: str, game_user_id: str
+    ) -> list[dict]:
         async with self.connect() as connection:
             cursor = await connection.execute(
                 """
                 SELECT party_id, character_id, obtained, dropped,
-                       total_point, captured_at_ms, updated_at
+                       total_point, captured_at_ms, captured_at_source,
+                       observation_id, updated_at
                 FROM mysekai_birthday_state
                 WHERE server = ? AND game_user_id = ?
+                ORDER BY updated_at DESC, party_id
                 """,
                 (server, game_user_id),
             )
-            row = await cursor.fetchone()
-        if row is None:
-            return None
-        return {
-            "party_id": row[0],
-            "character_id": row[1],
-            "obtained": row[2],
-            "dropped": row[3],
-            "total_point": row[4],
-            "captured_at_ms": row[5],
-            "updated_at": row[6],
-        }
+            rows = await cursor.fetchall()
+        return [
+            {
+                "party_id": row[0],
+                "character_id": row[1],
+                "obtained": row[2],
+                "dropped": row[3],
+                "total_point": row[4],
+                "captured_at_ms": row[5],
+                "captured_at_source": row[6],
+                "observation_id": row[7],
+                "updated_at": row[8],
+            }
+            for row in rows
+        ]
 
     async def set_mysekai_game_rank(
         self, server: str, game_user_id: str, rank: int
