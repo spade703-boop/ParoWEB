@@ -22,6 +22,7 @@ MATERIALS = [
     {"id": 8, "name": "铁矿石", "rarity": "rarity_1"},
     {"id": 12, "name": "钻石", "rarity": "rarity_3"},
     {"id": 34, "name": "蓬松的棉花", "rarity": "rarity_4"},
+    {"id": 93, "name": "「世界」晶粒", "rarity": "rarity_4"},
 ]
 
 
@@ -69,6 +70,26 @@ async def test_unknown_name_is_rejected_atomically(tmp_path) -> None:
 
     assert raised.value.code == "highlight_name_invalid"
     assert (await service.highlight_status(QQ))["count"] == 0
+
+
+async def test_world_grain_alias_works_for_highlights_and_watch_materials(
+    tmp_path,
+) -> None:
+    service = await _service(tmp_path)
+
+    highlighted = await service.set_highlights(QQ, ["世界晶粒"], replace=False)
+    watched = await service.set_watch_materials(QQ, ["世界晶粒"])
+
+    assert [row["id"] for row in highlighted["added"]] == [93]
+    assert [row["name"] for row in highlighted["added"]] == ["「世界」晶粒"]
+    assert [row["material_id"] for row in watched["added"]] == [93]
+    assert [row["name"] for row in watched["added"]] == ["「世界」晶粒"]
+
+    highlighted = await service.remove_highlights(QQ, ["世界晶粒"])
+    watched = await service.remove_watch_materials(QQ, ["世界晶粒"])
+
+    assert highlighted["removed"] == 1
+    assert [row["material_id"] for row in watched["removed"]] == [93]
 
 
 async def test_too_many_highlights_are_rejected(tmp_path) -> None:

@@ -50,6 +50,9 @@ COOKIE_NAME = "paro_mysekai"
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 MAX_BODY_BYTES = 4 * 1024 * 1024
 HIGHLIGHT_LIMIT = 20
+MATERIAL_NAME_ALIASES = {
+    "世界晶粒": "「世界」晶粒",
+}
 WATCH_MATERIALS: tuple[tuple[int, str], ...] = (
     (12, "钻石"),
     (5, "夕桐"),
@@ -1193,7 +1196,7 @@ class MysekaiService:
             name = raw.strip()
             if not name:
                 continue
-            matches = by_name.get(name)
+            matches = by_name.get(MATERIAL_NAME_ALIASES.get(name, name))
             if not matches:
                 unknown.append(name)
             elif len(matches) > 1:
