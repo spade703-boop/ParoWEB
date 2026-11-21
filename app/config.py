@@ -59,6 +59,15 @@ class Settings:
     mysekai_ingest_allowlist: frozenset[str]
     mysekai_push_url: str
     mysekai_push_token: str
+    #: pjsk-intel：worker 入库口令、Bot 查询口令、投递口令与图片目录（§12、§13）。
+    pjsk_intel_ingest_token: str
+    pjsk_intel_bot_token: str
+    pjsk_intel_push_url: str
+    pjsk_intel_push_token: str
+    pjsk_intel_image_dir: Path
+    pjsk_intel_image_ttl_days: int
+    #: 固定目标群标识；只作为投递键，接口不接受调用方传群号（§13.2）。
+    pjsk_intel_target_group: str
     #: 同一刷新窗口只推一次的开关；出事时设 PARO_MYSEKAI_PUSH_DEDUPE=0 即可退回旧行为。
     mysekai_push_dedupe: bool = True
     #: 转换机动作旁路开关；出事时设 PARO_MYSEKAI_CONVERT_INGEST=0 让接口返回 503。
@@ -125,6 +134,22 @@ class Settings:
             ),
             mysekai_push_url=os.getenv("PARO_MYSEKAI_PUSH_URL", "").strip(),
             mysekai_push_token=os.getenv("PARO_MYSEKAI_PUSH_TOKEN", "").strip(),
+            pjsk_intel_ingest_token=os.getenv("PARO_PJSK_INTEL_INGEST_TOKEN", "").strip(),
+            pjsk_intel_bot_token=(
+                os.getenv("PARO_PJSK_INTEL_BOT_TOKEN", "").strip()
+                or os.getenv("PARO_MYSEKAI_INTERNAL_TOKEN", "").strip()
+            ),
+            pjsk_intel_push_url=os.getenv("PARO_PJSK_INTEL_PUSH_URL", "").strip(),
+            pjsk_intel_push_token=os.getenv("PARO_PJSK_INTEL_PUSH_TOKEN", "").strip(),
+            pjsk_intel_image_dir=Path(
+                os.getenv(
+                    "PARO_PJSK_INTEL_IMAGE_DIR", PROJECT_ROOT / "data" / "pjsk-intel-images"
+                )
+            ).resolve(),
+            pjsk_intel_image_ttl_days=_int_env("PARO_PJSK_INTEL_IMAGE_TTL_DAYS", 7),
+            pjsk_intel_target_group=os.getenv(
+                "PARO_PJSK_INTEL_TARGET_GROUP", "default"
+            ).strip(),
             mysekai_push_dedupe=_bool_env("PARO_MYSEKAI_PUSH_DEDUPE", True),
             mysekai_convert_ingest=_bool_env("PARO_MYSEKAI_CONVERT_INGEST", True),
         )

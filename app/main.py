@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+import asyncio
 import hashlib
 import logging
 
@@ -19,8 +20,12 @@ from app.services.announcements import AnnouncementService
 from app.services.catalog import CatalogService
 from app.services.draw_service import DrawService
 from app.services.mysekai import MysekaiService
+from app.services.pjsk_intel import PjskIntelStore
+from app.services.pjsk_intel import pump_deliveries as pump_pjsk_intel_deliveries
 from app.services.stats_cache import StatsCache
 from app.web.api import router
+from app.web.pjsk_intel_api import internal_router as pjsk_intel_internal_router
+from app.web.pjsk_intel_api import query_router as pjsk_intel_query_router
 from app.web.mysekai_api import capture_router as mysekai_capture_router
 from app.web.mysekai_api import watch_router as mysekai_watch_router
 from app.web.mysekai_api import internal_router as mysekai_internal_router
@@ -58,6 +63,7 @@ class Services:
     mysekai: MysekaiService
     mysekai_auth_limiter: SlidingWindowLimiter
     mysekai_submit_limiter: SlidingWindowLimiter
+    pjsk_intel: PjskIntelStore
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -81,6 +87,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         mysekai=MysekaiService(settings, repository),
         mysekai_auth_limiter=SlidingWindowLimiter(limit=5, window_seconds=300),
         mysekai_submit_limiter=SlidingWindowLimiter(limit=10, window_seconds=300),
+        pjsk_intel=PjskIntelStore(settings),
     )
 
     @asynccontextmanager
@@ -92,7 +99,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 logger.exception("Announcement file could not be loaded; starting without announcements")
         catalog.load()
         await repository.initialize()
+        # pjsk-intel：建表 + 启动发布队列泵（§12.5；推送失败自动重试）。
+        await services.pjsk_intel.initialize()
+        pump_task = asyncio.create_task(
+            pump_pjsk_intel_deliveries(services.pjsk_intel, settings)
+        )
         yield
+        pump_task.cancel()
 
     application = FastAPI(
         title="抽派生",
@@ -147,6 +160,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "/internal/v1/mysekai/master-update",
                 "/internal/v1/mysekai/sync",
                 "/internal/v1/mysekai/watch-link",
+                "/internal/v1/pjsk-intel/ingest",
+                "/internal/v1/pjsk-intel/run-status",
+                "/internal/v1/pjsk-intel/source-state",
+                "/internal/v1/pjsk-intel/latest",
+                "/internal/v1/pjsk-intel/history",
+                "/internal/v1/pjsk-intel/health",
                 "/api/v1/mysekai/ingest",
                 "/api/v1/mysekai/ingest-convert",
             }
@@ -180,6 +199,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(mysekai_internal_router)
     application.include_router(mysekai_capture_router)
     application.include_router(mysekai_watch_router)
+    application.include_router(pjsk_intel_internal_router)
+    application.include_router(pjsk_intel_query_router)
     application.mount("/static", StaticFiles(directory=settings.project_root / "app" / "static"), name="static")
     application.mount("/content", StaticFiles(directory=settings.images_dir / "paro_avatars"), name="content")
 

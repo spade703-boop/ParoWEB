@@ -43,18 +43,53 @@ services:
     depends_on:
       - mysekai-parser
 
+  # 国服 Master 更新雷达（PJSK_INTEL_WORK_PLAN.md §15）：自动轮询、渲染、入库；
+  # 推送由 ParoWEB 发布队列 → AkitoBot 完成，worker 本身不映射端口。
+  pjsk-intel-worker:
+    image: mysekai-re-pipeline:local
+    container_name: pjsk-intel-worker
+    restart: unless-stopped
+    command:
+      - python
+      - -m
+      - intel.worker
+      - --region
+      - sc
+      - --interval
+      - "60"
+    environment:
+      PJSK_INTEL_ROOT: /app/data
+      PJSK_INTEL_PARO_BASE: http://paro-web:8000
+      PJSK_INTEL_INGEST_TOKEN: ${PARO_PJSK_INTEL_INGEST_TOKEN}
+      # 影子模式开关：上线先回放不推送，验收后设 0（工作计划 M7）。
+      # PJSK_INTEL_SHADOW 由 worker 读取（intel/worker.py main）；这里只占位提醒。
+      MYSEKAI_GITHUB_MIRRORS: ${MYSEKAI_GITHUB_MIRRORS:-}
+    volumes:
+      - /data/pjsk-intel:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-m", "intel.healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 768m
+    cpus: 0.75
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
   mysekai-parser:
     build:
       context: ${PARO_MYSEKAI_PIPELINE_DIR:-../mysekai-re-pipeline}
-      dockerfile_inline: |
-        FROM python:3.12-slim
-        ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-        WORKDIR /app
-        COPY requirements.txt ./
-        COPY wheels/ /wheels/
-        RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt
-        COPY . .
-        CMD ["python", "service/server.py"]
+      # 解析服务与 pjsk-intel-worker 共用同一个镜像（工作计划 §15）。
+      dockerfile: Dockerfile
     image: mysekai-re-pipeline:local
     container_name: mysekai-parser
     restart: unless-stopped
