@@ -64,8 +64,8 @@ services:
       PJSK_INTEL_ROOT: /app/data
       PJSK_INTEL_PARO_BASE: http://paro-web:8000
       PJSK_INTEL_INGEST_TOKEN: ${PARO_PJSK_INTEL_INGEST_TOKEN}
-      # 影子模式开关：上线先回放不推送，验收后设 0（工作计划 M7）。
-      # PJSK_INTEL_SHADOW 由 worker 读取（intel/worker.py main）；这里只占位提醒。
+      # 影子模式开关：没显式传就默认 0（正式推送）。首次上线建议 .env 里设 1。
+      PJSK_INTEL_SHADOW: ${PJSK_INTEL_SHADOW:-0}
       MYSEKAI_GITHUB_MIRRORS: ${MYSEKAI_GITHUB_MIRRORS:-}
     volumes:
       - /data/pjsk-intel:/app/data
