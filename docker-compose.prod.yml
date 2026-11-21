@@ -49,6 +49,9 @@ services:
     image: mysekai-re-pipeline:local
     container_name: pjsk-intel-worker
     restart: unless-stopped
+    # 复用 mysekai-parser 构建出的同一个镜像，必须先有它。
+    depends_on:
+      - mysekai-parser
     command:
       - python
       - -m
