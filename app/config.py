@@ -141,9 +141,12 @@ class Settings:
             ),
             pjsk_intel_push_url=os.getenv("PARO_PJSK_INTEL_PUSH_URL", "").strip(),
             pjsk_intel_push_token=os.getenv("PARO_PJSK_INTEL_PUSH_TOKEN", "").strip(),
+            # 默认放在数据库同级的 data 目录：容器是只读根文件系统，
+            # 落到 PROJECT_ROOT 下会 mkdir 失败、整个服务起不来。
             pjsk_intel_image_dir=Path(
                 os.getenv(
-                    "PARO_PJSK_INTEL_IMAGE_DIR", PROJECT_ROOT / "data" / "pjsk-intel-images"
+                    "PARO_PJSK_INTEL_IMAGE_DIR",
+                    database_path.parent / "pjsk-intel-images",
                 )
             ).resolve(),
             pjsk_intel_image_ttl_days=_int_env("PARO_PJSK_INTEL_IMAGE_TTL_DAYS", 7),

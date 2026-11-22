@@ -17,6 +17,8 @@ services:
       PARO_IMAGES_DIR: ${PARO_IMAGES_DIR:-/bot-data/images}
       PARO_ANNOUNCEMENTS_PATH: /data/announcements.json
       PARO_MYSEKAI_SERVICE_URL: http://mysekai-parser:8765
+      # pjsk-intel 长图落在持久化数据盘（容器根文件系统只读）。
+      PARO_PJSK_INTEL_IMAGE_DIR: /data/pjsk-intel-images
     ports:
       - "127.0.0.1:8000:8000"
     extra_hosts:
