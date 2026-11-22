@@ -19,6 +19,9 @@ services:
       PARO_MYSEKAI_SERVICE_URL: http://mysekai-parser:8765
       # pjsk-intel 长图落在持久化数据盘（容器根文件系统只读）。
       PARO_PJSK_INTEL_IMAGE_DIR: /data/pjsk-intel-images
+      # worker 通过 compose 服务名访问本服务（Host: paro-web），必须放行；
+      # 保留 .env 里已有的公网域名白名单。
+      PARO_ALLOWED_HOSTS: ${PARO_ALLOWED_HOSTS:-localhost,127.0.0.1},paro-web
     ports:
       - "127.0.0.1:8000:8000"
     extra_hosts:
